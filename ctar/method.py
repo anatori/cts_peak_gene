@@ -573,8 +573,9 @@ def control_corr(adata, b=1000, update=True, ct=False):
     return ctrl_corr
 
 
-def get_pvals(adata,control_metric='control_corr',metric='corr',alpha=0.05):
-	''' Adds mc_pval and mc_qval to AnnData.
+def get_pvals(adata, control_metric='control_corr', metric='corr', alpha=0.05):
+
+    ''' Adds mc_pval and mc_qval to AnnData.
 
     Parameters
     ----------
@@ -582,29 +583,29 @@ def get_pvals(adata,control_metric='control_corr',metric='corr',alpha=0.05):
         AnnData object of shape (#cells,#peaks). Should contain metric under adata.var,
         and control_metric under adata.varm.
     control_metric : str
-    	Column name in adata.varm (pd.DataFrame of length #peaks) pertaining to 
-    	control metric, e.g. 'control_corr' or 'delta_control_corr'.
+        Column name in adata.varm (pd.DataFrame of length #peaks) pertaining to 
+        control metric, e.g. 'control_corr' or 'delta_control_corr'.
     metric : str
-    	Column name in adata.varm (pd.DataFrame of length #peaks) pertaining to 
-    	putative metric, e.g. 'corr' or 'delta_corr'.
+        Column name in adata.varm (pd.DataFrame of length #peaks) pertaining to 
+        putative metric, e.g. 'corr' or 'delta_corr'.
     alpha : int
         Alpha threshold for BH FDR correction.
-
     
     Returns
     ----------
     adata : ad.AnnData
         AnnData of shape (#cells,#peaks) updated with mc_pval and mc_qval.
 
-	'''
-
-	# Adds mc_pval to AnnData
-    adata.var['mc_pval'] = full_mcpval(adata.varm[control_metric],adata.var[metric].values)
-
+    '''
+    
+    # Adds mc_pval to AnnData
+    adata.var['mc_pval'] = full_mcpval(adata.varm[control_metric].values, adata.var[metric].values)
+    
     # Adds BH FDR qvals to AnnData
     adata.var['mc_qval'] = stats.multitest.multipletests(adata.var['mc_pval'].values, alpha=alpha, method='fdr_bh')[1]
     
     return adata
+
 
 
 ########################### CT-specific ###########################
