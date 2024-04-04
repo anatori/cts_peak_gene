@@ -29,6 +29,7 @@ setuptools.setup(
         "scanpy>=1.6.0",
         "anndata>=0.7",
         "statsmodels>=0.11.0",
+        "muon>=0.1.5",
 #         "tqdm",
 #         "fire>=0.4.0",
 #         "pytest>=6.2.0",
