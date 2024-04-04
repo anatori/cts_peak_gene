@@ -4,3 +4,4 @@ scipy>=1.5.0
 scanpy>=1.6.0
 anndata>=0.7
 statsmodels>=0.11.0
+muon>=0.1.5
