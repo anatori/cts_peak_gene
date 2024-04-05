@@ -599,7 +599,7 @@ def get_pvals(adata, control_metric='control_corr', metric='corr', alpha=0.05):
     '''
     
     # Adds mc_pval to AnnData
-    adata.var['mc_pval'] = mc_pval(adata.varm[control_metric].values, adata.var[metric].values)
+    adata.var['mc_pval'] = mc_pval(adata.varm[control_metric], adata.var[metric].values)
     
     # Adds BH FDR qvals to AnnData
     adata.var['mc_qval'] = stats.multitest.multipletests(adata.var['mc_pval'].values, alpha=alpha, method='fdr_bh')[1]
