@@ -493,9 +493,8 @@ def create_ctrl_peaks(adata,num_bins=5,b=1000,update=True):
     
     Returns
     ----------
-    adata : ad.AnnData
-        Anndata with adata.varm.control_peaks containing a np.ndarray Matrix of length
-        (#peaks,n) where n is number of random peaks generated (1000 by default).
+    ctrl_peaks : np.ndarray
+        Matrix of length (#peaks,n) where n is number of random peaks generated (1000 by default).
     
     '''
     
