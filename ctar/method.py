@@ -134,7 +134,7 @@ def center_ctrls(ctrl_array,main_array):
     ctrls = (ctrl_array - mean.reshape(-1,1)) / std.reshape(-1,1)
     main = (main_array - mean) / std
     
-    return ctrls.flatten(), main
+    return np.abs(ctrls.flatten()), np.abs(main)
 
 
 def mc_pval(del_cctrl_full,del_c):
@@ -166,7 +166,7 @@ def mc_pval(del_cctrl_full,del_c):
     n,b = del_cctrl_full.shape
     
     # Search sort returns indices where element would be inserted
-    indicator = np.searchsorted(del_cctrl_full_centered,del_c_centered)
+    indicator = len(del_cctrl_full_centered) - np.searchsorted(del_cctrl_full_centered,del_c_centered)
     return (1+indicator)/(1+(n*b))
 
 
