@@ -650,7 +650,7 @@ def filter_ct(adata, ct_key):
 
 def build_ct_adata(adata, ct_key):
     
-    ct_adata = filter_ct(adata,0)
+    ct_adata = filter_ct(adata,ct_key)
     ct_adata,ct_le_mask = filter_vars(ct_adata)
 
     # ct label
