@@ -7,7 +7,7 @@ import math
 import warnings
 import random
 from tqdm import tqdm
-from Bio.SeqUtils import GC
+from Bio.SeqUtils import gc_fraction
 import anndata as ad
 import scanpy as sc
 import muon as mu
@@ -400,7 +400,7 @@ def gc_content(adata,genome_file='GRCh38.p13.genome.fa.bgz'):
     gc = np.empty(adata.shape[1])
     i=0
     for seq in atac_seqs:
-        gc[i] = GC(seq)
+        gc[i] = gc_fraction(seq)
         i+=1
     return gc
 
