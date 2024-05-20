@@ -128,7 +128,7 @@ def multiome_trackplot(df, mdata, sortby = 'theta_0', top_n = 10, mdata_sort = F
             left=False,
             length=2,
             which="both",
-            labelright=True,
+            labelright=False,
             labelleft=False,
             labelbottom=False,
             direction="in",
