@@ -609,49 +609,130 @@ def get_pvals(adata, control_metric='control_corr', metric='corr', alpha=0.05):
 
 ########################### CT-specific ###########################
 
-# TO DO: add annotations for this section
+
+def filter_lowexp(atac, rna, min_pct=0.05, min_mean=0):
+    
+    ''' Filter out cells with few expressing cells or lower absolute mean expression.
+
+    Parameters
+    ----------
+    atac : sp.sparse_array
+        Sparse array of shape (#cells,#peaks) containing raw ATAC data.
+    atac : sp.sparse_array
+        Sparse array of shape (#cells,#peaks) containing raw RNA data.
+    min_pct : float
+        Value between [0,1] of the minimum number of nonzero ATAC and RNA
+        values for a given link.
+    min_pct : float
+        Minimum absolute mean for ATAC and RNA expression.
+    
+    Returns
+    ----------
+    lowexp_mask : np.array (dtype: bool)
+        Boolean array of shape (#peaks) dictating which peaks were filtered out.
+
+    '''
+
+    mean_atac, mean_rna = np.abs(atac.mean(axis=0)), np.abs(rna.mean(axis=0))
+    nnz_atac, nnz_rna = atac.getnnz(axis=0) / atac.shape[0], rna.getnnz(axis=0) / atac.shape[0]
+    lowexp_mask = (((nnz_atac > min_pct) & (nnz_rna > min_pct)) & ((mean_atac > min_mean) & (mean_rna > min_mean))).A1
+    
+    return lowexp_mask
 
 
-def filter_vars(adata, min_cells=10, min_mean=0.1):
+
+def filter_vars(adata, min_pct=0.05, min_mean=0.1):
     
     ''' Returns var filtered adata and its bool mask.
-    '''
-    
-    lowexp_mask = (((adata.layers['atac'].mean(axis=0) > min_mean) & (adata.layers['rna'].mean(axis=0) > min_mean)) & \
-                   ((adata.layers['atac_raw'].getnnz(axis=0) > min_cells) & \
-                    (adata.layers['rna_raw'].getnnz(axis=0) > min_cells))).A1
-    
-    ct_adata = adata[:,lowexp_mask]
 
+    Parameters
+    ----------
+    adata : ad.AnnData
+        AnnData object of shape (#cells,#peaks), typically for a certain celltype.
+    min_pct : float
+        Value between [0,1] of the minimum number of nonzero ATAC and RNA
+        values for a given link.
+    min_pct : float
+        Minimum absolute mean for ATAC and RNA expression.
+    
+    Returns
+    ----------
+    ct_adata : ad.AnnData
+        AnnData of shape (#cells,#peaks-peaks failing filter).
+    lowexp_mask : np.array (dtype: bool)
+        Boolean array of shape (#peaks) dictating which peaks were filtered out.
+
+    '''
+
+    # Check if at least min_pct of cells are nonzero and above min_mean for ATAC and RNA values
+    lowexp_mask = filter_lowexp(adata.layers['atac_raw'], adata.layers['rna_raw'])
+
+    # Filter out lowly expressed
+    ct_adata = adata[:,lowexp_mask]
+    
     return ct_adata, lowexp_mask
+
+
 
 def filter_ct(adata, ct_key):
     
     ''' Returns CT-specific adata.
+    
+    Parameters
+    ----------
+    adata : ad.AnnData
+        AnnData object of shape (#cells,#peaks).
+    ct_key : int or str
+        The key in the adata.uns['ct_labels'] dictionary for the desired celltype.
+    
+    Returns
+    ----------
+    ct_adata : ad.AnnData
+        AnnData of shape (#cells within ct,#peaks) containing only cells of a given celltype. 
+
     '''
     
-    # get CT label
+    # Get CT label
     ct = adata.uns['ct_labels'][ct_key]
 
-    # filter for CT
+    # Filter for CT
     ct_adata = adata[adata.obs['celltype'] == ct].copy()
 
-    # remove general corrs
-    ct_adata.var.drop(columns=['corr','mc_pval'],inplace=True)
-    del ct_adata.varm['control_corr']
+    # Remove general corrs if they exist
+    try: 
+        ct_adata.var.drop(columns=['corr','mc_pval'],inplace=True)
+        del ct_adata.varm['control_corr']
+    except KeyError as e: pass
 
-    ### to do: add something to check if these features are there in the first place
-
-    # keep only specific label
+    # Keep only specific label
     ct_adata.uns['ct_labels'].clear()
     ct_adata.uns['ct_labels'] = dict(ct_key=ct)
     
     return ct_adata
 
-def build_ct_adata(adata, ct_key):
+
+
+def build_ct_adata(adata, ct_key, min_pct=0.05, min_mean=0.1):
+
+    ''' Returns CT-specific adata.
+    
+    Parameters
+    ----------
+    adata : ad.AnnData
+        AnnData object of shape (#cells,#peaks).
+    ct_key : int or str
+        The key in the adata.uns['ct_labels'] dictionary for the desired celltype.
+    
+    Returns
+    ----------
+    ct_adata : ad.AnnData
+        AnnData of shape (#cells within ct,#peaks) containing only cells of a given celltype,
+        with lowly expressed links also filtered out. 
+
+    '''
     
     ct_adata = filter_ct(adata,ct_key)
-    ct_adata,ct_le_mask = filter_vars(ct_adata)
+    ct_adata,ct_le_mask = filter_vars(ct_adata,min_pct,min_mean)
 
     # ct label
     ct = ct_adata.uns['ct_labels']['ct_key']
@@ -662,8 +743,59 @@ def build_ct_adata(adata, ct_key):
     # we store original atac_X in uns for calculating the control corr 
     # as original control corr still includes peaks removed by lowexp masks
     ct_adata.uns['original_atac'] = adata.layers['atac'][(adata.obs['celltype'] == ct),:]
-    
+
     return ct_adata
+
+
+
+############### poisson regr ######################################
+
+def fit_poisson(x,y):
+
+    # Simple log(E[y]) ~ x equation
+    exog = sm.add_constant(x)
+    
+    try:
+        poisson_model = sm.GLM(y, exog, family=sm.families.Poisson())
+        result = poisson_model.fit()
+        return result.params
+
+    # Remove failed MLE
+    except Exception:
+        return None
+
+
+def get_poiss_coeff(adata,binarize=False):
+
+    # If binarizing, convert to bool then int
+    # so that statsmodel can handle it
+    if binarize:
+        x = adata.layers['atac_raw'].astype(bool).astype(int).A
+    else:
+        x = adata.layers['atac_raw'].A
+    y = adata.layers['rna_raw'].A
+
+    coeffs = []
+    failed = []
+
+    # Calculate poisson coefficient for each peak gene pair
+    for i in tqdm(np.arange(adata.shape[1])):
+        coeff_ = fit_poisson(x[:,i],y[:, i])
+        if not coeff_.any(): failed.append(i)
+        else: coeffs.append(coeff_)
+
+    # Remove pairs that have fail poisson
+    idx = np.arange(adata.shape[1])
+    idx = np.delete(idx,failed)
+    adata = adata[:,idx].copy()
+    # Save ATAC term coefficient in adata.var
+    adata.var['poiss_coeff'] = np.array(coeffs)[:,1]
+
+    return adata
+
+
+
+############### delta corr ######################################
 
 def build_other_adata(adata,ct_key):
     ''' Returns adata with everything except CT in ct_key.
