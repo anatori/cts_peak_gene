@@ -758,7 +758,7 @@ def fit_poisson(x,y):
     try:
         poisson_model = sm.GLM(y, exog, family=sm.families.Poisson())
         result = poisson_model.fit()
-        return result.params
+        return result.params[1]
 
     # Remove failed MLE
     except Exception:
@@ -789,7 +789,7 @@ def get_poiss_coeff(adata,binarize=False):
     idx = np.delete(idx,failed)
     adata = adata[:,idx].copy()
     # Save ATAC term coefficient in adata.var
-    adata.var['poiss_coeff'] = np.array(coeffs)[:,1]
+    adata.var['poiss_coeff'] = np.array(coeffs)
 
     return adata
 
