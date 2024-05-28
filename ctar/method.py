@@ -1,5 +1,6 @@
 import numpy as np
 import pandas as pd 
+import statsmodels.api as sm
 import statsmodels.stats as stats
 import scipy as sp
 import scdrs
