@@ -751,7 +751,7 @@ def build_ct_adata(adata, ct_key, min_pct=0.05, min_mean=0.1):
 
 ############### poisson regr ######################################
 
-def fit_poisson(x,y):
+def fit_poisson(x,y,return_none=True):
 
     # Simple log(E[y]) ~ x equation
     exog = sm.add_constant(x)
@@ -763,7 +763,10 @@ def fit_poisson(x,y):
 
     # Remove failed MLE
     except Exception:
-        return None
+        if return_none:
+            return None
+        else:
+            return 0
 
 
 def get_poiss_coeff(adata,binarize=False):
