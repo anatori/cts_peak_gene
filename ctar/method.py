@@ -135,7 +135,7 @@ def center_ctrls(ctrl_array,main_array):
     ctrls = (ctrl_array - mean.reshape(-1,1)) / std.reshape(-1,1)
     main = (main_array - mean) / std
     
-    return np.abs(ctrls.flatten()), np.abs(main)
+    return ctrls.flatten(), main
 
 
 def mc_pval(del_cctrl_full,del_c):
@@ -162,7 +162,7 @@ def mc_pval(del_cctrl_full,del_c):
     '''
 
     # Center first
-    del_cctrl_full_centered,del_c_centered = center_ctrls(del_cctrl_full,del_c)
+    del_cctrl_full_centered,del_c_centered = center_ctrls(np.abs(del_cctrl_full),np.abs(del_c))
     del_cctrl_full_centered = np.sort(del_cctrl_full_centered)
     n,b = del_cctrl_full.shape
     
