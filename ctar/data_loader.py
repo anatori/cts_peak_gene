@@ -120,18 +120,16 @@ def add_gene_positions(row,dictionary,gene_col='gene'):
     '''
     
     try:
-        
-        pos = dictionary.get(row[gene_col])
-        chrom = pos['chromosome_name']
-        
-        # add chr to match bedtools format
-        if chrom.isnumeric() or chrom.isin(['X','Y','M']):
-            chrom = 'chr' + chrom
-        start = pos['start_position']
-        end = pos['end_position']
-        return [chrom,start,end]
-        
+        info = dictionary[row[gene]]
     except: return [None]*3 # if the key does not exist in dict
+    chrom = info['chromosome_name']
+    if chrom.isnumeric() or (chrom=='X') or (chrom=='Y'):
+        chrom = 'chr' + chrom
+    if chrom == 'MT': # mitochondrial mapped in hg38 as chrM
+        chrom = 'chrM'
+    start = info['start_position']
+    end = info['end_position']
+    return [chrom,start,end]
 
 
 
