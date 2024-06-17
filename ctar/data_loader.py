@@ -94,7 +94,7 @@ def peak_to_gene(peaks_df,genes_df,clean=True,split_peaks=True,distance=500000,c
 
 
 
-def add_gene_positions(row,dictionary=gene_positions,gene_col='gene'):
+def add_gene_positions(row,dictionary,gene_col='gene'):
 
     ''' Add pre-loaded gene positions to desired dataframe.
     

@@ -30,6 +30,8 @@ setuptools.setup(
         "anndata>=0.7",
         "statsmodels>=0.11.0",
         "muon>=0.1.5",
+        "pybedtools>=0.9.1",
+        "biomart>=0.9.2",
 #         "tqdm",
 #         "fire>=0.4.0",
 #         "pytest>=6.2.0",
