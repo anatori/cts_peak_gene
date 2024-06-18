@@ -1,5 +1,6 @@
 import numpy as np
 import pandas as pd 
+import scipy as sp
 
 
 def null_peak_gene_pairs(rna, atac):
