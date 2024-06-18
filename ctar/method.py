@@ -499,7 +499,7 @@ def create_ctrl_peaks(adata,num_bins=5,b=1000,update=True):
     
     '''
     
-    bins = get_bins(adata, num_bins=5)
+    bins = get_bins(adata, num_bins=num_bins)
     print('Get_bins done.')
     
     # Group indices for rand_peaks
