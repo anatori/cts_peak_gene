@@ -50,4 +50,76 @@ def null_peak_gene_pairs(rna, atac):
     # Concat dfs for all chroms
     null_pairs = pd.concat(df_list,ignore_index=True)
     return null_pairs
+
+
+
+def contingency(link_list_sig, link_list_all, link_list_true):
+    """Score links based on the gold/silver standard set.
+    
+    Parameters
+    ----------
+    link_list_sig : list
+        List of peak-gene pairs w/ q<threshold. List of tuples: [(peak1,gene1), (peak2, gene2), ...]
+    link_list_all : list
+        List of all peak-gene pairs considered. List of tuples: [(peak1,gene1), (peak2, gene2), ...]
+    link_list_true : list
+        List of true peak-gene pairs based on a ground truth. List of tuples: [(peak1,gene1), (peak2, gene2), ...]
+
+    Returns
+    -------
+    """
+
+    set_sig = set(link_list_sig)
+    set_all = set(link_list_all)
+    set_true = set(link_list_true)
+
+    # Enrichment w/o p-value
+    a = len(set_sig & set_true) # Sig. & true
+    b = len(set_sig) # Sig.
+    c = len(set_all & set_true) # All & true
+    d = len(set_all) # All
+
+    enrich = (a / b) / (c / d)
+
+    # Odd ratio w/ everything
+    pvalue, oddsratio, or_ub, or_lb = test_overlap(
+        link_list_sig,
+        [x for x in link_list_true if x in set_all],
+        link_list_all,
+    )
+    return enrich, pvalue, oddsratio, or_ub, or_lb
+    
+
+def test_overlap(list1, list2, list_background):
+    """
+    Test overlap of two gene sets using Fisher's exact test
+    """
+
+    set1 = set(list1)
+    set2 = set(list2)
+    set_background = set(list_background)
+
+    n1 = len(set1)
+    n2 = len(set2)
+    n_overlap = len(set1 & set2)
+    n_other = len(set_background - set1 - set2)
+
+    oddsratio, pvalue = sp.stats.fisher_exact(
+        [[n_other, n1 - n_overlap], [n2 - n_overlap, n_overlap]]
+    )
+
+    if (
+        (n_overlap == 0)
+        | (n_other == 0)
+        | ((n2 - n_overlap) == 0)
+        | ((n1 - n_overlap) == 0)
+    ):
+        return pvalue, oddsratio, 0, 0
+    else:
+        se_log_or = np.sqrt(
+            1 / (n1 - n_overlap) + 1 / (n2 - n_overlap) + 1 / n_overlap + 1 / n_other
+        )
+        or_ub = np.exp(np.log(oddsratio) + 1.96 * se_log_or)
+        or_lb = np.exp(np.log(oddsratio) - 1.96 * se_log_or)
+        return pvalue, oddsratio, or_ub, or_lb
   
