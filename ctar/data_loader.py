@@ -120,7 +120,7 @@ def add_gene_positions(row,dictionary,gene_col='gene'):
     '''
     
     try:
-        info = dictionary[row[gene]]
+        info = dictionary[row[gene_col]]
     except: return [None]*3 # if the key does not exist in dict
     chrom = info['chromosome_name']
     if chrom.isnumeric() or (chrom=='X') or (chrom=='Y'):
