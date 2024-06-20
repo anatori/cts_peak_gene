@@ -192,7 +192,7 @@ def get_gene_coords(gene_df,gene_id_type='ensembl_gene_id',dataset='hsapiens_gen
         gene_positions[gene_id] = {attribute:line[i+1] for i,attribute in enumerate(attributes)}
 
     # add attributes to dataframe
-    genes[col_names] = genes.apply(add_gene_positions, axis=1, result_type='expand',
+    gene_df[col_names] = gene_df.apply(add_gene_positions, axis=1, result_type='expand',
                                               args=(gene_positions,gene_col))
     
-    return genes
+    return gene_df
