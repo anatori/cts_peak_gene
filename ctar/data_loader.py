@@ -82,7 +82,7 @@ def peak_to_gene(peaks_df,genes_df,clean=True,split_peaks=True,distance=500000,c
     closest_links.columns = ['peak_chr','peak_start','peak_end','peak','window_chr','window_start','window_end','gene','distance']
 
     # merge with original dataframe to obtain all information
-    peak_gene_links = closest_links.merge(peaks,on='peak')
+    peak_gene_links = closest_links.merge(peaks_clean,on='peak')
     peak_gene_links = peak_gene_links.merge(genes_clean,on='gene')
 
     peak_gene_links = peak_gene_links[[gene_col,peak_col]+['distance']]
