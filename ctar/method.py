@@ -324,7 +324,7 @@ def build_adata(mdata,gene_col='gene_name',peak_col='gene_ids',raw=False):
     mdata['rna'].var['index_x'] = range(len(mdata['rna'].var))
 
     # Only take cells which match assigned celltypes between assays
-    ct_mask = (mdata.obs['rna:celltype'] == mdata.obs['atac:celltype']).values
+    ct_mask = (mdata['rna'].obs['celltype'] == mdata['atac'].obs['celltype']).values
 
     # Initialize empty AnnData
     n = mdata[ct_mask,:].shape[0]
@@ -350,9 +350,6 @@ def build_adata(mdata,gene_col='gene_name',peak_col='gene_ids',raw=False):
 
     # Add celltypes, which should be the same between layers
     anadata.obs = mdata[ct_mask,:]['atac'].obs
-
-    # Add empty placeholder for future CT masks (if any)
-    anadata.varm['lowexp_ct_mask'] = pd.DataFrame(index=anadata.var.index)
 
     return anadata
     
