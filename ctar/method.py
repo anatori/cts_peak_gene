@@ -443,7 +443,7 @@ def get_bins(adata, num_bins=5, peak_col='gene_ids', gc=True):
     # Obtain mfa and gc content
     bins = adata.var[[peak_col]].copy()
     bins['ind'] = range(len(bins))
-    atac_X = adata.layers['atac']
+    atac_X = adata.layers['atac_raw']
     bins['mfa'] = atac_X.mean(axis=0).A1
     print('MFA done.')
 
