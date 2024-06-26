@@ -497,7 +497,7 @@ def rand_peaks(row,df=None,b=1000,bin_col='combined_mfa_gc'):
     return random.sample(row_bin_copy['ind'], k=b)
 
 
-def create_ctrl_peaks(adata,num_bins=5,b=1000,update=True,gc=True):
+def create_ctrl_peaks(adata,num_bins=5,b=1000,update=True,gc=True,peak_col='gene_ids'):
 
     ''' Obtains GC and MFA bins for ATAC peaks.
     
@@ -515,6 +515,8 @@ def create_ctrl_peaks(adata,num_bins=5,b=1000,update=True,gc=True):
     	If True, updates original AnnData with adata.varm.control_peaks.
     gc : bool
         If True, gets MFA and GC bins. Else, only gets MFA bins.
+    peak_col : str
+        Label for column containing peak IDs.
     
     Returns
     ----------
@@ -523,7 +525,7 @@ def create_ctrl_peaks(adata,num_bins=5,b=1000,update=True,gc=True):
     
     '''
     
-    bins = get_bins(adata, num_bins=num_bins, gc=gc)
+    bins = get_bins(adata, num_bins=num_bins, gc=gc, peak_col=peak_col)
     print('Get_bins done.')
     
     # Group indices for rand_peaks
