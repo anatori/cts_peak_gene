@@ -179,9 +179,9 @@ def mc_pval(del_cctrl_full,del_c):
 #####################################################################################
 
 
-def find_peak_gene_pairs(mdata):
+def cellranger_peak_gene_pairs(mdata):
     
-    '''Adds dataframe containing peak-gene pairs.
+    '''Adds dataframe containing peak-gene pairs from CellRanger.
 
     Parameters
     ----------
@@ -287,7 +287,7 @@ def add_corr(mdata):
 ################ Building AnnData for corr ####################
 
 
-def build_adata(mdata):
+def build_adata(mdata,gene_col='gene_name',peak_col='gene_ids',raw=False):
     
     '''Creates a new AnnData object for peak-gene links.
 
@@ -295,9 +295,15 @@ def build_adata(mdata):
     ----------
     mdata : mu.MuData
         MuData object of shape (#cells,#peaks). Contains DataFrame under mdata.uns.peak_gene_pairs
-        containing columns ['index_x','index_y'] that correspond to peak and gene indices in atac.X
+        and adds columns ['index_x','index_y'] that correspond to peak and gene indices in atac.X
         and rna.X respectively, as well as mdata.uns.control_peaks containing randomly generated peaks.
         If mdata.uns.control_peaks DNE, will create it.
+    gene_col : str
+        Label for gene ID column.
+    peak_col : str
+        Label for peak ID column.
+    raw : bool
+        If raw files are under mdata[modality].X, set to True.
     
     Returns
     ----------
@@ -313,6 +319,10 @@ def build_adata(mdata):
         print('Attempting to add peak-gene pairs.')
         find_peak_gene_pairs(mdata)
 
+    # Add indices
+    mdata['atac'].var['index_y'] = range(len(mdata['atac'].var))
+    mdata['rna'].var['index_x'] = range(len(mdata['rna'].var))
+
     # Only take cells which match assigned celltypes between assays
     ct_mask = (mdata.obs['rna:celltype'] == mdata.obs['atac:celltype']).values
 
@@ -321,16 +331,21 @@ def build_adata(mdata):
     m = len(mdata.uns['peak_gene_pairs'])
     anadata = ad.AnnData(np.zeros((n,m)))
 
-    # Add aligned atac and rna layers. Should be CSC format.
-    anadata.layers['atac'] = mdata['atac'].X[:,mdata.uns['peak_gene_pairs'].index_x.values][ct_mask,:]
-    anadata.layers['rna'] = mdata['rna'].X[:,mdata.uns['peak_gene_pairs'].index_y.values][ct_mask,:]
+    if not raw:
+        # Add aligned atac and rna layers. Should be CSC format.
+        anadata.layers['atac'] = mdata['atac'].X[:,mdata.uns['peak_gene_pairs'].index_x.values][ct_mask,:]
+        anadata.layers['rna'] = mdata['rna'].X[:,mdata.uns['peak_gene_pairs'].index_y.values][ct_mask,:]
 
-    # Add aligned RAW atac and rna layers. Should be CSC format.
-    anadata.layers['atac_raw'] = mdata['atac'].raw.X[:,mdata.uns['peak_gene_pairs'].index_x.values][ct_mask,:]
-    anadata.layers['rna_raw'] = mdata['rna'].raw.X[:,mdata.uns['peak_gene_pairs'].index_y.values][ct_mask,:]
+        # Add aligned RAW atac and rna layers. Should be CSC format.
+        anadata.layers['atac_raw'] = mdata['atac'].raw.X[:,mdata.uns['peak_gene_pairs'].index_x.values][ct_mask,:]
+        anadata.layers['rna_raw'] = mdata['rna'].raw.X[:,mdata.uns['peak_gene_pairs'].index_y.values][ct_mask,:]
+    else:
+        # Add aligned RAW atac and rna layers. Should be CSC format.
+        anadata.layers['atac_raw'] = mdata['atac'].X[:,mdata.uns['peak_gene_pairs'].index_x.values][ct_mask,:]
+        anadata.layers['rna_raw'] = mdata['rna'].X[:,mdata.uns['peak_gene_pairs'].index_y.values][ct_mask,:]
 
     # Add peak-gene pair descriptions
-    mdata.uns['peak_gene_pairs']['id'] = list(mdata.uns['peak_gene_pairs'].gene_ids + ' , ' + mdata.uns['peak_gene_pairs'].gene_name)
+    mdata.uns['peak_gene_pairs']['id'] = list(mdata.uns['peak_gene_pairs'][peak_col] + ' , ' + mdata.uns['peak_gene_pairs'][gene_col])
     anadata.var = mdata.uns['peak_gene_pairs'].set_index('id')
 
     # Add celltypes, which should be the same between layers
@@ -406,7 +421,7 @@ def gc_content(adata,genome_file='GRCh38.p13.genome.fa.bgz'):
     return gc
 
 
-def get_bins(adata, num_bins=5):
+def get_bins(adata, num_bins=5, peak_col='gene_ids', gc=True):
 
     ''' Obtains GC and MFA bins for ATAC peaks.
     
@@ -416,34 +431,42 @@ def get_bins(adata, num_bins=5):
         AnnData
     num_bins : int
         Number of desired bins for MFA and GC groupings.
+    peak_col : str
+        Label for peak column.
+    gc : bool
+        If True, GC content will be taken.
     
     Returns
     ----------
     bins : pd.DataFrame
-        DataFrame of length (N) with columns ['gene_ids','index_x','mfa','gc','combined_mfa_gc']
+        DataFrame of length (N) with columns [peak_col,'index_x','mfa','gc','combined_mfa_gc']
     
     '''
 
     # Obtain mfa and gc content
-    bins = adata.var[['gene_ids']].copy()
+    bins = adata.var[[peak_col]].copy()
     bins['ind'] = range(len(bins))
     atac_X = adata.layers['atac']
     bins['mfa'] = atac_X.mean(axis=0).A1
     print('MFA done.')
-    bins['gc'] = gc_content(adata)
-    print('GC done.')
+
+    if gc:
+        bins['gc'] = gc_content(adata)
+        print('GC done.')
     
     # Put into bins
     bins['mfa_bin'] = pd.qcut(bins['mfa'].rank(method='first'), num_bins, labels=False, duplicates="drop")
-    bins['gc_bin'] = pd.qcut(bins['gc'].rank(method='first'), num_bins, labels=False, duplicates="drop")
+    if gc:
+        bins['gc_bin'] = pd.qcut(bins['gc'].rank(method='first'), num_bins, labels=False, duplicates="drop")
 
     # Create combined bin
-    bins['combined_mfa_gc']=bins['mfa_bin']* 10 + bins['gc_bin']
+    if gc:
+        bins['combined_mfa_gc']=bins['mfa_bin']* 10 + bins['gc_bin']
     
     return bins
 
 
-def rand_peaks(row,df=None,b=1000):
+def rand_peaks(row,df=None,b=1000,bin_col='combined_mfa_gc'):
 
     ''' Function applied row-wise to select random peaks.
     
@@ -457,6 +480,8 @@ def rand_peaks(row,df=None,b=1000):
         all possible ['index_x'] (peak indices) for a given MFA and GC bin.
     b : int
         Number of desired random peaks for each putative peak. (B)
+    bin_col : str
+        Label for column containing bin IDs.
     
     Returns
     ----------
@@ -466,7 +491,7 @@ def rand_peaks(row,df=None,b=1000):
     '''  
 
     # Find corresponding bin for focal peak
-    row_bin = df.loc[row.combined_mfa_gc]
+    row_bin = df.loc[row[bin_col]]
     
     # Exclude main peak
     row_bin_copy = row_bin[row_bin!=row.name]
@@ -475,7 +500,7 @@ def rand_peaks(row,df=None,b=1000):
     return random.sample(row_bin_copy['ind'], k=b)
 
 
-def create_ctrl_peaks(adata,num_bins=5,b=1000,update=True):
+def create_ctrl_peaks(adata,num_bins=5,b=1000,update=True,gc=True):
 
     ''' Obtains GC and MFA bins for ATAC peaks.
     
@@ -491,6 +516,8 @@ def create_ctrl_peaks(adata,num_bins=5,b=1000,update=True):
         Number of desired random peaks per focal peak-gene pair.
     update : bool
     	If True, updates original AnnData with adata.varm.control_peaks.
+    gc : bool
+        If True, gets MFA and GC bins. Else, only gets MFA bins.
     
     Returns
     ----------
@@ -499,15 +526,20 @@ def create_ctrl_peaks(adata,num_bins=5,b=1000,update=True):
     
     '''
     
-    bins = get_bins(adata, num_bins=num_bins)
+    bins = get_bins(adata, num_bins=num_bins, gc=gc)
     print('Get_bins done.')
     
     # Group indices for rand_peaks
-    bins_grouped = bins[['ind','combined_mfa_gc']].groupby(['combined_mfa_gc']).agg(list)
-    
-    # Generate random peaks
-    ctrl_peaks = bins.apply(rand_peaks,axis=1,df=bins_grouped,b=b)
-    print('Rand_peaks done.')
+    if gc:
+        bins_grouped = bins[['ind','combined_mfa_gc']].groupby(['combined_mfa_gc']).agg(list)
+        # Generate random peaks
+        ctrl_peaks = bins.apply(rand_peaks,axis=1,df=bins_grouped,b=b)
+        print('Rand_peaks done.')
+    else:
+        bins_grouped = bins[['ind','mfa_bin']].groupby(['mfa_bin']).agg(list)
+        # Generate random peaks
+        ctrl_peaks = bins.apply(rand_peaks,axis=1,df=bins_grouped,b=b,bin_col='mfa_bin')
+        print('Rand_peaks done.')
     
     # Make into array
     ctrl_peaks = ctrl_peaks.apply(lambda x: np.array(x))
