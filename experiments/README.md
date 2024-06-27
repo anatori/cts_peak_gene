@@ -3,4 +3,8 @@
 - Explore sample dataset [NEATseq](https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSE178707)
 - Compute enrichment with CRISPRi-FlowFISH links from [Nasser Nat 2021](https://www.nature.com/articles/s41586-021-03446-x)
 - Compare with Signac and SCENT
+### Compute poisson coefficient `job.poisscoeff`
+- Compute control poisson coefficients in parallel with `ctar.sbatch`
+### Run SCENT `job.scent`
+### Run Signac `job.signac`
 
