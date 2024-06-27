@@ -374,6 +374,7 @@ def create_ctrl_peaks(adata,num_bins=5,b=1000,update=True,gc=True,peak_col='gene
     
     # Generate random peaks
     ctrl_peaks = np.empty((len(bins),b))
+    # iterate through each row of bins
     for i,peak in enumerate(bins.itertuples()):
         if gc: row_bin = bins_grouped.loc[peak.combined_mfa_gc]
         else: row_bin = bins_grouped.loc[peak.mfa_bin]
@@ -383,7 +384,7 @@ def create_ctrl_peaks(adata,num_bins=5,b=1000,update=True,gc=True,peak_col='gene
     
     # for duplicated peaks, simply copy these rows
     # since they will be compared with different genes anyway
-    ind,_ = pd.factorize(adata.var.peak)
+    ind,_ = pd.factorize(adata.var[peak_col])
     ctrl_peaks = ctrl_peaks[ind,:].astype(int)
 
     if update:
