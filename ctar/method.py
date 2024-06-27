@@ -306,10 +306,19 @@ def get_bins(adata, num_bins=5, peak_col='gene_ids', gc=True):
     
     '''
 
+    # start emtpy df
+    bins = pd.DataFrame()
+    # duplicated peaks will be in the same bin
+    # to avoid this, filter them out first
+    unique = ~adata.var.duplicated(subset='peak')
+
     # Obtain mfa and gc content
-    bins = adata.var[[peak_col]].copy()
-    bins['ind'] = range(len(bins))
-    atac_X = adata.layers['atac_raw']
+    bins['peak'] = adata.var[peak_col][unique]
+    # accessing by row is faster
+    adata.var['index_z'] = range(len(adata.var))
+    bins['ind'] = adata.var.index_z[unique]
+    # only take the unique peak info
+    atac_X = adata[:,unique].layers['atac_raw']
     bins['mfa'] = atac_X.mean(axis=0).A1
     print('MFA done.')
 
@@ -319,48 +328,13 @@ def get_bins(adata, num_bins=5, peak_col='gene_ids', gc=True):
     
     # Put into bins
     bins['mfa_bin'] = pd.qcut(bins['mfa'].rank(method='first'), num_bins, labels=False, duplicates="drop")
+    
     if gc:
         bins['gc_bin'] = pd.qcut(bins['gc'].rank(method='first'), num_bins, labels=False, duplicates="drop")
-
-    # Create combined bin
-    if gc:
+        # create combined bin if mfa+gc is included
         bins['combined_mfa_gc']=bins['mfa_bin']* 10 + bins['gc_bin']
     
     return bins
-
-
-def rand_peaks(row,df=None,b=1000,bin_col='combined_mfa_gc'):
-
-    ''' Function applied row-wise to select random peaks.
-    
-    Parameters
-    ----------
-    row : row of pd.DataFrame
-        A row of a pd.DataFrame containing ['combined_mfa_gc'] (bin ID) column and
-        ['index_x'] (peak indices).
-    df : pd.DataFrame
-        DataFrame of length (#bins) where each value corresponds to a list containing 
-        all possible ['index_x'] (peak indices) for a given MFA and GC bin.
-    b : int
-        Number of desired random peaks for each putative peak. (B)
-    bin_col : str
-        Label for column containing bin IDs.
-    
-    Returns
-    ----------
-    row_rand_peaks : np.array
-        Array of length (B,) with randomly sampled peaks for the given row.
-    
-    '''  
-
-    # Find corresponding bin for focal peak
-    row_bin = df.loc[row[bin_col]]
-    
-    # Exclude main peak
-    row_bin_copy = row_bin[row_bin!=row.name]
-    
-    # Return b randomly sampled peaks from that bin
-    return random.sample(row_bin_copy['ind'], k=b)
 
 
 def create_ctrl_peaks(adata,num_bins=5,b=1000,update=True,gc=True,peak_col='gene_ids'):
@@ -395,24 +369,25 @@ def create_ctrl_peaks(adata,num_bins=5,b=1000,update=True,gc=True,peak_col='gene
     print('Get_bins done.')
     
     # Group indices for rand_peaks
-    if gc:
-        bins_grouped = bins[['ind','combined_mfa_gc']].groupby(['combined_mfa_gc']).agg(list)
-        # Generate random peaks
-        ctrl_peaks = bins.apply(rand_peaks,axis=1,df=bins_grouped,b=b)
-        print('Rand_peaks done.')
-    else:
-        bins_grouped = bins[['ind','mfa_bin']].groupby(['mfa_bin']).agg(list)
-        # Generate random peaks
-        ctrl_peaks = bins.apply(rand_peaks,axis=1,df=bins_grouped,b=b,bin_col='mfa_bin')
-        print('Rand_peaks done.')
+    if gc: bins_grouped = bins[['ind','combined_mfa_gc']].groupby(['combined_mfa_gc']).ind.apply(np.array)
+    else: bins_grouped = bins[['ind','mfa_bin']].groupby(['mfa_bin']).ind.apply(np.array)
     
-    # Make into array
-    ctrl_peaks = ctrl_peaks.apply(lambda x: np.array(x))
-    ctrl_peaks = np.vstack(ctrl_peaks.array)
+    # Generate random peaks
+    ctrl_peaks = np.empty((len(bins),b))
+    for i,peak in enumerate(bins.itertuples()):
+        if gc: row_bin = bins_grouped.loc[peak.combined_mfa_gc]
+        else: row_bin = bins_grouped.loc[peak.mfa_bin]
+        row_bin_copy = row_bin[row_bin!=peak.ind]
+        ctrl_peaks[i] = np.random.choice(row_bin_copy, size=(b,), replace=False)
     print('Ctrl index array done.')
+    
+    # for duplicated peaks, simply copy these rows
+    # since they will be compared with different genes anyway
+    ind,_ = pd.factorize(adata.var.peak)
+    ctrl_peaks = ctrl_peaks[ind,:].astype(int)
 
     if update:
-        # Add mdata.uns.control_peaks
+        # Add adata.varm.control_peaks
         adata.varm['control_peaks'] = ctrl_peaks
     
     return ctrl_peaks
