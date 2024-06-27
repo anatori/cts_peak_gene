@@ -800,22 +800,26 @@ def fit_poisson(x,y,return_none=True):
             return 0
 
 
-def get_poiss_coeff(adata,binarize=False):
+def get_poiss_coeff(adata,layer='raw',binarize=False,label='poiss_coeff'):
 
     # If binarizing, convert to bool then int
     # so that statsmodel can handle it
     if binarize:
-        x = adata.layers['atac_raw'].astype(bool).astype(int).A
+        x = adata.layers['atac_'+layer].astype(bool).astype(int)
     else:
-        x = adata.layers['atac_raw'].A
-    y = adata.layers['rna_raw'].A
+        x = adata.layers['atac_'+layer]
+    if sp.sparse.issparse(x):
+        x = x.A
+    y = adata.layers['rna_'+layer]
+    if sp.sparse.issparse(y):
+        y = y.A
 
     coeffs = []
     failed = []
 
     # Calculate poisson coefficient for each peak gene pair
     for i in tqdm(np.arange(adata.shape[1])):
-        coeff_ = fit_poisson(x[:,i],y[:, i])
+        coeff_ = ctar.method.fit_poisson(x[:,i],y[:, i])
         if not coeff_.any(): failed.append(i)
         else: coeffs.append(coeff_)
 
@@ -824,7 +828,7 @@ def get_poiss_coeff(adata,binarize=False):
     idx = np.delete(idx,failed)
     adata = adata[:,idx].copy()
     # Save ATAC term coefficient in adata.var
-    adata.var['poiss_coeff'] = np.array(coeffs)
+    adata.var[label] = np.array(coeffs)
 
     return adata
 
@@ -861,3 +865,65 @@ def get_control_deltas(ct_adata,other_adata):
     deltas = ct_adata.varm['control_corr'] - other_adata.varm['control_corr']
     ct_adata.varm['delta_control_corr'] = deltas
     return deltas
+
+
+
+############# stratified corr #################################
+
+def stratified_adata(adata,neighbors='leiden'):
+    ''' Stratify ATAC and RNA information within neighborhood groupings by
+    descending count.
+    
+    Parameters
+    ----------
+    adata : AnnData
+        AnnData peak-gene linked object with layers ['atac_raw'] and ['rna_raw'].
+    neighbors : str
+        The column name in adata.obs containing neighborhood groupings.
+
+    Returns
+    -------
+    adata : AnnData
+        adata object with new layers ['atac_strat'] and ['rna_strat']. The vars axis
+        will remain the same, while the obs axis will be sorted independently within
+        neighborhood groupings in descending peak acc. and gene exp. order.
+    
+    '''
+    
+    # get the sizes of each neighborhood group
+    neighborhood_sizes = adata.obs[neighbors].value_counts(sort=False)
+    
+    # sort adata by neighborhood grouping
+    stratified_order = adata.obs[neighbors].sort_values().index
+    sorted_adata = adata[stratified_order,:]
+    atac = sorted_adata.layers['atac_raw'].A
+    rna = sorted_adata.layers['rna_raw'].A
+
+    stratified_atac = []
+    stratified_rna = []
+    
+    for i in neighborhood_sizes.values:
+        
+        # get first group of neighbors
+        atac_i, rna_i = atac[:i,:], rna[:i,:]
+        
+        # sort in descending order
+        atac_i = -np.sort(-atac_i,axis=0)
+        rna_i = -np.sort(-rna_i,axis=0)
+        
+        # remove the first group of neighbors
+        atac, rna = atac[i:,:], rna[i:,:]
+
+        # append to list
+        stratified_atac.append(atac_i)
+        stratified_rna.append(rna_i)
+
+    # turn into arrays
+    stratified_atac = np.vstack(stratified_atac)
+    stratified_rna = np.vstack(stratified_rna)
+
+    adata.layers['atac_strat'] = stratified_atac
+    adata.layers['rna_strat'] = stratified_rna
+
+    return adata
+

@@ -1,8 +1,10 @@
+LICENSE
 README.md
 setup.py
 ctar/__init__.py
 ctar/data_loader.py
 ctar/method.py
+ctar/plot.py
 ctar/simu.py
 ctar/util.py
 ctar/version.py
