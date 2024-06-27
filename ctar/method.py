@@ -12,6 +12,7 @@ from Bio.SeqUtils import gc_fraction
 import anndata as ad
 import scanpy as sc
 import muon as mu
+import sklearn as sk
 
 
 
@@ -819,7 +820,7 @@ def get_poiss_coeff(adata,layer='raw',binarize=False,label='poiss_coeff'):
 
     # Calculate poisson coefficient for each peak gene pair
     for i in tqdm(np.arange(adata.shape[1])):
-        coeff_ = ctar.method.fit_poisson(x[:,i],y[:, i])
+        coeff_ = fit_poisson(x[:,i],y[:, i])
         if not coeff_.any(): failed.append(i)
         else: coeffs.append(coeff_)
 
@@ -870,6 +871,7 @@ def get_control_deltas(ct_adata,other_adata):
 
 ############# stratified corr #################################
 
+
 def stratified_adata(adata,neighbors='leiden'):
     ''' Stratify ATAC and RNA information within neighborhood groupings by
     descending count.
@@ -899,6 +901,16 @@ def stratified_adata(adata,neighbors='leiden'):
     atac = sorted_adata.layers['atac_raw'].A
     rna = sorted_adata.layers['rna_raw'].A
 
+    stratified_atac, stratified_rna = build_strat_layers(atac, rna, neighborhood_sizes)
+
+    adata.layers['atac_strat'] = stratified_atac
+    adata.layers['rna_strat'] = stratified_rna
+
+    return adata
+
+
+def build_strat_layers(atac,rna,neighborhood_sizes):
+    
     stratified_atac = []
     stratified_rna = []
     
@@ -922,8 +934,53 @@ def stratified_adata(adata,neighbors='leiden'):
     stratified_atac = np.vstack(stratified_atac)
     stratified_rna = np.vstack(stratified_rna)
 
-    adata.layers['atac_strat'] = stratified_atac
-    adata.layers['rna_strat'] = stratified_rna
+    return stratified_atac,stratified_rna
 
-    return adata
+
+def shuffled_poiss_coeff(adata,neighbors='leiden',b=200):
+
+    ''' Shuffle peak and genes together, row-wise, then compute the poisson
+    coefficient, b times.
+    
+    Parameters
+    ----------
+    adata : AnnData
+        AnnData peak-gene linked object with layers ['atac_strat'] and ['rna_strat'].
+    neighbors : str
+        The column name in adata.obs containing neighborhood groupings.
+    b : int
+        The number of repetitions/times to shuffle.
+
+    Returns
+    -------
+    coeffs : np.array
+        Array of shape (#links,b), containing poisson coefficient for shuffled,
+        stratified peak-gene pairs.
+    
+    '''
+
+    # mantain neighborhood sizes from original adata.obs
+    neighborhood_sizes = adata.obs[neighbors].value_counts(sort=False)
+
+    coeffs = []
+    
+    for j in np.arange(b):
+        
+        # shuffle peak and genes together, row-wise
+        atac_shuffled, rna_shuffled = sk.utils.shuffle(adata.layers['atac_strat'], adata.layers['rna_strat'], random_state=b+10)
+        # arange shuffled rows into descending order within a strata
+        strat_shuff_atac, strat_shuff_rna = build_strat_layers(atac_shuffled, rna_shuffled, neighborhood_sizes)
+    
+        coeffs_i = []
+        for i in np.arange(adata.shape[1]):
+            # obtain poisson coeff for all peak-gene pairs for shuffled cells 
+            coeff_ = fit_poisson(strat_shuff_atac[:,i],strat_shuff_rna[:, i])
+            coeffs_i.append(coeff_)
+        coeffs_i = np.array(coeffs_i)
+        coeffs.append(coeffs_i)
+        
+    coeffs = np.vstack(coeffs)
+
+    return coeffs
+
 
