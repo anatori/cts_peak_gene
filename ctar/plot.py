@@ -41,12 +41,12 @@ def multiome_trackplot(df, adata, sortby = 'theta_0', coeff_label = 'coeff', coe
     Parameters
     ----------
     df : pd.DataFrame
-        DataFrame containing peak-gene links labelled with "gene_name" existing in 
-        mdata.mod['RNA'] index, and "gene_ids" existing in mdata.mod['ATAC'] index
+        DataFrame containing peak-gene links labelled with "gene" existing in 
+        mdata.mod['RNA'] index, and "peak" existing in mdata.mod['ATAC'] index
         for each peak-gene link. Contains column sortby.
     adata : ad.AnnData
         AnnData object. Should contain ATAC modality and RNA modality with var
-        attribute indices as "gene_name" and "gene_ids" respectively.
+        attribute indices as "gene" and "peak" respectively.
     sortby : str
         Column in df by which to order plot.
     top_n : int
@@ -87,13 +87,13 @@ def multiome_trackplot(df, adata, sortby = 'theta_0', coeff_label = 'coeff', coe
         )
 
     # extract gene and peak ids
-    y_axis_rna = sorted_df.gene_name.values
-    y_axis_atac = sorted_df.gene_ids.values
+    y_axis_rna = sorted_df.gene.values
+    y_axis_atac = sorted_df.peak.values
     x_axis = np.arange(adata_sorted.shape[0])
 
     # extract relevant raw gene and peak information
-    rna = adata_sorted[:,adata_sorted.var.gene_name.isin(y_axis_rna.tolist())].layers['rna_raw'].A
-    atac = adata_sorted[:,adata_sorted.var.gene_ids.isin(y_axis_atac.tolist())].layers['atac_raw'].A
+    rna = adata_sorted[:,adata_sorted.var.gene.isin(y_axis_rna.tolist())].layers['rna_raw'].A
+    atac = adata_sorted[:,adata_sorted.var.peak.isin(y_axis_atac.tolist())].layers['atac_raw'].A
 
     # take ylims for plotting
     maxpos = max(np.max(rna),np.max(atac))
