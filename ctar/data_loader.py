@@ -3,6 +3,8 @@ import pybedtools
 from biomart import BiomartServer
 import numpy as np
 import pandas as pd 
+import muon as mu
+import anndata as ad
 
 
 def peak_to_gene(peaks_df,genes_df,clean=True,split_peaks=True,distance=500000,col_names=['chr','start','end'],
