@@ -808,7 +808,7 @@ def shuffled_poiss_coeff(adata,neighbors='leiden',b=200):
     for j in np.arange(b):
         
         # shuffle peak and genes together, row-wise
-        atac_shuffled, rna_shuffled = sk.utils.shuffle(adata.layers['atac_strat'], adata.layers['rna_strat'], random_state=b+10)
+        atac_shuffled, rna_shuffled = sk.utils.shuffle(adata.layers['atac_strat'], adata.layers['rna_strat'])
         # arange shuffled rows into descending order within a strata
         strat_shuff_atac, strat_shuff_rna = build_strat_layers(atac_shuffled, rna_shuffled, neighborhood_sizes)
     
