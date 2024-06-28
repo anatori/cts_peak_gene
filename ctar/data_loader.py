@@ -59,14 +59,15 @@ def peak_to_gene(peaks_df,genes_df,clean=True,split_peaks=True,distance=500000,c
     if clean:
         genes_clean = genes_df[~genes_df[col_names[0]].isna()] # assumes first item in col_names is chr label
         genes_clean = genes_clean[genes_clean.chr.str.startswith('chr')] # removes non chr mapped genes
-        genes_clean[col_names[1:]] = genes_clean[col_names[1:]].astype(int)
     else: genes_clean = genes_df
 
     if split_peaks:
         peaks_clean = peaks_df.copy()
         peaks_clean[col_names] = peaks_clean[peak_col].str.extract(r'(\w+):(\d+)-(\d+)')
-        peaks_clean[col_names[1:]] = peaks_clean[col_names[1:]].astype(int)
     else: peaks_clean = peaks_df
+
+    genes_clean[col_names[1:]] = genes_clean[col_names[1:]].astype(int)
+    peaks_clean[col_names[1:]] = peaks_clean[col_names[1:]].astype(int)
 
     # creates temp bedtool files
     peaks_bed = BedTool.from_dataframe(peaks_clean[col_names+[peak_col]]).sort()
@@ -80,11 +81,11 @@ def peak_to_gene(peaks_df,genes_df,clean=True,split_peaks=True,distance=500000,c
 
     # save as dataframe
     closest_links = closest_links.to_dataframe()
-    closest_links.columns = ['peak_chr','peak_start','peak_end','peak','window_chr','window_start','window_end','gene','distance']
+    closest_links.columns = ['peak_chr','peak_start','peak_end',peak_col,'window_chr','window_start','window_end',gene_col,'distance']
 
     # merge with original dataframe to obtain all information
-    peak_gene_links = closest_links.merge(peaks_clean,on='peak')
-    peak_gene_links = peak_gene_links.merge(genes_clean,on='gene')
+    peak_gene_links = closest_links.merge(peaks_clean,on=peak_col)
+    peak_gene_links = peak_gene_links.merge(genes_clean,on=gene_col)
 
     peak_gene_links = peak_gene_links[[gene_col,peak_col]+['distance']]
     
@@ -217,7 +218,9 @@ def build_adata(mdata,gene_col='gene_name',peak_col='gene_ids',raw=False):
     peak_col : str
         Label for peak ID column.
     raw : bool
-        If raw files are under mdata[modality].X, set to True.
+        If raw files are under mdata[modality].X, set to True. If False, will take values from 
+        mdata[modality].X as anadata.layers[modality] and set mdata[modality].layers['counts'] as 
+        anadata.layers[modality+'_raw'].
     
     Returns
     ----------
@@ -252,6 +255,10 @@ def build_adata(mdata,gene_col='gene_name',peak_col='gene_ids',raw=False):
         # Add aligned atac and rna layers. Should be CSC format.
         anadata.layers['atac'] = mdata['atac'][:,peaks].X[ct_mask,:]
         anadata.layers['rna'] = mdata['rna'][:,genes].X[ct_mask,:]
+
+        # Add raw
+        anadata.layers['atac_raw'] = mdata['atac'][:,peaks].layers['counts'][ct_mask,:]
+        anadata.layers['rna_raw'] = mdata['rna'][:,genes].layers['counts'][ct_mask,:]
 
     else:
         anadata.layers['atac_raw'] = mdata['atac'][:,peaks].X[ct_mask,:]
