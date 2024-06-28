@@ -209,7 +209,8 @@ def build_adata(mdata,gene_col='gene_name',peak_col='gene_ids',raw=False):
     mdata : mu.MuData
         MuData object of shape (#cells,#peaks). Contains DataFrame under mdata.uns.peak_gene_pairs
         and adds columns ['index_x','index_y'] that correspond to peak and gene indices in atac.X
-        and rna.X respectively, as well as mdata.uns.control_peaks containing randomly generated peaks.
+        and rna.X respectively. 'gene_col' should be the index of mdata['rna'].var, and 'peak_col'
+        should be the index of mdata['atac'].var.
         If mdata.uns.control_peaks DNE, will create it.
     gene_col : str
         Label for gene ID column.
@@ -244,21 +245,20 @@ def build_adata(mdata,gene_col='gene_name',peak_col='gene_ids',raw=False):
     m = len(mdata.uns['peak_gene_pairs'])
     anadata = ad.AnnData(np.zeros((n,m)))
 
+    genes = mdata.uns['peak_gene_pairs'][gene_col].values
+    peaks = mdata.uns['peak_gene_pairs'][peak_col].values
+
     if not raw:
         # Add aligned atac and rna layers. Should be CSC format.
-        anadata.layers['atac'] = mdata['atac'].X[:,mdata.uns['peak_gene_pairs'].index_x.values][ct_mask,:]
-        anadata.layers['rna'] = mdata['rna'].X[:,mdata.uns['peak_gene_pairs'].index_y.values][ct_mask,:]
+        anadata.layers['atac'] = mdata['atac'][:,peaks].X[ct_mask,:]
+        anadata.layers['rna'] = mdata['rna'][:,genes].X[ct_mask,:]
 
-        # Add aligned RAW atac and rna layers. Should be CSC format.
-        anadata.layers['atac_raw'] = mdata['atac'].raw.X[:,mdata.uns['peak_gene_pairs'].index_x.values][ct_mask,:]
-        anadata.layers['rna_raw'] = mdata['rna'].raw.X[:,mdata.uns['peak_gene_pairs'].index_y.values][ct_mask,:]
     else:
-        # Add aligned RAW atac and rna layers. Should be CSC format.
-        anadata.layers['atac_raw'] = mdata['atac'].X[:,mdata.uns['peak_gene_pairs'].index_x.values][ct_mask,:]
-        anadata.layers['rna_raw'] = mdata['rna'].X[:,mdata.uns['peak_gene_pairs'].index_y.values][ct_mask,:]
+        anadata.layers['atac_raw'] = mdata['atac'][:,peaks].X[ct_mask,:]
+        anadata.layers['rna_raw'] = mdata['rna'][:,genes].X[ct_mask,:]
 
     # Add peak-gene pair descriptions
-    mdata.uns['peak_gene_pairs']['id'] = list(mdata.uns['peak_gene_pairs'][peak_col] + ' , ' + mdata.uns['peak_gene_pairs'][gene_col])
+    mdata.uns['peak_gene_pairs']['id'] = list(mdata.uns['peak_gene_pairs'][peak_col] + ',' + mdata.uns['peak_gene_pairs'][gene_col])
     anadata.var = mdata.uns['peak_gene_pairs'].set_index('id')
 
     # Add celltypes, which should be the same between layers
