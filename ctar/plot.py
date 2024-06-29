@@ -22,9 +22,9 @@ def plot_line_collection(ax, x, y, colors):
     ax.add_collection(lc)
 
 # sorting helper
-def sortby_ct_adata(adata):
+def sortby_ct_adata(adata,obs_col='celltype'):
     
-    color_axis = adata.sort_values('celltype') # assumes rna is the same as atac
+    color_axis = adata.obs.sort_values(obs_col) # assumes rna is the same as atac
     
     return adata[color_axis.index,:]
 
@@ -32,8 +32,9 @@ def sortby_ct_adata(adata):
 
 
 
-def multiome_trackplot(df, adata, sortby = 'theta_0', coeff_label = 'coeff', coeff = 'theta_0', pval = 'mc_pval', ascending = False, top_n = 10,
-                       adata_sort = False, presorted = False, sort_cells = 'rna', height = 5, width = 18, axlim = None):
+def multiome_trackplot(df, adata, sortby = 'poiss_coeff', coeff_label = 'coeff', coeff = 'poiss_coeff', pval = 'mc_pval', 
+                        ascending = False, top_n = 10, adata_sort = False, presorted = False, sort_cells = 'rna', obs_col='celltype',
+                        height = 5, width = 18, axlim = None):
 
     """Custom trackplot for showing ATAC and RNA information for top peak-gene pairs across all cells, sorted by
     celltype. Within celltype, both ATAC and RNA results are sorted by cells with the highest RNA expression.
@@ -107,7 +108,7 @@ def multiome_trackplot(df, adata, sortby = 'theta_0', coeff_label = 'coeff', coe
         raise ValueError('number of cell must be the same between modalities.')
 
     # get ct labels and number of cells
-    cts = adata_sorted.obs.celltype # ct should be the same between groups so im using rna as ref
+    cts = adata_sorted.obs[obs_col] # ct should be the same between groups so im using rna as ref
     ct_sizes = [0]+[np.sum(cts == ct) for ct in cts.unique()] # get group lengths
     ct_sizes = np.cumsum(np.array(ct_sizes))
     
