@@ -758,30 +758,35 @@ def build_strat_layers(atac,rna,neighborhood_sizes):
     for i in neighborhood_sizes.values:
         
         # get first group of neighbors
-        atac_i, rna_i = atac[:i,:], rna[:i,:]
-        
         # sort in descending order
-        atac_i = -np.sort(-atac_i,axis=0)
-        rna_i = -np.sort(-rna_i,axis=0)
+        atac_i = -np.sort(-atac[:i,:],axis=0)
         
         # remove the first group of neighbors
-        atac, rna = atac[i:,:], rna[i:,:]
+        atac = atac[i:,:]
 
         # append to list
         stratified_atac.append(atac_i)
-        stratified_rna.append(rna_i)
+
+
+        if rna is not None:
+
+            rna_i = -np.sort(-rna_i[:i,:],axis=0)
+            rna = rna[i:,:]
+            stratified_rna.append(rna_i)
 
     # turn into arrays
     stratified_atac = np.vstack(stratified_atac)
-    stratified_rna = np.vstack(stratified_rna)
+    
+    if rna is not None:
+        stratified_rna = np.vstack(stratified_rna)
+        return stratified_atac,stratified_rna
 
-    return stratified_atac,stratified_rna
+    return stratified_atac
 
 
 def shuffled_poiss_coeff(adata,neighbors='leiden',b=200):
 
-    ''' Shuffle peak and genes together, row-wise, then compute the poisson
-    coefficient, b times.
+    ''' Shuffle peaks row-wise, then compute the poisson coefficient, b times.
     
     Parameters
     ----------
@@ -808,14 +813,15 @@ def shuffled_poiss_coeff(adata,neighbors='leiden',b=200):
     for j in np.arange(b):
         
         # shuffle peak and genes together, row-wise
-        atac_shuffled, rna_shuffled = sk.utils.shuffle(adata.layers['atac_strat'], adata.layers['rna_strat'])
+        atac_shuffled = np.random.shuffle(adata.layers['atac_strat'])
+        rna = adata.layers['rna_strat']
         # arange shuffled rows into descending order within a strata
-        strat_shuff_atac, strat_shuff_rna = build_strat_layers(atac_shuffled, rna_shuffled, neighborhood_sizes)
+        strat_shuff_atac = build_strat_layers(atac_shuffled, None, neighborhood_sizes)
     
         coeffs_i = []
         for i in np.arange(adata.shape[1]):
             # obtain poisson coeff for all peak-gene pairs for shuffled cells 
-            coeff_ = fit_poisson(strat_shuff_atac[:,i],strat_shuff_rna[:, i])
+            coeff_ = fit_poisson(strat_shuff_atac[:,i],rna[:, i])
             coeffs_i.append(coeff_)
         coeffs_i = np.array(coeffs_i)
         coeffs.append(coeffs_i)
