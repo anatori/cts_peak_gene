@@ -812,22 +812,27 @@ def shuffled_poiss_coeff(adata,neighbors='leiden',b=200):
     
     for j in np.arange(b):
         
-        # shuffle peak and genes together, row-wise
-        atac_shuffled = np.random.shuffle(adata.layers['atac_strat'])
+        atac = adata.layers['atac_strat']
         rna = adata.layers['rna_strat']
+        
+        # shuffle peaks only
+        inds = np.arange(len(atac))
+        np.random.shuffle(inds)
+        atac = atac[inds]
+
         # arange shuffled rows into descending order within a strata
-        strat_shuff_atac = build_strat_layers(atac_shuffled, None, neighborhood_sizes)
+        atac = build_strat_layers(atac, None, neighborhood_sizes)
     
         coeffs_i = []
         for i in np.arange(adata.shape[1]):
             # obtain poisson coeff for all peak-gene pairs for shuffled cells 
-            coeff_ = fit_poisson(strat_shuff_atac[:,i],rna[:, i])
+            coeff_ = ctar.method.fit_poisson(atac[:,i],rna[:, i])
             coeffs_i.append(coeff_)
         coeffs_i = np.array(coeffs_i)
         coeffs.append(coeffs_i)
         
     coeffs = np.vstack(coeffs)
 
-    return coeffs
+    return coeffs.T
 
 
