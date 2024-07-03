@@ -826,7 +826,7 @@ def shuffled_poiss_coeff(adata,neighbors='leiden',b=200):
         coeffs_i = []
         for i in np.arange(adata.shape[1]):
             # obtain poisson coeff for all peak-gene pairs for shuffled cells 
-            coeff_ = ctar.method.fit_poisson(atac[:,i],rna[:, i])
+            coeff_ = fit_poisson(atac[:,i],rna[:, i])
             coeffs_i.append(coeff_)
         coeffs_i = np.array(coeffs_i)
         coeffs.append(coeffs_i)
