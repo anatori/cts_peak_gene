@@ -770,7 +770,7 @@ def build_strat_layers(atac,rna,neighborhood_sizes):
 
         if rna is not None:
 
-            rna_i = -np.sort(-rna_i[:i,:],axis=0)
+            rna_i = -np.sort(-rna[:i,:],axis=0)
             rna = rna[i:,:]
             stratified_rna.append(rna_i)
 
