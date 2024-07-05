@@ -5,6 +5,7 @@ import numpy as np
 import pandas as pd 
 import muon as mu
 import anndata as ad
+import scanpy as sc
 
 
 def peak_to_gene(peaks_df,genes_df,clean=True,split_peaks=True,distance=500000,col_names=['chr','start','end'],
@@ -200,6 +201,78 @@ def get_gene_coords(gene_df,gene_id_type='ensembl_gene_id',dataset='hsapiens_gen
     return gene_df
 
 
+def preprocess_mu(mdata,
+    min_genes = 250,
+    min_cells = 50,
+    counts_per_cell_after = 1e4,
+    n_cells_by_counts = 10,
+    n_genes_by_counts_min = 2000,
+    n_genes_by_counts_max = 15000,
+    total_counts_min = 4000,
+    total_counts_max = 40000
+    ):
+
+    '''Preprocess MuData. Adapted from ./experiments/job.mz/explore.ipynb
+
+    Parameters
+    ----------
+    mdata : mu.MuData
+        MuData object of shape (#cells,#peaks/#genes), containing RNA and ATAC modalities.
+    ..parameters : int
+        See Muon, scanpy functions.
+    
+    Returns
+    ----------
+    pp_mdata : mu.MuData
+        Preprocessed MuData object of shape (#cells,#peaks/#genes), containing RNA and ATAC modalities.
+    
+    '''
+
+    # Raw adata_rna & adata_atac
+    adata_rna = mdata.mod['rna'].copy()
+    adata_rna.X = adata_rna.X.astype(np.float32) # float32 to reduce memory cost
+    adata_rna.var_names = [dic_id2sym[x] if x in dic_id2sym else x for x in adata_rna.var_names]
+    adata_atac = mdata.mod['atac'].copy()
+    adata_atac.X = adata_atac.X.astype(np.float32) # float32 to reduce memory cost
+    print('Raw, adata_rna', adata_rna.shape, 'adata_atac', adata_atac.shape)
+
+    # Filtering & normalization of RNA (using scanpy) (in log scale)
+    sc.pp.filter_cells(adata_rna, min_genes = min_genes)
+    sc.pp.filter_genes(adata_rna, min_cells = min_cells)
+    # save raw data
+    adata_rna.X.raw = adata_rna.X
+    # normalize
+    sc.pp.normalize_per_cell(adata_rna, counts_per_cell_after = counts_per_cell_after)
+    sc.pp.log1p(adata_rna)
+    print('Filtering & normalization of RNA', adata_rna.shape)
+
+    # Filtering & normalization of ATAC (using mu) (in log scale)
+    # Following tutorial https://muon-tutorials.readthedocs.io/en/latest/
+    # single-cell-rna-atac/pbmc10k/2-Chromatin-Accessibility-Processing.html
+    sc.pp.calculate_qc_metrics(adata_atac, percent_top=None, log1p=False, inplace=True)
+    mu.pp.filter_var(adata_atac, 'n_cells_by_counts', lambda x: x >= n_cells_by_counts)
+    mu.pp.filter_obs(adata_atac, 'n_genes_by_counts', lambda x: (x >= n_genes_by_counts_min) & (x <= n_genes_by_counts_max))
+    mu.pp.filter_obs(adata_atac, 'total_counts', lambda x: (x >= total_counts_min) & (x <= total_counts_max))
+    # save raw data
+    adata_atac.X.raw = adata_atac.X
+    # normalize
+    sc.pp.normalize_per_cell(adata_atac, counts_per_cell_after = counts_per_cell_after)
+    sc.pp.log1p(adata_atac)
+    print('Filtering & normalization of ATAC', adata_atac.shape)
+
+    # Align cells
+    cell_list = [x for x in adata_rna.obs_names if x in set(adata_atac.obs_names)]
+    adata_rna = adata_rna[cell_list, :].copy()
+    adata_atac = adata_atac[cell_list, :].copy()
+    print('Align cells, adata_rna', adata_rna.shape, 'adata_atac', adata_atac.shape)
+
+    pp_mdata = mu.MuData({'atac':adata_atac,'rna':adata_rna})
+
+    return pp_mdata
+
+
+
+######## archived #############
 
 def build_adata(mdata,gene_col='gene_name',peak_col='gene_ids',raw=False):
     
