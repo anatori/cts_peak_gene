@@ -70,6 +70,10 @@ def peak_to_gene(peaks_df,genes_df,clean=True,split_peaks=True,distance=500000,c
     genes_clean[col_names[1:]] = genes_clean[col_names[1:]].astype(int)
     peaks_clean[col_names[1:]] = peaks_clean[col_names[1:]].astype(int)
 
+    # add indices
+    genes_clean = range(len(genes_clean))
+    peaks_clean = range(len(peaks_clean))
+
     # creates temp bedtool files
     peaks_bed = BedTool.from_dataframe(peaks_clean[col_names+[peak_col]]).sort()
     genes_bed = BedTool.from_dataframe(genes_clean[col_names+[gene_col]]).sort()
