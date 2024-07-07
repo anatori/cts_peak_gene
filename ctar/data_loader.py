@@ -92,7 +92,7 @@ def peak_to_gene(peaks_df,genes_df,clean=True,split_peaks=True,distance=500000,c
     peak_gene_links = closest_links.merge(peaks_clean,on=peak_col)
     peak_gene_links = peak_gene_links.merge(genes_clean,on=gene_col)
 
-    peak_gene_links = peak_gene_links[[gene_col,peak_col]+['distance']]
+    peak_gene_links = peak_gene_links[[gene_col,peak_col]+['distance','index_x','index_y']]
     
     # use unique indices
     peak_gene_links.index = peak_gene_links[peak_col].astype(str) + ' , ' + peak_gene_links[gene_col].astype(str)
