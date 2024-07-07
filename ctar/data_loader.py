@@ -314,8 +314,8 @@ def build_adata(mdata,gene_col='gene_name',peak_col='gene_ids',raw=False):
         find_peak_gene_pairs(mdata)
 
     # Add indices
-    mdata['atac'].var['index_y'] = range(len(mdata['atac'].var))
-    mdata['rna'].var['index_x'] = range(len(mdata['rna'].var))
+    mdata['atac'].var['index_x'] = range(len(mdata['atac'].var))
+    mdata['rna'].var['index_y'] = range(len(mdata['rna'].var))
 
     # Only take cells which match assigned celltypes between assays
     ct_mask = (mdata['rna'].obs['celltype'] == mdata['atac'].obs['celltype']).values
