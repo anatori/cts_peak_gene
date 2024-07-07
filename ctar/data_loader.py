@@ -235,7 +235,6 @@ def preprocess_mu(mdata,
     # Raw adata_rna & adata_atac
     adata_rna = mdata.mod['rna'].copy()
     adata_rna.X = adata_rna.X.astype(np.float32) # float32 to reduce memory cost
-    adata_rna.var_names = [dic_id2sym[x] if x in dic_id2sym else x for x in adata_rna.var_names]
     adata_atac = mdata.mod['atac'].copy()
     adata_atac.X = adata_atac.X.astype(np.float32) # float32 to reduce memory cost
     print('Raw, adata_rna', adata_rna.shape, 'adata_atac', adata_atac.shape)
