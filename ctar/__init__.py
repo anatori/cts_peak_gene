@@ -1,4 +1,4 @@
-from . import simu, method, plot, data_loader, util, mz
+from . import simu, method, plot, data_loader, util, chromatin_potential, mz
 
 # expose functions so that scdrs.score_cell, scdrs.preprocess can be called
 # from .method import score_cell
