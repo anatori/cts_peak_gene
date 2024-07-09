@@ -5,4 +5,4 @@ from . import simu, method, plot, data_loader, util, mz
 # from .pp import preprocess
 from .version import __version__,__version_info__
 
-__all__ = ["simu", "method", "plot", "data_loader", "util", "mz"]
+__all__ = ["simu", "method", "plot", "data_loader", "util", "chromatin_potential", "mz"]
