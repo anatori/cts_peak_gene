@@ -3,7 +3,7 @@ import anndata as ad
 import sklearn
 from tqdm import tqdm
 import numpy as np
-from method import pearson_corr_sparse
+from ctar.method import pearson_corr_sparse
 
 
 def smooth_vals(rna,atac,k=50):
