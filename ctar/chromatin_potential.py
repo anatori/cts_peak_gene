@@ -83,12 +83,9 @@ def simple_corr(rna, atac, links_df, corr_cutoff=0.1):
     '''
 
     # links_df can be generated with ctar.method.peak_to_gene
-    index_x = links_df['index_x'].values
-    index_y = links_df['index_y'].values
-    
     # get corresponding values
-    x_links = atac[:,index_x].X
-    y_links = rna[:,index_y].X
+    x_links = atac[:,links_df.gene].X
+    y_links = rna[:,links_df.peak].X
     
     # correlate peak-gene links
     corrs = pearson_corr_sparse(x_links,y_links)
@@ -98,12 +95,9 @@ def simple_corr(rna, atac, links_df, corr_cutoff=0.1):
     print('retained',len(links_df),'/',f'{og_links} links')
     
     # update indices to indices of QC'd links
-    index_x = links_df['index_x'].values # peaks
-    index_y = links_df['index_y'].values # genes
-
     # get corresponding values of QC'd links
-    atac_nlinks = atac[:,index_x].copy()
-    rna_nlinks = rna[:,index_y].copy()
+    atac_nlinks = atac[:,links_df.gene].copy()
+    rna_nlinks = rna[:,links_df.peak].copy()
 
     return rna_nlinks, atac_nlinks
 
