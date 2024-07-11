@@ -4,6 +4,7 @@ setup.py
 ctar/__init__.py
 ctar/data_loader.py
 ctar/method.py
+ctar/mz.py
 ctar/plot.py
 ctar/simu.py
 ctar/util.py
