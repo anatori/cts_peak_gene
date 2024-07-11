@@ -182,7 +182,7 @@ def gene_activity(atac, genes_df, gene_id_type='ensembl_gene_id',gene_id_col='ge
         y_pred = activity_from_counts(atac, genebed_df, gene_col=gene_col,peak_col=peak_col)
 
     # save raw data
-    y_pred.X.raw = y_pred.X
+    y_pred.layers['counts'] = y_pred.X
     # normalize
     y_pred.X = y_pred.X.astype(np.float64)
     sc.pp.normalize_per_cell(y_pred)
