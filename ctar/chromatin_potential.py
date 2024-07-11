@@ -6,6 +6,7 @@ import sklearn
 from tqdm import tqdm
 import numpy as np
 import scanpy as sc
+import scipy as sp
 from ctar.method import pearson_corr_sparse
 from ctar.data_loader import get_gene_coords
 
