@@ -5,6 +5,7 @@ import anndata as ad
 import sklearn
 from tqdm import tqdm
 import numpy as np
+import scanpy as sc
 from ctar.method import pearson_corr_sparse
 from ctar.data_loader import get_gene_coords
 
