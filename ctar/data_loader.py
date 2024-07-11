@@ -82,7 +82,7 @@ def peak_to_gene(peaks_df,genes_df,clean=True,split_peaks=True,distance=500000,c
     genes_bed_windowed = genes_bed.slop(genome=genome,b=distance).sort()
     
     # using bedtools closest, includes all distances from gene_bed (D='b')
-    closest_links = peaks_bed.intersect(genes_bed_windowed,wao=True,sorted=True)
+    closest_links = peaks_bed.intersect(genes_bed_windowed,wo=True,sorted=True)
 
     # save as dataframe
     closest_links = closest_links.to_dataframe()
