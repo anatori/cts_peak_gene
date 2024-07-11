@@ -133,7 +133,7 @@ def activity_from_counts(atac, genebed_df, gene_col='gene',peak_col='peak'):
     return y_pred
 
 
-def gene_activity(atac, genes_df, gene_id_type='ensembl_gene_id',gene_col='gene',peak_col='peak'):
+def gene_activity(atac, genes_df, gene_id_type='ensembl_gene_id',gene_id_col='gene_id',gene_col='gene',peak_col='peak'):
 
     ''' Predict gene counts by summing ATAC fragments in gene region.
     Adapted from https://stuartlab.org/signac/reference/geneactivity
@@ -144,8 +144,8 @@ def gene_activity(atac, genes_df, gene_id_type='ensembl_gene_id',gene_col='gene'
         AnnData of shape (#cells,#peaks).
     genes_df : pd.DataFrame
         DataFrame containing gene names of length (#genes).
-    gene_id_type,gene_col : str
-        Passed into get_gene_coords.
+    gene_id_type,gene_id_col : str
+        Passed into get_gene_coords (gene_id_type,gene_col).
     
     Returns
     -------
@@ -164,7 +164,7 @@ def gene_activity(atac, genes_df, gene_id_type='ensembl_gene_id',gene_col='gene'
         # if gene_col not in columns, assumes gene_col is index
         if gene_col not in genes_df.columns:
             genes_df = genes_df.reset_index(names=gene_col)
-        genebed_df = get_gene_coords(genes_df,col_names=['Chromosome','start','end'],gene_id_type=gene_id_type,gene_col=gene_col)
+        genebed_df = get_gene_coords(genes_df,col_names=['Chromosome','start','end'],gene_id_type=gene_id_type,gene_col=gene_id_col)
     # remove unsuccessful searches
     genebed_df = genebed_df[~genebed_df.start.isna()].copy()
     # expects start, end to be int
