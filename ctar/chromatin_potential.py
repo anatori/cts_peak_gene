@@ -1,3 +1,5 @@
+from pybedtools import BedTool
+import pybedtools
 import muon as mu
 import anndata as ad
 import sklearn
@@ -67,7 +69,71 @@ def smooth_vals(atac, y_obs, y_pred, atac_layer=None, yobs_layer=None,k=50):
     return y_obs, y_pred
 
 
-def gene_activity(atac, genes_df, gene_id_type='ensembl_gene_id',gene_col='gene'):
+def activity_from_counts(atac, genebed_df, gene_col='gene',peak_col='peak'):
+
+    ''' Helper for gene_activity to predict gene counts when frag file DNE.
+    Sums ATAC counts in gene region.
+
+    Parameters
+    ----------
+    atac : ad.AnnData
+        AnnData of shape (#cells,#peaks).
+    genebed_df : pd.DataFrame
+        DataFrame containing gene names, chr, start, end, of length (#genes).
+    gene_col,peak_col : str
+    
+    Returns
+    -------
+    y_pred : ad.AnnData
+        AnnData with predicted RNA expression of shape (#cells,#genes).
+    
+    '''
+    
+    # get peak intervals
+    peaks_df = atac.var.copy()
+    # if peak_col not in columns, assumes peak_col is index
+    if peak_col not in peaks_df.columns:
+        peaks_df = peaks_df.reset_index(names=peak_col)
+    peaks_df[['Chromosome','start','end']] = peaks_df[peak_col].str.split(':|-',expand=True)
+    peaks_df[['start','end']] = peaks_df[['start','end']].astype(int)
+    
+    # extend upstream 
+    genebed_df['start'] = genebed_df['start'] - 2000
+    genebed_df['start'] = genebed_df['start'].clip(0)
+    
+    # create beds
+    peaks_bed = BedTool.from_dataframe(peaks_df[['Chromosome','start','end']+[peak_col]]).sort()
+    genes_bed = BedTool.from_dataframe(genebed_df[['Chromosome','start','end']+[gene_col]]).sort()
+    
+    # peak overlapping 2kb upstream genes
+    # muon does not require certain # bp overlap
+    frag_bed = peaks_bed.intersect(genes_bed,wo=True,sorted=True)
+    frag_df = frag_bed.to_dataframe()
+    frag_df.columns = ['peak_chr','peak_start','peak_end',peak_col,'gene_chr','gene2kb_start','gene_end',gene_col,'distance']
+
+    # add unique group ids for genes
+    frag_df['id'] = frag_df.groupby(gene_col).ngroup()
+    ordered_frags = frag_df.sort_values('id')
+    # order peaks by group ids
+    atac_X = atac[:,ordered_frags[peak_col]].layers['counts'].toarray().copy()
+    # get indices to add counts along
+    frag_sizes = ordered_frags['id'].value_counts(sort=False).cumsum()
+    # reduceat requires you to start at 0 and exclude the end ind
+    frag_sizes = frag_sizes[:(len(frag_sizes)-1)]
+    frag_sizes = np.insert(frag_sizes.values,0,0)
+
+    # combine counts for peaks within gene window
+    yp_X = np.add.reduceat(atac_X,frag_sizes,axis=1)
+    
+    # store in adata
+    y_pred = ad.AnnData(yp_X)
+    y_pred.var_names = ordered_frags.drop_duplicates(subset='gene').gene
+    y_pred.obs_names = atac.obs_names.copy()
+    
+    return y_pred
+
+
+def gene_activity(atac, genes_df, gene_id_type='ensembl_gene_id',gene_col='gene',peak_col='peak'):
 
     ''' Predict gene counts by summing ATAC fragments in gene region.
     Adapted from https://stuartlab.org/signac/reference/geneactivity
@@ -95,16 +161,26 @@ def gene_activity(atac, genes_df, gene_id_type='ensembl_gene_id',gene_col='gene'
         genebed_df[['Chromosome','start','end']] = genebed_df.interval.str.split(':|-',expand=True)
 
     else:
+        # if gene_col not in columns, assumes gene_col is index
+        if gene_col not in genes_df.columns:
+            genes_df = genes_df.reset_index(names=gene_col)
         genebed_df = get_gene_coords(genes_df,col_names=['Chromosome','start','end'],gene_id_type=gene_id_type,gene_col=gene_col)
     # remove unsuccessful searches
     genebed_df = genebed_df[~genebed_df.start.isna()].copy()
-    # chrM is not tolerated
-    genebed_df = genebed_df[~(genebed_df.Chromosome == 'chrM')].copy()
     # expects start, end to be int
     genebed_df[['start','end']] = genebed_df[['start','end']].astype(int)
 
     # get fragments in region
-    y_pred = mu.atac.tl.count_fragments_features(atac,features=genebed_df,extend_upstream=2000)
+    try: 
+        # if fragment file exists, use muon count_fragment_features
+        frag_path = atac.uns['files']['fragments']
+        print('using fragments from',frag_path)
+        y_pred = mu.atac.tl.count_fragments_features(atac,features=genebed_df,extend_upstream=2000)
+
+    except:
+        print('using counts')
+        y_pred = activity_from_counts(atac, genebed_df, gene_col=gene_col,peak_col=peak_col)
+
     # save raw data
     y_pred.X.raw = y_pred.X
     # normalize
@@ -113,7 +189,7 @@ def gene_activity(atac, genes_df, gene_id_type='ensembl_gene_id',gene_col='gene'
     sc.pp.log1p(y_pred)
 
     return y_pred
-
+    
 
 def chrom_potential(y_obs, y_pred, k=10):
     
