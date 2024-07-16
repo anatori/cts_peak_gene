@@ -193,7 +193,7 @@ def gene_activity(atac, genes_df, gene_id_type='ensembl_gene_id',gene_id_col='ge
     return y_pred
     
 
-def chrom_potential(y_obs, y_pred, k=10):
+def chrom_potential(y_obs, y_pred, k=10, metric='correlation'):
     
     '''Compute chromatin potential.
     References: Ma Cell 2020, Mitra Nat Gen 2024.
@@ -235,7 +235,7 @@ def chrom_potential(y_obs, y_pred, k=10):
 
     # get knn of smoothed scaled profiles (knn 2, k=10)
     # x_scaled should be the same size as y_scaled
-    nn = sklearn.neighbors.NearestNeighbors(n_neighbors=k, n_jobs=-1, metric='correlation') 
+    nn = sklearn.neighbors.NearestNeighbors(n_neighbors=k, n_jobs=-1, metric=metric) 
     nn.fit(yp_scaled)
     # closest rna obs to atac obs
     dists, neighs = nn.kneighbors(yo_scaled)
