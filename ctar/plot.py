@@ -96,8 +96,8 @@ def multiome_trackplot(df, adata, sortby = 'poiss_coeff', coeff_label = 'coeff',
 
     # extract relevant raw gene and peak information
     if not strat:
-        rna = adata_sorted[:,adata_sorted.var.gene.isin(y_axis_rna.tolist())].layers['rna_raw'].A
-        atac = adata_sorted[:,adata_sorted.var.peak.isin(y_axis_atac.tolist())].layers['atac_raw'].A
+        rna = adata_sorted[:,adata_sorted.var.gene.isin(y_axis_rna.tolist())].layers['rna_raw'].toarray()
+        atac = adata_sorted[:,adata_sorted.var.peak.isin(y_axis_atac.tolist())].layers['atac_raw'].toarray()
     else:
         rna = adata_sorted[:,adata_sorted.var.gene.isin(y_axis_rna.tolist())].layers['rna_strat']
         atac = adata_sorted[:,adata_sorted.var.peak.isin(y_axis_atac.tolist())].layers['atac_strat']
