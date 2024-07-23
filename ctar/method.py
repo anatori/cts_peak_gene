@@ -344,9 +344,7 @@ def create_ctrl_peaks(adata,num_bins=5,b=1000,update=True,gc=True,peak_col='gene
     Parameters
     ----------
     adata : ad.AnnData
-        AnnData object of shape (#cells,#peaks). Contains DataFrame under mdata.uns.peak_gene_pairs
-        containing columns ['index_x','index_y'] that correspond to peak and gene indices in atac.X
-        and rna.X respectively.
+        AnnData object of shape (#cells,#peaks).
     num_bins : int
         Number of desired bins for MFA and GC groupings EACH.
     b : int
