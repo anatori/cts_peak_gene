@@ -310,15 +310,18 @@ def get_bins(adata, num_bins=5, peak_col='gene_ids', gc=True):
     bins = pd.DataFrame()
     # duplicated peaks will be in the same bin
     # to avoid this, filter them out first
-    unique = ~adata.var.duplicated(subset='peak')
+    unique = ~adata.var.duplicated(subset=peak_col)
 
     # Obtain mfa and gc content
-    bins['peak'] = adata.var[peak_col][unique]
+    bins[peak_col] = adata.var[peak_col][unique]
     # accessing by row is faster
     adata.var['index_z'] = range(len(adata.var))
     bins['ind'] = adata.var.index_z[unique]
     # only take the unique peak info
-    atac_X = adata[:,unique].layers['atac_raw']
+    try: 
+        atac_X = adata[:,unique].layers['atac_raw']
+    except:
+        atac_X = adata[:,unique].X
     bins['mfa'] = atac_X.mean(axis=0).A1
     print('MFA done.')
 
