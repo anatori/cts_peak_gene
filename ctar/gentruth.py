@@ -17,13 +17,23 @@ def preprocess_df(df):
     df = df.dropna(subset=['region'])
     # coerce start,end to int
     df[['start','end']] = df[['start','end']].astype(int)
-    
     return df
 
 
-def gentruth_intersect(query_file, reference_path, storage_path):
+def intersect_beds(bed1,bed2,deduplicate=True,col_names = ['bed1_chr','bed1_start','bed1_end','bed1_id','bed2_chr','bed2_start','bed2_end','bed2_id']):
+    ''' BedTools intersection from two BedTool objects and returns a DataFrame.
+    '''
+    # intersect query bed with ref bed
+    intersect_df = bed1.intersect(bed2,wa=True,wb=True).to_dataframe()
+    intersect_df.columns = col_names
+    if deduplicate:
+        intersect_df = intersect_df.drop_duplicates()
+    return intersect_df
 
-    ''' Intersects existing tsv files to obtain marginal and joint n_genes, n_snps, n_links.
+
+def summarize_df(query_file, reference_path, storage_path):
+
+    ''' Summarizes existing tsv files to obtain marginal and joint n_genes, n_snps, n_links.
     
     Parameters
     -------
@@ -52,6 +62,7 @@ def gentruth_intersect(query_file, reference_path, storage_path):
 
     # find ref files
     reference_files = [f for f in os.listdir(reference_path) if f.endswith('.tsv.gz')]
+    reference_files.remove(os.path.basename(query_file))
     reference_labels = [f.removesuffix('.tsv.gz') for f in reference_files]
     
     # store values in dictionaries
@@ -70,16 +81,15 @@ def gentruth_intersect(query_file, reference_path, storage_path):
         refbed = BedTool.from_dataframe(reference_df[['chr','start','end','gene']])
 
         # intersect query bed with ref bed
-        intersect_df = querybed.intersect(refbed,wa=True,wb=True).to_dataframe()
-        intersect_df.columns = ['query_chr','query_start','query_end','query_gene',
+        col_names = ['query_chr','query_start','query_end','query_gene',
                                    'ref_chr','ref_start','ref_end','ref_gene']
-        intersect_df = intersect_df.drop_duplicates()
+        intersect_df = intersect_beds(querybed,refbed,col_names = col_names)
 
         ref_label = ref.removesuffix('.tsv.gz')
         print(intersect_df.shape[0], 'intersections with',ref_label, 'found.')
 
         # add joint values with ref
-        if '_pos' not in query_label:
+        if '_pos' not in ref_label:
             gene_dic[ref_label] = len(set(reference_df.gene) & set(query_df.gene))
             snp_dic[ref_label] = intersect_df.shape[0] # refers to number of intersections between snps, note: contains duplicates if multiple intersections
         links_dic[ref_label] = sum(intersect_df.query_gene == intersect_df.ref_gene) # refers to number of links in agreement, ie regions overlap & same gene
@@ -89,9 +99,9 @@ def gentruth_intersect(query_file, reference_path, storage_path):
     del reference_df
     del intersect_df
 
-    zipped = list(zip(['a'], ['links.tsv']))
     if '_pos' not in query_label:
-        zipped.append(list(zip([gene_dic, snp_dic], ['gene.tsv', 'snp.tsv'])))
+        zipped = zip([gene_dic,snp_dic,links_dic],['gene.tsv','snp.tsv','links.tsv'])
+    else: zipped = zip(links_dic,'links.tsv')
 
     for dic, filename in zipped:
         df = pd.read_csv(storage_path + filename, sep='\t', index_col=0)
