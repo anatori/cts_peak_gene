@@ -19,6 +19,8 @@ def preprocess_df(df):
         df['end'] = df['start']
     # remove nan values if present
     df = df.dropna(subset=['region'])
+    # remove non-ensembl ids
+    df = df[~df.gene.str.startswith('ENSG').astype(bool)].copy()
     # coerce start,end to int
     df[['start','end']] = df[['start','end']].astype(int)
     return df
@@ -35,15 +37,15 @@ def intersect_beds(bed1,bed2,deduplicate=True,col_names = ['bed1_chr','bed1_star
     return intersect_df
 
 
-def summarize_df(query_item, reference_path, storage_path):
+def summarize_df(query_file, reference_path, storage_path):
 
     ''' Summarizes existing tsv files to obtain marginal and joint n_genes, n_snps, n_links.
     
     Parameters
     -------
-    query_item : str or pd.DataFrame
-        Path to file containing query dataset in .tsv.gz format OR dataframe containing
-        query data. Should have columns ['chr','start','gene'].
+    query_file : str
+        Path to file containing query dataset in .tsv.gz format. Should have columns 
+        ['chr','start','gene'].
 
     reference_path : str
         Path to all other files to intersect query_file with. Must be in .tsv.gz format.
@@ -61,10 +63,7 @@ def summarize_df(query_item, reference_path, storage_path):
     '''
     
     # load query df
-    if isinstance(x, pd.DataFrame):
-        query_df = query_item
-    else:
-        query_df = pd.read_csv(query_file, sep='\t', compression='gzip',index_col=0)
+    query_df = pd.read_csv(query_file, sep='\t', compression='gzip',index_col=0)
 
     query_df = preprocess_df(query_df)
     querybed = BedTool.from_dataframe(query_df[['chr','start','end','gene']])
@@ -177,7 +176,7 @@ def odds_ratio_poslinks(df,ha_correction=True):
     
     labels = [x for x in df.columns  if '_pos' not in x]
     odds_df = pd.DataFrame(index=labels,columns=labels,data=0.0)
-    pval_df = pd.DataFrame(index=labels,columns=labels,data=0.0)
+    pval_df = pd.DataFrame(index=labels,columns=labels,data=1.0)
     contig_df = pd.DataFrame(index=labels,columns=labels,data=[])
     label_tup = [(a, b) for idx, a in enumerate(labels) for b in labels[idx + 1:]]
     
@@ -190,7 +189,7 @@ def odds_ratio_poslinks(df,ha_correction=True):
         
         contigency_mat = np.array([[n3, n4], [n2, n1]]) 
         odds_ratio = stats.contingency_tables.Table2x2(contigency_mat,shift_zeros=ha_correction).oddsratio # +0.5 haldane-anscombe / yates correction
-        pval = sp.stats.chi2_contingency(contigency_mat).pvalue
+        pval = sp.stats.chi2_contingency(contigency_mat,correction=ha_correction).pvalue
         
         odds_df.loc[label_1,label_2] = odds_ratio
         odds_df.loc[label_2,label_1] = odds_ratio

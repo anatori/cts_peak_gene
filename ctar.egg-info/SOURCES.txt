@@ -4,6 +4,7 @@ setup.py
 ctar/__init__.py
 ctar/chromatin_potential.py
 ctar/data_loader.py
+ctar/gentruth.py
 ctar/method.py
 ctar/mz.py
 ctar/plot.py
