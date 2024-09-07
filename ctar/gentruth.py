@@ -20,7 +20,7 @@ def preprocess_df(df):
     # remove nan values if present
     df = df.dropna(subset=['region'])
     # remove non-ensembl ids
-    df = df[~df.gene.str.startswith('ENSG').astype(bool)].copy()
+    df = df[df.gene.str.startswith('ENSG').astype(bool)].copy()
     # coerce start,end to int
     df[['start','end']] = df[['start','end']].astype(int)
     return df
@@ -31,6 +31,8 @@ def intersect_beds(bed1,bed2,deduplicate=True,col_names = ['bed1_chr','bed1_star
     '''
 
     intersect_df = bed1.intersect(bed2,wa=True,wb=True).to_dataframe()
+    if intersect_df.empty:
+        return pd.DataFrame(columns=col_names)
     intersect_df.columns = col_names
     if deduplicate:
         intersect_df = intersect_df.drop_duplicates()
@@ -64,7 +66,6 @@ def summarize_df(query_file, reference_path, storage_path):
     
     # load query df
     query_df = pd.read_csv(query_file, sep='\t', compression='gzip',index_col=0)
-
     query_df = preprocess_df(query_df)
     querybed = BedTool.from_dataframe(query_df[['chr','start','end','gene']])
 
@@ -201,5 +202,15 @@ def odds_ratio_poslinks(df,ha_correction=True):
         contig_df.loc[label_2,label_1] = contigency_mat
         
     return {'odds_ratio':odds_df,'pvals':pval_df,'contingency':contig_df}
+
+
+def normalize_symm(mat):
+    ''' Normalize a symmetric matrix by total elements (should be stored in diagonal).
+    '''
+    diag = np.diagonal(mat)
+    # A-C+B for venn2([A,B,C]) = universal set
+    univ = diag + diag.reshape(-1,1) - mat
+    mat_norm = mat / univ
+    return mat_norm
 
     

@@ -82,9 +82,9 @@ def pearson_corr_sparse(mat_X, mat_Y, var_filter=False):
     return mat_corr
 
 
-def initial_mcpval(del_cctrl,del_c):
+def initial_mcpval(del_cctrl,del_c,one_sided=True):
     
-    ''' Calculates two-tailed Monte Carlo p-value (only for B controls).
+    ''' Calculates one or two-tailed Monte Carlo p-value (only for B controls).
     
     Parameters
     ----------
@@ -92,6 +92,8 @@ def initial_mcpval(del_cctrl,del_c):
         Matrix of shape (gene#,n) where n is number of rand samples.
     del_c : np.ndarray
         Vector of shape (gene#,), which gets reshaped to (gene#,1).
+    one_sided : bool
+        Indicates whether to do 1 sided or 2 sided pval.
     
     Returns
     ----------
@@ -99,8 +101,24 @@ def initial_mcpval(del_cctrl,del_c):
     
     '''
 
-    indicator = np.sum(np.abs(del_cctrl) >= np.abs(del_c.reshape(-1, 1)), axis=1)
+    del_c = del_c.reshape(-1, 1)
+    if not one_sided:
+        del_cctrl = np.abs(del_cctrl)
+        del_c = np.abs(del_c)
+    indicator = np.sum(del_cctrl >= del_c.reshape(-1, 1), axis=1)
     return (1+indicator)/(1+del_cctrl.shape[1])
+
+
+def zscore_pval(ctrl_corr,corr):
+    ''' 1-sided zscore pvalue.
+    '''
+
+    mean = np.mean(ctrl_corr,axis=1)
+    sd = np.std(ctrl_corr,axis=1)
+    z = (corr - mean)/sd
+    
+    p_value = 1 - sp.stats.norm.cdf(z)
+    return p_value, z
 
 
 def center_ctrls(ctrl_array,main_array):
