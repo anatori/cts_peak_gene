@@ -82,15 +82,15 @@ def pearson_corr_sparse(mat_X, mat_Y, var_filter=False):
     return mat_corr
 
 
-def initial_mcpval(del_cctrl,del_c,one_sided=True):
+def initial_mcpval(ctrl_corr,corr,one_sided=True):
     
     ''' Calculates one or two-tailed Monte Carlo p-value (only for B controls).
     
     Parameters
     ----------
-    del_cctrl : np.ndarray
+    ctrl_corr : np.ndarray
         Matrix of shape (gene#,n) where n is number of rand samples.
-    del_c : np.ndarray
+    corr : np.ndarray
         Vector of shape (gene#,), which gets reshaped to (gene#,1).
     one_sided : bool
         Indicates whether to do 1 sided or 2 sided pval.
@@ -101,12 +101,12 @@ def initial_mcpval(del_cctrl,del_c,one_sided=True):
     
     '''
 
-    del_c = del_c.reshape(-1, 1)
+    corr = corr.reshape(-1, 1)
     if not one_sided:
-        del_cctrl = np.abs(del_cctrl)
-        del_c = np.abs(del_c)
-    indicator = np.sum(del_cctrl >= del_c.reshape(-1, 1), axis=1)
-    return (1+indicator)/(1+del_cctrl.shape[1])
+        ctrl_corr = np.abs(ctrl_corr)
+        corr = np.abs(corr)
+    indicator = np.sum(ctrl_corr >= corr.reshape(-1, 1), axis=1)
+    return (1+indicator)/(1+ctrl_corr.shape[1])
 
 
 def zscore_pval(ctrl_corr,corr):
@@ -121,13 +121,13 @@ def zscore_pval(ctrl_corr,corr):
     return p_value, z
 
 
-def center_ctrls(ctrl_array,main_array):
+def center_ctrls(ctrl_corray,main_array):
 
     ''' Centers control and focal correlation arrays according to control mean and std.
     
     Parameters
     ----------
-    ctrl_array : np.ndarray
+    ctrl_corray : np.ndarray
         Array of shape (N,B) where N is number of genes and B is number
         of repetitions (typically 1000x). Contains correlation between
         focal gene and random peaks.
@@ -149,26 +149,26 @@ def center_ctrls(ctrl_array,main_array):
     
     # Takes all ctrls and centers at same time
     # then centers putative/main with same vals
-    mean = np.mean(ctrl_array,axis=1)
-    std = np.std(ctrl_array,axis=1)
-    ctrls = (ctrl_array - mean.reshape(-1,1)) / std.reshape(-1,1)
+    mean = np.mean(ctrl_corray,axis=1)
+    std = np.std(ctrl_corray,axis=1)
+    ctrls = (ctrl_corray - mean.reshape(-1,1)) / std.reshape(-1,1)
     main = (main_array - mean) / std
     
     return ctrls.flatten(), main
 
 
-def mc_pval(del_cctrl_full,del_c):
+def mc_pval(ctrl_corr_full,corr):
 
     ''' Calculates MC p-value using centered control and focal correlation arrays across
     all controls (N*B).
     
     Parameters
     ----------
-    del_cctrl_full : np.ndarray
+    ctrl_corr_full : np.ndarray
         Array of shape (N,B) where N is number of genes and B is number
         of repetitions (typically 1000x). Contains correlation/delta correlation
         between focal gene and random peaks.
-    del_c : np.ndarray
+    corr : np.ndarray
         Array of shape (N,) containing correlation/delta correlation between
         focal gene and focal peaks.
     
@@ -181,12 +181,12 @@ def mc_pval(del_cctrl_full,del_c):
     '''
 
     # Center first
-    del_cctrl_full_centered,del_c_centered = center_ctrls(np.abs(del_cctrl_full),np.abs(del_c))
-    del_cctrl_full_centered = np.sort(del_cctrl_full_centered)
-    n,b = del_cctrl_full.shape
+    ctrl_corr_full_centered,corr_centered = center_ctrls(np.abs(ctrl_corr_full),np.abs(corr))
+    ctrl_corr_full_centered = np.sort(ctrl_corr_full_centered)
+    n,b = ctrl_corr_full.shape
     
     # Search sort returns indices where element would be inserted
-    indicator = len(del_cctrl_full_centered) - np.searchsorted(del_cctrl_full_centered,del_c_centered)
+    indicator = len(ctrl_corr_full_centered) - np.searchsorted(ctrl_corr_full_centered,corr_centered)
     return (1+indicator)/(1+(n*b))
 
 
@@ -302,7 +302,7 @@ def gc_content(adata,genome_file='GRCh38.p13.genome.fa.bgz'):
     return gc
 
 
-def get_bins(adata, num_bins=5, peak_col='gene_ids', gc=True):
+def get_bins(adata, num_bins=5, peak_col='gene_ids', distance=False, gc=True):
 
     ''' Obtains GC and MFA bins for ATAC peaks.
     
@@ -316,6 +316,8 @@ def get_bins(adata, num_bins=5, peak_col='gene_ids', gc=True):
         Label for peak column.
     gc : bool
         If True, GC content will be taken.
+    distance : bool
+        If True, takes bins based on enhancer-gene distance rather than MFA.
     
     Returns
     ----------
@@ -336,21 +338,28 @@ def get_bins(adata, num_bins=5, peak_col='gene_ids', gc=True):
     adata.var['index_z'] = range(len(adata.var))
     bins['ind'] = adata.var.index_z[unique]
     # only take the unique peak info
-    try: 
+    try:
         atac_X = adata[:,unique].layers['atac_raw']
     except:
         atac_X = adata[:,unique].X
-    bins['mfa'] = atac_X.mean(axis=0).A1
-    print('MFA done.')
+
+    if distance:
+        try: 
+            bins['distance'] = adata.var[unique]['distance']
+            bins['distance_bin'] = pd.qcut(bins['distance'].rank(method='first'), num_bins, labels=False, duplicates="drop")
+            print('Distance done.')
+        except: print('Must add enhancer-gene distance.')
+
+    else:
+        bins['mfa'] = atac_X.mean(axis=0).A1
+        print('MFA done.')
+        # combine into bins
+        bins['mfa_bin'] = pd.qcut(bins['mfa'].rank(method='first'), num_bins, labels=False, duplicates="drop")
 
     if gc:
         bins['gc'] = gc_content(adata)
         print('GC done.')
-    
-    # Put into bins
-    bins['mfa_bin'] = pd.qcut(bins['mfa'].rank(method='first'), num_bins, labels=False, duplicates="drop")
-    
-    if gc:
+        # also add gc bin
         bins['gc_bin'] = pd.qcut(bins['gc'].rank(method='first'), num_bins, labels=False, duplicates="drop")
         # create combined bin if mfa+gc is included
         bins['combined_mfa_gc']=bins['mfa_bin']* 10 + bins['gc_bin']
@@ -358,7 +367,7 @@ def get_bins(adata, num_bins=5, peak_col='gene_ids', gc=True):
     return bins
 
 
-def create_ctrl_peaks(adata,num_bins=5,b=1000,update=True,gc=True,peak_col='gene_ids'):
+def create_ctrl_peaks(adata,num_bins=5,b=1000,update=True,distance=False,gc=True,peak_col='gene_ids'):
 
     ''' Obtains GC and MFA bins for ATAC peaks.
     
@@ -370,8 +379,8 @@ def create_ctrl_peaks(adata,num_bins=5,b=1000,update=True,gc=True,peak_col='gene
         Number of desired bins for MFA and GC groupings EACH.
     b : int
         Number of desired random peaks per focal peak-gene pair.
-    update : bool
-    	If True, updates original AnnData with adata.varm.control_peaks.
+    distance : bool
+    	If True, gets distance bins rather than MFA bins.
     gc : bool
         If True, gets MFA and GC bins. Else, only gets MFA bins.
     peak_col : str
@@ -384,18 +393,20 @@ def create_ctrl_peaks(adata,num_bins=5,b=1000,update=True,gc=True,peak_col='gene
     
     '''
     
-    bins = get_bins(adata, num_bins=num_bins, gc=gc, peak_col=peak_col)
+    bins = get_bins(adata, num_bins=num_bins, distance=distance, gc=gc, peak_col=peak_col)
     print('Get_bins done.')
     
     # Group indices for rand_peaks
-    if gc: bins_grouped = bins[['ind','combined_mfa_gc']].groupby(['combined_mfa_gc']).ind.apply(np.array)
+    if distance: bins_grouped = bins[['ind','distance_bin']].groupby(['distance_bin']).ind.apply(np.array)
+    elif gc: bins_grouped = bins[['ind','combined_mfa_gc']].groupby(['combined_mfa_gc']).ind.apply(np.array)
     else: bins_grouped = bins[['ind','mfa_bin']].groupby(['mfa_bin']).ind.apply(np.array)
     
     # Generate random peaks
     ctrl_peaks = np.empty((len(bins),b))
     # iterate through each row of bins
     for i,peak in enumerate(bins.itertuples()):
-        if gc: row_bin = bins_grouped.loc[peak.combined_mfa_gc]
+        if distance: row_bin = bins_grouped.loc[peak.distance_bin]
+        elif gc: row_bin = bins_grouped.loc[peak.combined_mfa_gc]
         else: row_bin = bins_grouped.loc[peak.mfa_bin]
         row_bin_copy = row_bin[row_bin!=peak.ind]
         ctrl_peaks[i] = np.random.choice(row_bin_copy, size=(b,), replace=False)
@@ -405,10 +416,6 @@ def create_ctrl_peaks(adata,num_bins=5,b=1000,update=True,gc=True,peak_col='gene
     # since they will be compared with different genes anyway
     ind,_ = pd.factorize(adata.var[peak_col])
     ctrl_peaks = ctrl_peaks[ind,:].astype(int)
-
-    if update:
-        # Add adata.varm.control_peaks
-        adata.varm['control_peaks'] = ctrl_peaks
     
     return ctrl_peaks
 
