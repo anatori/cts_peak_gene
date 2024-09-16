@@ -32,7 +32,7 @@ def sortby_ct_adata(adata,obs_col='celltype'):
 
 
 
-def multiome_trackplot(df, adata, sortby = 'poiss_coeff', coeff_label = 'coeff', coeff = 'poiss_coeff', pval = 'mc_pval', 
+def multiome_trackplot(df, adata, sortby = 'poiss_coeff', coeff_label = 'coeff', coeff = 'poiss_coeff', pval_label = 'pval', pval = 'mc_pval', 
                         ascending = False, top_n = 10, adata_sort = False, presorted = False, sort_cells = 'rna', obs_col='celltype',
                         strat=False, height = 5, width = 18, axlim = None):
 
@@ -96,8 +96,8 @@ def multiome_trackplot(df, adata, sortby = 'poiss_coeff', coeff_label = 'coeff',
 
     # extract relevant raw gene and peak information
     if not strat:
-        rna = adata_sorted[:,adata_sorted.var.gene.isin(y_axis_rna.tolist())].layers['rna_raw'].A
-        atac = adata_sorted[:,adata_sorted.var.peak.isin(y_axis_atac.tolist())].layers['atac_raw'].A
+        rna = adata_sorted[:,adata_sorted.var.gene.isin(y_axis_rna.tolist())].layers['rna_raw'].toarray()
+        atac = adata_sorted[:,adata_sorted.var.peak.isin(y_axis_atac.tolist())].layers['atac_raw'].toarray()
     else:
         rna = adata_sorted[:,adata_sorted.var.gene.isin(y_axis_rna.tolist())].layers['rna_strat']
         atac = adata_sorted[:,adata_sorted.var.peak.isin(y_axis_atac.tolist())].layers['atac_strat']
@@ -171,7 +171,7 @@ def multiome_trackplot(df, adata, sortby = 'poiss_coeff', coeff_label = 'coeff',
 
         axs[i,1].tick_params(axis='x',labelleft=False,labelbottom=False)
         axs[i,1].set_ylabel(coeff_label +': ' + str(round(sorted_df.iloc[i][coeff],3))+ \
-                            '\n' + 'pval: '+ f'{float(f"{sorted_df.iloc[i][pval]:.1g}"):g}',
+                            '\n' + pval_label +': '+ f'{float(f"{sorted_df.iloc[i][pval]:.1g}"):g}',
                             rotation=0, fontsize="x-small", ha="left", va="bottom")
         axs[i,1].yaxis.set_label_coords(1.005, 0.1)
 
