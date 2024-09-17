@@ -121,6 +121,20 @@ def zscore_pval(ctrl_corr,corr):
     return p_value, z
 
 
+def mc_pval_one_sided(ctrl_corr,corr):
+    ''' 1-sided MC pooled pvalue.
+    '''
+
+    # Center first
+    ctrl_corr_centered,corr_centered = ctar.method.center_ctrls(ctrl_corr,corr)
+    ctrl_corr_centered = np.sort(ctrl_corr_centered)
+    n,b = ctrl_corr.shape
+    
+    # Search sort returns indices where element would be inserted
+    indicator = (n*b) - np.searchsorted(ctrl_corr_centered, corr_centered, side='left')
+    return (1+indicator)/(1+(n*b))
+
+
 def center_ctrls(ctrl_corray,main_array):
 
     ''' Centers control and focal correlation arrays according to control mean and std.
