@@ -126,7 +126,7 @@ def mc_pval_one_sided(ctrl_corr,corr):
     '''
 
     # Center first
-    ctrl_corr_centered,corr_centered = ctar.method.center_ctrls(ctrl_corr,corr)
+    ctrl_corr_centered,corr_centered = center_ctrls(ctrl_corr,corr)
     ctrl_corr_centered = np.sort(ctrl_corr_centered)
     n,b = ctrl_corr.shape
     
