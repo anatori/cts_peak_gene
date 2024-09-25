@@ -625,6 +625,23 @@ def control_corr_fast(adata, b=200, update=True, ct=False, is_atac = False, rna_
 
     
 def shuffle_columns_all_at_once(atac_chunk_matrix_dense, num_shuffles=200):
+    """ Randomly shuffles the columns of matrix num_shuffles times and returns a 3D array with all shuffled matrices.
+
+    Parameters
+    ----------
+    atac_chunk_matrix_dense : np.array
+        Array of shape (m,n)
+
+    num_shuffles : int
+        Number of shuffled matrices to make.
+
+    Returns
+    ----------
+    
+    shuffled_matrix : np.array
+        Array of shape (m, n, num_shuffles)
+    
+    """
     
     
     m, n = atac_chunk_matrix_dense.shape
@@ -650,7 +667,34 @@ def shuffle_columns_all_at_once(atac_chunk_matrix_dense, num_shuffles=200):
 
     return shuffled_matrix
     
-def control_corr_permutation_chunked(adata, num_ctrls=100, rna_adata = None, num_groups=19, rna_chunks=None, atac_chunks=None):
+def control_corr_permutation_chunked(adata, num_ctrls=100, rna_adata = None, num_groups=19):
+
+    """Calculates pearson corr for controls.
+
+    Parameters
+    ----------
+    adata : ad.AnnData
+        AnnData object of shape (#cells,#peaks). Contains DataFrame under mdata.uns.peak_gene_  pairs
+        containing columns ['index_x','index_y'] that correspond to peak and gene indices in atac.X
+        and rna.X respectively, as well as mdata.uns.control_peaks containing randomly generated peaks.
+        If mdata.uns.control_peaks does not exist, will create it.
+
+    num_ctrls : int
+        Number of permuted control matrices to make.
+
+    rna_adata : ad.AnnData
+        AnnData object of shape (#cells, #genes), where rna_adata.X contains gene normalized expression levels.
+
+    num_groups : int
+        Number of chunks in which to process the columns of rna_adata.
+
+    Returns
+    ----------
+    
+    control_corr : np.ndarray
+        Array of shape (num_ctrls, #peaks)
+    
+    """
 
     group_size = rna_adata.shape[1]//num_groups
     control_corr_list = []
