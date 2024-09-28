@@ -664,6 +664,59 @@ def build_ct_adata(adata, ct_key, min_pct=0.05, min_mean=0.1):
 
 ############### poisson regr ######################################
 
+
+def vectorized_poisson_regression(X, Y, max_iter=100, tol=1e-6):
+    """ Fast poisson regression from Alistair
+    
+    Perform vectorized Poisson regression using IRLS.
+    
+    Parameters:
+    - X: Predictor matrix of shape (N, P)
+    - Y: Response vector of shape (N,)
+    - max_iter: Maximum number of iterations
+    - tol: Convergence tolerance
+    
+    Returns:
+    - beta0: Intercept coefficients of shape (P,)
+    - beta1: Slope coefficients of shape (P,)
+    """
+    # Start timing for the entire function
+    start_time = time.time()
+    
+    N, P = X.shape
+    beta0 = np.zeros(P)
+    beta1 = np.zeros(P)
+    Y_broad = Y[:, None]
+    
+    for iteration in range(max_iter):
+        #eta = np.clip(beta0 + X * beta1, -10, 10)
+        #mu = np.clip(np.exp(eta), 1e-8, None)
+        eta = beta0 + X * beta1
+        mu = np.exp(eta)
+        z = eta + (Y_broad - mu) / mu
+        WX = mu * X
+        WX2 = WX * X 
+        Sw = mu.sum(axis=0)        # (P,)
+        Sx = WX.sum(axis=0)       # (P,)
+        #Sx2 = WX2.sum(axis=0)     # (P,)
+        Sy = (mu * z).sum(axis=0)  # (P,)
+        Sxy = (WX * z).sum(axis=0)  # (P,)
+        denom = WX2.sum(axis=0)  - (Sx**2) / Sw
+        denom = np.where(denom == 0, 1e-8, denom)  # Avoid division by zero
+        
+        beta1_new = (Sxy - (Sx * Sy) / Sw) / denom
+        beta0_new = (Sy - beta1_new * Sx) / Sw
+        if np.all(np.abs(beta1_new - beta1) < tol) and np.all(np.abs(beta0_new - beta0) < tol):
+            print(f"Converged after {iteration+1} iterations.")
+            break
+        # Update beta0 and beta1
+        beta0, beta1 = beta0_new, beta1_new  # Simpler variable update
+    total_time = time.time() - start_time
+    print(f"Total time for the function: {total_time:.6f} seconds")
+    
+    return beta0, beta1
+
+
 def fit_poisson(x,y,return_none=True):
 
     # Simple log(E[y]) ~ x equation
