@@ -22,7 +22,7 @@ def preprocess_df(df):
     # remove non-ensembl ids
     df = df[df.gene.str.startswith('ENSG').astype(bool)].copy()
     # coerce start,end to int
-    df[['start','end']] = df[['start','end']].astype(int)
+    df[['start','end']] = df[['start','end']].astype(np.int32)
     return df
 
 

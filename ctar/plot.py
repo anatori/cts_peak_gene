@@ -32,9 +32,9 @@ def sortby_ct_adata(adata,obs_col='celltype'):
 
 
 
-def multiome_trackplot(df, adata, sortby = 'poiss_coeff', coeff_label = 'coeff', coeff = 'poiss_coeff', pval_label = 'pval', pval = 'mc_pval', 
+def multiome_trackplot(df, atac = None, rna = None, sortby = 'poiss_coeff', coeff_label = 'coeff', coeff = 'poiss_coeff', pval_label = 'pval', pval = 'mc_pval', 
                         ascending = False, top_n = 10, adata_sort = False, presorted = False, sort_cells = 'rna', obs_col='celltype',
-                        strat=False, height = 5, width = 18, axlim = None):
+                        height = 5, width = 18, axlim = None):
 
     """Custom trackplot for showing ATAC and RNA information for top peak-gene pairs across all cells, sorted by
     celltype. Within celltype, both ATAC and RNA results are sorted by cells with the highest RNA expression.
@@ -43,11 +43,14 @@ def multiome_trackplot(df, adata, sortby = 'poiss_coeff', coeff_label = 'coeff',
     ----------
     df : pd.DataFrame
         DataFrame containing peak-gene links labelled with "gene" existing in 
-        mdata.mod['RNA'] index, and "peak" existing in mdata.mod['ATAC'] index
+        rna_adata index, and "peak" existing in atac_adata index
         for each peak-gene link. Contains column sortby.
-    adata : ad.AnnData
-        AnnData object. Should contain ATAC modality and RNA modality with var
-        attribute indices as "gene" and "peak" respectively.
+    atac : ad.AnnData
+        AnnData object. Should contain ATAC modality with var attribute indices 
+        as "peak".
+    rna : ad.AnnData
+        AnnData object. Should contain RNA modality with var attribute indices 
+        as "gene".
     sortby : str
         Column in df by which to order plot.
     top_n : int
@@ -71,9 +74,11 @@ def multiome_trackplot(df, adata, sortby = 'poiss_coeff', coeff_label = 'coeff',
 
     # sort mdata if necessary
     if not adata_sort:
-        adata_sorted = adata
+        atac_sorted = atac
+        rna_sorted = rna
     else:
-        adata_sorted = sortby_ct_adata(adata,obs_col=obs_col)
+        atac_sorted = sortby_ct_adata(atac,obs_col=obs_col)
+        rna_sorted = sortby_ct_adata(rna,obs_col=obs_col)
 
     # sort df by top values of sortby arg
     if not presorted:
@@ -82,8 +87,7 @@ def multiome_trackplot(df, adata, sortby = 'poiss_coeff', coeff_label = 'coeff',
         sorted_df = df
 
     # create subplots, including a smaller plot at the bottom for the ct colormap
-    if not strat: nrows = len(sorted_df)+1
-    else: nrows = len(sorted_df)
+    nrows = len(sorted_df)
     fig,axs = plt.subplots(
         figsize=(width,height), nrows=nrows, ncols=2,
         sharex=False, sharey=False, gridspec_kw={'hspace':0,'wspace':0,'height_ratios':[2]*nrows}
@@ -92,15 +96,11 @@ def multiome_trackplot(df, adata, sortby = 'poiss_coeff', coeff_label = 'coeff',
     # extract gene and peak ids
     y_axis_rna = sorted_df.gene.values
     y_axis_atac = sorted_df.peak.values
-    x_axis = np.arange(adata_sorted.shape[0])
+    x_axis = np.arange(atac_sorted.shape[0])
 
     # extract relevant raw gene and peak information
-    if not strat:
-        rna = adata_sorted[:,adata_sorted.var.gene.isin(y_axis_rna.tolist())].layers['rna_raw'].toarray()
-        atac = adata_sorted[:,adata_sorted.var.peak.isin(y_axis_atac.tolist())].layers['atac_raw'].toarray()
-    else:
-        rna = adata_sorted[:,adata_sorted.var.gene.isin(y_axis_rna.tolist())].layers['rna_strat']
-        atac = adata_sorted[:,adata_sorted.var.peak.isin(y_axis_atac.tolist())].layers['atac_strat']
+    rna = rna_sorted[:,rna_sorted.var.gene.isin(y_axis_rna.tolist())].X.toarray()
+    atac = atac_sorted[:,atac_sorted.var.peak.isin(y_axis_atac.tolist())].X.toarray()
 
     # take ylims for plotting
     maxpos = max(np.max(rna),np.max(atac))
@@ -114,7 +114,7 @@ def multiome_trackplot(df, adata, sortby = 'poiss_coeff', coeff_label = 'coeff',
         raise ValueError('number of cell must be the same between modalities.')
 
     # get ct labels and number of cells
-    cts = adata_sorted.obs[obs_col] # ct should be the same between groups so im using rna as ref
+    cts = rna_sorted.obs[obs_col] # ct should be the same between groups so im using rna as ref
     ct_sizes = [0]+[np.sum(cts == ct) for ct in cts.unique()] # get group lengths
     ct_sizes = np.cumsum(np.array(ct_sizes))
 
@@ -197,8 +197,7 @@ def multiome_trackplot(df, adata, sortby = 'poiss_coeff', coeff_label = 'coeff',
                 idx += [-np.argsort(-rnay_curve)]
 
             plot_line_collection(axs[i,0], x_axis[ct_sizes[k]:ct_sizes[k+1]], rnay_curve, cmap(k)) # line segments
-            if not strat:
-                axs[i,0].axvline(ct_sizes[k+1],linestyle='dashed',color='grey',alpha=0.3) # dashed grey line to separate cts
+            axs[i,0].axvline(ct_sizes[k+1],linestyle='dashed',color='grey',alpha=0.3) # dashed grey line to separate cts
 
             # atac
             if sort_cells == 'rna':
@@ -210,8 +209,7 @@ def multiome_trackplot(df, adata, sortby = 'poiss_coeff', coeff_label = 'coeff',
 
    
             plot_line_collection(axs[i,1], x_axis[ct_sizes[k]:ct_sizes[k+1]], atacy_curve, cmap(k))
-            if not strat:
-                axs[i,1].axvline(ct_sizes[k+1],linestyle='dashed',color='grey',alpha=0.3)
+            axs[i,1].axvline(ct_sizes[k+1],linestyle='dashed',color='grey',alpha=0.3)
 
             if ct_sizes[k+1] == ct_sizes[-1]:
                 axs[i,0].axvline(ct_sizes[k+1],color='black')
@@ -232,30 +230,28 @@ def multiome_trackplot(df, adata, sortby = 'poiss_coeff', coeff_label = 'coeff',
         axs[i,1].spines['bottom'].set_visible(False)
         axs[i,1].spines['left'].set_visible(False)
 
-    if not strat:
-        
-        # rna colormap
-        norm = mpl.colors.BoundaryNorm(ct_sizes, cmap.N)
-        cbar = fig.colorbar(mpl.cm.ScalarMappable(cmap=cmap, norm=norm),cax=axs[len(sorted_df),0], orientation='horizontal',spacing='proportional',ticks=ct_sizes[:color_length])
-        
-        cbar.ax.set_xticklabels('')
-        cbar.ax.set_xticks([((ct_sizes[x]+ct_sizes[x+1])/2) for x in np.arange(color_length)],minor=True)
-        cbar.ax.set_xticklabels(cts.unique(),fontsize=9,rotation=90,minor=True)
-        cbar.outline.set_visible(False)
+    # rna colormap
+    norm = mpl.colors.BoundaryNorm(ct_sizes, cmap.N)
+    cbar = fig.colorbar(mpl.cm.ScalarMappable(cmap=cmap, norm=norm),cax=axs[len(sorted_df),0], orientation='horizontal',spacing='proportional',ticks=ct_sizes[:color_length])
     
-        axs[len(sorted_df),0].tick_params(axis='x',which='minor',bottom=False,top=False,labelbottom=True)
+    cbar.ax.set_xticklabels('')
+    cbar.ax.set_xticks([((ct_sizes[x]+ct_sizes[x+1])/2) for x in np.arange(color_length)],minor=True)
+    cbar.ax.set_xticklabels(cts.unique(),fontsize=9,rotation=90,minor=True)
+    cbar.outline.set_visible(False)
+
+    axs[len(sorted_df),0].tick_params(axis='x',which='minor',bottom=False,top=False,labelbottom=True)
+
+
+    # atac colormap
+    norm = mpl.colors.BoundaryNorm(ct_sizes, cmap.N)
+    cbar = fig.colorbar(mpl.cm.ScalarMappable(cmap=cmap, norm=norm),cax=axs[len(sorted_df),1], orientation='horizontal',spacing='proportional',ticks=ct_sizes[:color_length])
     
-    
-        # atac colormap
-        norm = mpl.colors.BoundaryNorm(ct_sizes, cmap.N)
-        cbar = fig.colorbar(mpl.cm.ScalarMappable(cmap=cmap, norm=norm),cax=axs[len(sorted_df),1], orientation='horizontal',spacing='proportional',ticks=ct_sizes[:color_length])
-        
-        cbar.ax.set_xticklabels('')
-        cbar.ax.set_xticks([((ct_sizes[x]+ct_sizes[x+1])/2) for x in np.arange(color_length)],minor=True)
-        cbar.ax.set_xticklabels(cts.unique(),fontsize=9,rotation=90,minor=True)
-        cbar.outline.set_visible(False)
-    
-        axs[len(sorted_df),1].tick_params(axis='x',which='minor',bottom=False,top=False,labelbottom=True)
+    cbar.ax.set_xticklabels('')
+    cbar.ax.set_xticks([((ct_sizes[x]+ct_sizes[x+1])/2) for x in np.arange(color_length)],minor=True)
+    cbar.ax.set_xticklabels(cts.unique(),fontsize=9,rotation=90,minor=True)
+    cbar.outline.set_visible(False)
+
+    axs[len(sorted_df),1].tick_params(axis='x',which='minor',bottom=False,top=False,labelbottom=True)
 
     # add modality labels on top
     axs[0,0].set_title('RNA',fontdict={'fontsize':10})
