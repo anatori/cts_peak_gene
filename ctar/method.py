@@ -681,7 +681,6 @@ def vectorized_poisson_regression(X, Y, max_iter=100, tol=1e-6):
     - beta1: Slope coefficients of shape (P,)
     """
     # Start timing for the entire function
-    start_time = time.time()
     
     N, P = X.shape
     beta0 = np.zeros(P)
@@ -711,9 +710,7 @@ def vectorized_poisson_regression(X, Y, max_iter=100, tol=1e-6):
             break
         # Update beta0 and beta1
         beta0, beta1 = beta0_new, beta1_new  # Simpler variable update
-    total_time = time.time() - start_time
-    print(f"Total time for the function: {total_time:.6f} seconds")
-    
+
     return beta0, beta1
 
 
