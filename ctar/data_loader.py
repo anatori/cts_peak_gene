@@ -286,7 +286,7 @@ def extract_range(filename):
         return (int(match.group(1)), int(match.group(2)))
     return (0, 0)  # return if no match is found
 
-def consolidate_null(path,startswith = 'pearsonr_ctrl_'):
+def consolidate_null(path,startswith = 'pearsonr_ctrl_',b=101):
     '''Consolidate null arrays from batch job into single numpy array file.
 
     Parameters
@@ -309,7 +309,7 @@ def consolidate_null(path,startswith = 'pearsonr_ctrl_'):
     sorted_filenames = sorted(null_arrs, key=extract_range)
 
     consolidated_null = []
-    for x in tqdm(sorted_filenames[0:101]):
+    for x in sorted_filenames[0:b]:
         arr = np.load(path + x)
         consolidated_null.append(arr)
     consolidated_null = np.vstack(consolidated_null)
