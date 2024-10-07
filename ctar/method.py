@@ -445,6 +445,22 @@ def cauchy_combination(p_values1, p_values2):
     return combined_p_value
 
 
+######################### clustering #########################
+
+
+def sum_by(adata: ad.AnnData, col: str) -> ad.AnnData:
+    adata.strings_to_categoricals()
+    assert pd.api.types.is_categorical_dtype(adata.obs[col])
+
+    indicator = pd.get_dummies(adata.obs[col])
+
+    return ad.AnnData(
+        indicator.values.T @ adata.X, #.layers['counts'],
+        var=adata.var,
+        obs=pd.DataFrame(index=indicator.columns)
+    )
+
+
 
 #####################################################################################
 ######################################## OLD ########################################
