@@ -15,6 +15,8 @@ import muon as mu
 import sklearn as sk
 
 
+######################### regression methods #########################
+
 
 def pearson_corr_sparse(mat_X, mat_Y, var_filter=False):
     """Pairwise Pearson's correlation between columns in mat_X and mat_Y. Note that this will run
@@ -82,207 +84,56 @@ def pearson_corr_sparse(mat_X, mat_Y, var_filter=False):
     return mat_corr
 
 
-def initial_mcpval(ctrl_corr,corr,one_sided=True):
+def vectorized_poisson_regression(X, Y, max_iter=100, tol=1e-6):
+    """ Fast poisson regression from Alistair
     
-    ''' Calculates one or two-tailed Monte Carlo p-value (only for B controls).
+    Perform vectorized Poisson regression using IRLS.
     
-    Parameters
-    ----------
-    ctrl_corr : np.ndarray
-        Matrix of shape (gene#,n) where n is number of rand samples.
-    corr : np.ndarray
-        Vector of shape (gene#,), which gets reshaped to (gene#,1).
-    one_sided : bool
-        Indicates whether to do 1 sided or 2 sided pval.
+    Parameters:
+    - X: Predictor matrix of shape (N, P)
+    - Y: Response vector of shape (N,)
+    - max_iter: Maximum number of iterations
+    - tol: Convergence tolerance
     
-    Returns
-    ----------
-    Vector of shape (gene#,) corresponding to the Monte Carlo p-value of each statistic.
+    Returns:
+    - beta0: Intercept coefficients of shape (P,)
+    - beta1: Slope coefficients of shape (P,)
+    """
+    # Start timing for the entire function
     
-    '''
-
-    corr = corr.reshape(-1, 1)
-    if not one_sided:
-        ctrl_corr = np.abs(ctrl_corr)
-        corr = np.abs(corr)
-    indicator = np.sum(ctrl_corr >= corr.reshape(-1, 1), axis=1)
-    return (1+indicator)/(1+ctrl_corr.shape[1])
-
-
-def zscore_pval(ctrl_corr,corr):
-    ''' 1-sided zscore pvalue.
-    '''
-
-    mean = np.mean(ctrl_corr,axis=1)
-    sd = np.std(ctrl_corr,axis=1)
-    z = (corr - mean)/sd
+    N, P = X.shape
+    beta0 = np.zeros(P)
+    beta1 = np.zeros(P)
+    Y_broad = Y[:, None]
     
-    p_value = 1 - sp.stats.norm.cdf(z)
-    return p_value, z
-
-
-def mc_pval_one_sided(ctrl_corr,corr):
-    ''' 1-sided MC pooled pvalue.
-    '''
-
-    # Center first
-    ctrl_corr_centered,corr_centered = center_ctrls(ctrl_corr,corr)
-    ctrl_corr_centered = np.sort(ctrl_corr_centered)
-    n,b = ctrl_corr.shape
-    
-    # Search sort returns indices where element would be inserted
-    indicator = (n*b) - np.searchsorted(ctrl_corr_centered, corr_centered, side='left')
-    return (1+indicator)/(1+(n*b))
-
-
-def center_ctrls(ctrl_corray,main_array):
-
-    ''' Centers control and focal correlation arrays according to control mean and std.
-    
-    Parameters
-    ----------
-    ctrl_corray : np.ndarray
-        Array of shape (N,B) where N is number of genes and B is number
-        of repetitions (typically 1000x). Contains correlation between
-        focal gene and random peaks.
-    main_array : np.ndarray
-        Array of shape (N,) containing correlation between focal gene
-        and focal peaks.
-    
-    Returns
-    ----------
-    ctrls : np.ndarray
-        Array of shape (N*B,) containing centered correlations between
-        focal gene and random peaks.
-    main : np.ndarray
-        Array of shape (N,) containing centered correlations between
-        focal gene and focal peak, according to ctrl mean and std.
+    for iteration in range(max_iter):
+        #eta = np.clip(beta0 + X * beta1, -10, 10)
+        #mu = np.clip(np.exp(eta), 1e-8, None)
+        eta = beta0 + X * beta1
+        mu = np.exp(eta)
+        z = eta + (Y_broad - mu) / mu
+        WX = mu * X
+        WX2 = WX * X 
+        Sw = mu.sum(axis=0)        # (P,)
+        Sx = WX.sum(axis=0)       # (P,)
+        #Sx2 = WX2.sum(axis=0)     # (P,)
+        Sy = (mu * z).sum(axis=0)  # (P,)
+        Sxy = (WX * z).sum(axis=0)  # (P,)
+        denom = WX2.sum(axis=0)  - (Sx**2) / Sw
+        denom = np.where(denom == 0, 1e-8, denom)  # Avoid division by zero
         
-    '''
-    
-    
-    # Takes all ctrls and centers at same time
-    # then centers putative/main with same vals
-    mean = np.mean(ctrl_corray,axis=1)
-    std = np.std(ctrl_corray,axis=1)
-    ctrls = (ctrl_corray - mean.reshape(-1,1)) / std.reshape(-1,1)
-    main = (main_array - mean) / std
-    
-    return ctrls.flatten(), main
+        beta1_new = (Sxy - (Sx * Sy) / Sw) / denom
+        beta0_new = (Sy - beta1_new * Sx) / Sw
+        if np.all(np.abs(beta1_new - beta1) < tol) and np.all(np.abs(beta0_new - beta0) < tol):
+            print(f"Converged after {iteration+1} iterations.")
+            break
+        # Update beta0 and beta1
+        beta0, beta1 = beta0_new, beta1_new  # Simpler variable update
+
+    return beta0, beta1
 
 
-def mc_pval(ctrl_corr_full,corr):
-
-    ''' Calculates MC p-value using centered control and focal correlation arrays across
-    all controls (N*B).
-    
-    Parameters
-    ----------
-    ctrl_corr_full : np.ndarray
-        Array of shape (N,B) where N is number of genes and B is number
-        of repetitions (typically 1000x). Contains correlation/delta correlation
-        between focal gene and random peaks.
-    corr : np.ndarray
-        Array of shape (N,) containing correlation/delta correlation between
-        focal gene and focal peaks.
-    
-    Returns
-    ----------
-    full_mcpvalue : np.ndarray
-        Array of shape (N,) containing MC p-value corresponding to Nth peak-gene pair
-        against all centered contrl correlation/delta correlation pairs.
-        
-    '''
-
-    # Center first
-    ctrl_corr_full_centered,corr_centered = center_ctrls(np.abs(ctrl_corr_full),np.abs(corr))
-    ctrl_corr_full_centered = np.sort(ctrl_corr_full_centered)
-    n,b = ctrl_corr_full.shape
-    
-    # Search sort returns indices where element would be inserted
-    indicator = len(ctrl_corr_full_centered) - np.searchsorted(ctrl_corr_full_centered,corr_centered)
-    return (1+indicator)/(1+(n*b))
-
-
-
-
-
-#####################################################################################
-######################################## WIP ########################################
-#####################################################################################
-
-
-
-def add_corr(mdata):
-
-    '''Adds pearson corr for putative links to existing mdata.
-
-    Parameters
-    ----------
-    mdata : mu.MuData
-        MuData object of shape (#cells,#peaks). Contains DataFrame under mdata.uns.peak_gene_pairs
-        containing columns ['index_x','index_y'] that correspond to peak and gene indices in atac.X
-        and rna.X respectively, as well as mdata.uns.control_peaks containing randomly generated peaks.
-        If mdata.uns.control_peaks doesn't exist yet, will create it.
-    
-    Returns
-    ----------
-    mdata : mu.MuData
-        Updates mdata input with mdata.uns.corr, an np.ndarray of shape (#peak-gene pairs).
-    
-    '''
-
-    try:
-        mdata.uns['peak_gene_pairs']
-    except KeyError:
-        print('Attempting to add peak-gene pairs.')
-        find_peak_gene_pairs(mdata)
-
-    # Extract peak-gene pairs and their respective atac and rna exp values
-    peaks_df = mdata.uns['peak_gene_pairs']
-    atac_Xs = mdata['atac'].X[:,peaks_df.index_x.values]
-    rna_Xs = mdata['rna'].X[:,peaks_df.index_y.values]
-
-    # Calculate corr
-    corr = pearson_corr_sparse(atac_Xs,rna_Xs,var_filter=True)
-
-    # Store in mdata.uns
-    mdata.uns['peak_gene_corr'] = corr
-    
-    return mdata
-    
-
-def get_corrs(adata):
-
-    '''Adds pearson corr for putative links to a links AnnData.
-
-    Parameters
-    ----------
-    adata : ad.AnnData
-        AnnData of shape (#cells, #peak-gene pairs) containing rna and atac layers.
-        See build_adata.
-    
-    Returns
-    ----------
-    adata : ad.AnnData
-        Updates given AnnData with correlation between peak-gene pairs of shape
-        (#cells, #peak-gene pairs with variance > 1e-6).
-    
-    '''
-
-    assert type(adata) == type(ad.AnnData()), 'Must be AnnData.'
-
-    # Calculate corr
-    corr = pearson_corr_sparse(adata.layers['rna'],adata.layers['atac'],var_filter=True)
-
-    # Remove pairs that have fail var_filter from adata obj
-    adata = adata[:,corr[1]].copy()
-    adata.var['corr'] = corr[0].flatten()
-    
-    return adata
-
-
-######################### Control corr #########################
+######################### generate null #########################
 
 
 def gc_content(adata,genome_file='GRCh38.p13.genome.fa.bgz'):
@@ -394,7 +245,7 @@ def create_ctrl_peaks(adata,num_bins=5,b=1000,update=True,distance=False,gc=True
     b : int
         Number of desired random peaks per focal peak-gene pair.
     distance : bool
-    	If True, gets distance bins rather than MFA bins.
+        If True, gets distance bins rather than MFA bins.
     gc : bool
         If True, gets MFA and GC bins. Else, only gets MFA bins.
     peak_col : str
@@ -432,6 +283,241 @@ def create_ctrl_peaks(adata,num_bins=5,b=1000,update=True,distance=False,gc=True
     ctrl_peaks = ctrl_peaks[ind,:].astype(int)
     
     return ctrl_peaks
+
+
+######################### pvalue methods #########################
+
+
+def initial_mcpval(ctrl_corr,corr,one_sided=True):
+    
+    ''' Calculates one or two-tailed Monte Carlo p-value (only for B controls).
+    
+    Parameters
+    ----------
+    ctrl_corr : np.ndarray
+        Matrix of shape (gene#,n) where n is number of rand samples.
+    corr : np.ndarray
+        Vector of shape (gene#,), which gets reshaped to (gene#,1).
+    one_sided : bool
+        Indicates whether to do 1 sided or 2 sided pval.
+    
+    Returns
+    ----------
+    Vector of shape (gene#,) corresponding to the Monte Carlo p-value of each statistic.
+    
+    '''
+
+    corr = corr.reshape(-1, 1)
+    if not one_sided:
+        ctrl_corr = np.abs(ctrl_corr)
+        corr = np.abs(corr)
+    indicator = np.sum(ctrl_corr >= corr.reshape(-1, 1), axis=1)
+    return (1+indicator)/(1+ctrl_corr.shape[1])
+
+
+def zscore_pval(ctrl_corr,corr):
+    ''' 1-sided Z-score pvalue.
+    '''
+
+    mean = np.mean(ctrl_corr,axis=1)
+    sd = np.std(ctrl_corr,axis=1)
+    z = (corr - mean)/sd
+    
+    p_value = 1 - sp.stats.norm.cdf(z)
+    return p_value, z
+
+
+def mc_pval_one_sided(ctrl_corr,corr):
+    ''' 1-sided MC pooled pvalue.
+    '''
+
+    # Center first
+    ctrl_corr_centered,corr_centered = center_ctrls(ctrl_corr,corr)
+    ctrl_corr_centered = np.sort(ctrl_corr_centered)
+    n,b = ctrl_corr.shape
+    
+    # Search sort returns indices where element would be inserted
+    indicator = (n*b) - np.searchsorted(ctrl_corr_centered, corr_centered, side='left')
+    return (1+indicator)/(1+(n*b))
+
+
+def center_ctrls(ctrl_corray,main_array):
+
+    ''' Centers control and focal correlation arrays according to control mean and std.
+    
+    Parameters
+    ----------
+    ctrl_corray : np.ndarray
+        Array of shape (N,B) where N is number of genes and B is number
+        of repetitions (typically 1000x). Contains correlation between
+        focal gene and random peaks.
+    main_array : np.ndarray
+        Array of shape (N,) containing correlation between focal gene
+        and focal peaks.
+    
+    Returns
+    ----------
+    ctrls : np.ndarray
+        Array of shape (N*B,) containing centered correlations between
+        focal gene and random peaks.
+    main : np.ndarray
+        Array of shape (N,) containing centered correlations between
+        focal gene and focal peak, according to ctrl mean and std.
+        
+    '''
+    
+    
+    # Takes all ctrls and centers at same time
+    # then centers putative/main with same vals
+    mean = np.mean(ctrl_corray,axis=1)
+    std = np.std(ctrl_corray,axis=1)
+    ctrls = (ctrl_corray - mean.reshape(-1,1)) / std.reshape(-1,1)
+    main = (main_array - mean) / std
+    
+    return ctrls.flatten(), main
+
+
+def mc_pval(ctrl_corr_full,corr):
+
+    ''' Calculates MC p-value using centered control and focal correlation arrays across
+    all controls (N*B).
+    
+    Parameters
+    ----------
+    ctrl_corr_full : np.ndarray
+        Array of shape (N,B) where N is number of genes and B is number
+        of repetitions (typically 1000x). Contains correlation/delta correlation
+        between focal gene and random peaks.
+    corr : np.ndarray
+        Array of shape (N,) containing correlation/delta correlation between
+        focal gene and focal peaks.
+    
+    Returns
+    ----------
+    full_mcpvalue : np.ndarray
+        Array of shape (N,) containing MC p-value corresponding to Nth peak-gene pair
+        against all centered contrl correlation/delta correlation pairs.
+        
+    '''
+
+    # Center first
+    ctrl_corr_full_centered,corr_centered = center_ctrls(np.abs(ctrl_corr_full),np.abs(corr))
+    ctrl_corr_full_centered = np.sort(ctrl_corr_full_centered)
+    n,b = ctrl_corr_full.shape
+    
+    # Search sort returns indices where element would be inserted
+    indicator = len(ctrl_corr_full_centered) - np.searchsorted(ctrl_corr_full_centered,corr_centered)
+    return (1+indicator)/(1+(n*b))
+
+
+def cauchy_combination(p_values1, p_values2):
+
+    ''' Calculates Cauchy combination test for two arrays of p-values.
+    
+    Parameters
+    ----------
+    p_values1 : np.ndarray
+        Array of shape (N,) of p-values from one method.
+    p_values2 : np.ndarray
+        Array of shape (N,) of p-values from another method.
+    
+    Returns
+    ----------
+    combined_p_value : np.ndarray
+        Array of shape (N,) of p-values combined using Cauchy
+        distribution approximation.
+        
+    '''
+
+    # From R code : 0.5-atan(mean(tan((0.5-Pval)*pi)))/pi
+    quantiles1 = np.tan(np.pi * (0.5 - p_values1))
+    quantiles2 = np.tan(np.pi * (0.5 - p_values2))
+
+    # Combine the quantiles using the Cauchy distribution
+    combined_quantiles = np.vstack((quantiles1, quantiles2))
+    
+    # Calculate the combined statistic (mean)
+    combined_statistic = np.mean(combined_quantiles,axis=0)
+
+    # Convert the combined statistic back to a p-value
+    combined_p_value = 0.5-np.arctan(combined_statistic)/math.pi
+
+    return combined_p_value
+
+
+
+#####################################################################################
+######################################## OLD ########################################
+#####################################################################################
+
+
+def add_corr(mdata):
+
+    '''Adds pearson corr for putative links to existing mdata.
+
+    Parameters
+    ----------
+    mdata : mu.MuData
+        MuData object of shape (#cells,#peaks). Contains DataFrame under mdata.uns.peak_gene_pairs
+        containing columns ['index_x','index_y'] that correspond to peak and gene indices in atac.X
+        and rna.X respectively, as well as mdata.uns.control_peaks containing randomly generated peaks.
+        If mdata.uns.control_peaks doesn't exist yet, will create it.
+    
+    Returns
+    ----------
+    mdata : mu.MuData
+        Updates mdata input with mdata.uns.corr, an np.ndarray of shape (#peak-gene pairs).
+    
+    '''
+
+    try:
+        mdata.uns['peak_gene_pairs']
+    except KeyError:
+        print('Attempting to add peak-gene pairs.')
+        find_peak_gene_pairs(mdata)
+
+    # Extract peak-gene pairs and their respective atac and rna exp values
+    peaks_df = mdata.uns['peak_gene_pairs']
+    atac_Xs = mdata['atac'].X[:,peaks_df.index_x.values]
+    rna_Xs = mdata['rna'].X[:,peaks_df.index_y.values]
+
+    # Calculate corr
+    corr = pearson_corr_sparse(atac_Xs,rna_Xs,var_filter=True)
+
+    # Store in mdata.uns
+    mdata.uns['peak_gene_corr'] = corr
+    
+    return mdata
+    
+
+def get_corrs(adata):
+
+    '''Adds pearson corr for putative links to a links AnnData.
+
+    Parameters
+    ----------
+    adata : ad.AnnData
+        AnnData of shape (#cells, #peak-gene pairs) containing rna and atac layers.
+        See build_adata.
+    
+    Returns
+    ----------
+    adata : ad.AnnData
+        Updates given AnnData with correlation between peak-gene pairs of shape
+        (#cells, #peak-gene pairs with variance > 1e-6).
+    
+    '''
+
+    assert type(adata) == type(ad.AnnData()), 'Must be AnnData.'
+
+    # Calculate corr
+    corr = pearson_corr_sparse(adata.layers['rna'],adata.layers['atac'],var_filter=True)
+
+    # Remove pairs that have fail var_filter from adata obj
+    adata = adata[:,corr[1]].copy()
+    adata.var['corr'] = corr[0].flatten()
+    
+    return adata
 
 
 def control_corr(adata, b=1000, update=True, ct=False):
@@ -520,10 +606,6 @@ def get_pvals(adata, control_metric='control_corr', metric='corr', alpha=0.05):
     return adata
 
 
-
-########################### CT-specific ###########################
-
-
 def filter_lowexp(atac, rna, min_pct=0.05, min_mean=0):
     
     ''' Filter out cells with few expressing cells or lower absolute mean expression.
@@ -587,7 +669,6 @@ def filter_vars(adata, min_pct=0.05, min_mean=0.1):
     return ct_adata, lowexp_mask
 
 
-
 def filter_ct(adata, ct_key):
     
     ''' Returns CT-specific adata.
@@ -625,7 +706,6 @@ def filter_ct(adata, ct_key):
     return ct_adata
 
 
-
 def build_ct_adata(adata, ct_key, min_pct=0.05, min_mean=0.1):
 
     ''' Returns CT-specific adata.
@@ -659,59 +739,6 @@ def build_ct_adata(adata, ct_key, min_pct=0.05, min_mean=0.1):
     ct_adata.uns['original_atac'] = adata.layers['atac'][(adata.obs['celltype'] == ct),:]
 
     return ct_adata
-
-
-
-############### poisson regr ######################################
-
-
-def vectorized_poisson_regression(X, Y, max_iter=100, tol=1e-6):
-    """ Fast poisson regression from Alistair
-    
-    Perform vectorized Poisson regression using IRLS.
-    
-    Parameters:
-    - X: Predictor matrix of shape (N, P)
-    - Y: Response vector of shape (N,)
-    - max_iter: Maximum number of iterations
-    - tol: Convergence tolerance
-    
-    Returns:
-    - beta0: Intercept coefficients of shape (P,)
-    - beta1: Slope coefficients of shape (P,)
-    """
-    # Start timing for the entire function
-    
-    N, P = X.shape
-    beta0 = np.zeros(P)
-    beta1 = np.zeros(P)
-    Y_broad = Y[:, None]
-    
-    for iteration in range(max_iter):
-        #eta = np.clip(beta0 + X * beta1, -10, 10)
-        #mu = np.clip(np.exp(eta), 1e-8, None)
-        eta = beta0 + X * beta1
-        mu = np.exp(eta)
-        z = eta + (Y_broad - mu) / mu
-        WX = mu * X
-        WX2 = WX * X 
-        Sw = mu.sum(axis=0)        # (P,)
-        Sx = WX.sum(axis=0)       # (P,)
-        #Sx2 = WX2.sum(axis=0)     # (P,)
-        Sy = (mu * z).sum(axis=0)  # (P,)
-        Sxy = (WX * z).sum(axis=0)  # (P,)
-        denom = WX2.sum(axis=0)  - (Sx**2) / Sw
-        denom = np.where(denom == 0, 1e-8, denom)  # Avoid division by zero
-        
-        beta1_new = (Sxy - (Sx * Sy) / Sw) / denom
-        beta0_new = (Sy - beta1_new * Sx) / Sw
-        if np.all(np.abs(beta1_new - beta1) < tol) and np.all(np.abs(beta0_new - beta0) < tol):
-            print(f"Converged after {iteration+1} iterations.")
-            break
-        # Update beta0 and beta1
-        beta0, beta1 = beta0_new, beta1_new  # Simpler variable update
-
-    return beta0, beta1
 
 
 def fit_poisson(x,y,return_none=True):
@@ -765,9 +792,6 @@ def get_poiss_coeff(adata,layer='raw',binarize=False,label='poiss_coeff'):
     return adata
 
 
-
-############### delta corr ######################################
-
 def build_other_adata(adata,ct_key):
     ''' Returns adata with everything except CT in ct_key.
     '''
@@ -797,10 +821,6 @@ def get_control_deltas(ct_adata,other_adata):
     deltas = ct_adata.varm['control_corr'] - other_adata.varm['control_corr']
     ct_adata.varm['delta_control_corr'] = deltas
     return deltas
-
-
-
-############# stratified corr #################################
 
 
 def stratified_adata(adata,neighbors='leiden'):
