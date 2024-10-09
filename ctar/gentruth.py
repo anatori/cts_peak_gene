@@ -7,6 +7,7 @@ from pybedtools import BedTool
 import os
 import matplotlib.pyplot as plt
 import matplotlib_venn as venn
+from biomart import BiomartServer
 
 
 def preprocess_df(df):
@@ -212,5 +213,37 @@ def normalize_symm(mat):
     univ = diag + diag.reshape(-1,1) - mat
     mat_norm = mat / univ
     return mat_norm
+
+
+def fetch_tss(genes,attribute='ensembl_gene_id'):
+    ''' Create dictionary mapping for genes to their TSS.
+    
+    Parameters
+    -------
+    genes : list
+        List containing genes you want to find the TSS of.
+    attribute : str
+        Biomart attribute of genes.
+
+    Returns
+    -------
+    gene_positions : dict
+        Dictionary with attribute as key and values as TSS (hg38).
+    '''
+
+    # call biomart
+    server = BiomartServer("http://www.ensembl.org/biomart")
+    dataset = server.datasets['hsapiens_gene_ensembl']
+    attributes = [attribute,'transcription_start_site']
+    response = dataset.search({'attributes': attributes})
+    responses = response.raw.data.decode('ascii')
+    # store in dictionary
+    gene_positions = {}
+    for line in responses.splitlines():                                              
+        line = line.split('\t')
+        gene_id = line[0]
+        gene_positions[gene_id] = line[1]
+
+    return gene_positions
 
     
