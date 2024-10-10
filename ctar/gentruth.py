@@ -215,35 +215,36 @@ def normalize_symm(mat):
     return mat_norm
 
 
-def fetch_tss(genes,attribute='ensembl_gene_id'):
-    ''' Create dictionary mapping for genes to their TSS.
+def fetch_attribute(attribute,query_attribute='ensembl_gene_id',dataset='hsapiens_gene_ensembl'):
+    ''' Create dictionary mapping for genes to an attribute.
     
     Parameters
     -------
-    genes : list
-        List containing genes you want to find the TSS of.
     attribute : str
-        Biomart attribute of genes.
+        Biomart attribute you want to obtain, e.g. 'transcription_start_site', 'hgnc_symbol'.
+    query_attribute : str
+        Biomart attribute which defines input data.
+    dataset : str
+        Biomart dataset to use.
 
     Returns
     -------
-    gene_positions : dict
-        Dictionary with attribute as key and values as TSS (hg38).
+    gene_dic : dict
+        Dictionary with attribute as key and values as attribute.
     '''
 
     # call biomart
     server = BiomartServer("http://www.ensembl.org/biomart")
-    dataset = server.datasets['hsapiens_gene_ensembl']
-    attributes = [attribute,'transcription_start_site']
+    dataset = server.datasets[dataset]
+    attributes = [query_attribute,attribute]
     response = dataset.search({'attributes': attributes})
     responses = response.raw.data.decode('ascii')
     # store in dictionary
-    gene_positions = {}
+    gene_dic = {}
     for line in responses.splitlines():                                              
         line = line.split('\t')
         gene_id = line[0]
-        gene_positions[gene_id] = line[1]
+        gene_dic[gene_id] = line[1]
 
-    return gene_positions
+    return gene_dic
 
-    
