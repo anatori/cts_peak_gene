@@ -461,6 +461,32 @@ def sum_by(adata: ad.AnnData, col: str) -> ad.AnnData:
     )
 
 
+def get_moments(adata, col, get_max=True):
+    ''' Get first and second moment of Anndata matrix for each categorial variable in col.
+    '''
+    adata.strings_to_categoricals()
+    
+    indicator = pd.get_dummies(adata.obs[col])
+    v_counts = indicator.sum(axis=0).values.reshape(-1,1)
+    
+    # mean = sum / count
+    means = indicator.values.T @ adata.X / v_counts
+    means = means.clip(min=1e-6)
+    print('Calculated means.')
+
+    # mean of squared X
+    squared_X = adata.X.power(2) # X^2
+    means_of_squares = (indicator.values.T @ squared_X) / v_counts # E[X^2]
+
+    # V[X] = E[X^2] - (E[X])^2
+    variances = means_of_squares - means ** 2
+    if get_max:
+        variances = np.maximum(variances,means)
+    print('Calculated variances.')
+    
+    return means, variances
+
+
 
 #####################################################################################
 ######################################## OLD ########################################
