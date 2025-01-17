@@ -783,22 +783,18 @@ def build_ct_adata(adata, ct_key, min_pct=0.05, min_mean=0.1):
     return ct_adata
 
 
-def fit_poisson(x,y,return_none=True):
+def fit_poisson(x,y,return_both=False):
 
     # Simple log(E[y]) ~ x equation
     exog = sm.add_constant(x)
     
-    try:
-        poisson_model = sm.GLM(y, exog, family=sm.families.Poisson())
-        result = poisson_model.fit()
+    poisson_model = sm.GLM(y, exog, family=sm.families.Poisson())
+    result = poisson_model.fit()
+
+    if not return_both:
         return result.params[1]
 
-    # Remove failed MLE
-    except Exception:
-        if return_none:
-            return None
-        else:
-            return 0
+    return result.params[0], result.params[1]
 
 
 def get_poiss_coeff(adata,layer='raw',binarize=False,label='poiss_coeff'):
