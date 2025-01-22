@@ -314,6 +314,14 @@ def initial_mcpval(ctrl_corr,corr,one_sided=True):
     indicator = np.sum(ctrl_corr >= corr.reshape(-1, 1), axis=1)
     return (1+indicator)/(1+ctrl_corr.shape[1])
 
+def basic_mcpval(ctrl_corr,corr):
+    ''' 1-sided MC pvalue (for single set of controls)
+    '''
+
+    ctrl_corr = np.sort(ctrl_corr)
+    indicator = len(ctrl_corr) - np.searchsorted(ctrl_corr,corr)
+
+    return (1+indicator)/(1+len(ctrl_corr))
 
 def zscore_pval(ctrl_corr,corr):
     ''' 1-sided Z-score pvalue.
