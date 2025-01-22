@@ -314,14 +314,6 @@ def initial_mcpval(ctrl_corr,corr,one_sided=True):
     indicator = np.sum(ctrl_corr >= corr.reshape(-1, 1), axis=1)
     return (1+indicator)/(1+ctrl_corr.shape[1])
 
-def basic_mcpval(ctrl_corr,corr):
-    ''' 1-sided MC pvalue (for single set of controls)
-    '''
-
-    ctrl_corr = np.sort(ctrl_corr)
-    indicator = len(ctrl_corr) - np.searchsorted(ctrl_corr,corr)
-
-    return (1+indicator)/(1+len(ctrl_corr))
 
 def zscore_pval(ctrl_corr,corr):
     ''' 1-sided Z-score pvalue.
@@ -335,7 +327,7 @@ def zscore_pval(ctrl_corr,corr):
     return p_value, z
 
 
-def mc_pval_one_sided(ctrl_corr,corr):
+def pooled_mcpval(ctrl_corr,corr):
     ''' 1-sided MC pooled pvalue.
     '''
 
@@ -383,6 +375,28 @@ def center_ctrls(ctrl_corray,main_array):
     main = (main_array - mean) / std
     
     return ctrls.flatten(), main
+
+
+def basic_mcpval(ctrl_corr,corr):
+    ''' 1-sided MC pvalue (for single set of controls)
+    '''
+
+    ctrl_corr = np.sort(ctrl_corr)
+    indicator = len(ctrl_corr) - np.searchsorted(ctrl_corr,corr)
+
+    return (1+indicator)/(1+len(ctrl_corr))
+
+
+def basic_zpval(ctrl_corr,corr):
+    ''' 1-sided zscore pvalue (for single set of controls)
+    '''
+
+    mean = np.mean(ctrl_corr)
+    sd = np.std(ctrl_corr)
+    z = (corr - mean)/sd
+
+    p_value = 1 - sp.stats.norm.cdf(z)
+    return p_value
 
 
 def mc_pval(ctrl_corr_full,corr):
@@ -441,7 +455,7 @@ def cauchy_combination(p_values1, p_values2):
     quantiles1 = np.tan(np.pi * (0.5 - p_values1))
     quantiles2 = np.tan(np.pi * (0.5 - p_values2))
 
-    # Combine the quantiles using the Cauchy distribution
+    # Combine the quantiles
     combined_quantiles = np.vstack((quantiles1, quantiles2))
     
     # Calculate the combined statistic (mean)
