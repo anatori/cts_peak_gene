@@ -8,6 +8,8 @@ import os
 import matplotlib.pyplot as plt
 import matplotlib_venn as venn
 from biomart import BiomartServer
+import subprocess
+import tempfile
 
 
 def preprocess_df(df):
@@ -317,6 +319,51 @@ def add_pli(query_df, pli_dict, gene_col='gene'):
     '''
     query_df['pli'] = query_df[gene_col].map(pli_dict)
     return query_df
+
+
+def run_ucsc_tool(tool_location, input_file, bed, output_file):
+    ''' Runs UCSC tools, such as bigWigAverageOverBed.
+
+    Parameters
+    -------
+    tool_location : str
+        UCSC tool path.
+
+    input_file : str
+        Input file 1.
+
+    bed : str, pd.DataFrame
+        Input file 2. Specify path to bed file otherwise, creates temp bed file.
+    
+    Returns
+    -------
+    result_df : pd.DataFrame
+        DataFrame with results from the UCSC tool.
+
+    '''
+
+    if isinstance(bed,pd.DataFrame):
+        # create temp bed
+        bed_tmp = tempfile.NamedTemporaryFile(suffix='.bed')
+        bed_file = bed_tmp.name
+        bed[['start','end']] = bed[['start','end']].astype(int)
+        bed[['chr','start','end','region']].to_csv(bed_file,sep='\t',header=False,index=False)
+
+    else:
+        bed_file = bed
+
+    subprocess.run([tool_location,
+                    '-tsv',
+                    input_file,
+                    bed_file,
+                    output_file
+                   ],stdout=subprocess.PIPE)
+    result_df = pd.read_csv(output_file, sep='\t')
+    
+    if isinstance(bed, pd.DataFrame): # remove temp file
+        os.remove(bed_file) 
+
+    return result_df
 
 
 def find_catlas(query,catlas_df,f=1e-9):
