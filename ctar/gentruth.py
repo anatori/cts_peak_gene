@@ -304,8 +304,9 @@ def add_gene_distances(query_df, gene_df, gene_col='gene'):
 
     # chooses positive distance, depending on whether enh is after or before the gene
     # will choose least negative distance if it is within the gene body
-    intersect_df['distance'] = np.max(intersect_df.gene_start.astype(int) - intersect_df.end.astype(int), \
-                                    intersect_df.start.astype(int) - intersect_df.gene_end.astype(int))
+    intersect_df[['gene_start','gene_end','start','end']] = intersect_df[['gene_start','gene_end','start','end']].astype('Int32')
+    intersect_df['distance'] = np.maximum(intersect_df.gene_start - intersect_df.end, \
+                                    intersect_df.start - intersect_df.gene_end)
     intersect_df['same_chr'] = intersect_df['gene_chr'] == intersect_df['chr']
 
     return intersect_df
