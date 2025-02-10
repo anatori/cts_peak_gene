@@ -40,6 +40,43 @@ def intersect_beds(bed1,bed2,deduplicate=True,col_names = ['bed1_chr','bed1_star
     return intersect_df
 
 
+def fetch_attribute(attribute,query_attribute='ensembl_gene_id',dataset='hsapiens_gene_ensembl'):
+    ''' Create dictionary mapping for genes to an attribute.
+    
+    Parameters
+    -------
+    attribute : str
+        Biomart attribute you want to obtain, e.g. 'transcription_start_site', 'hgnc_symbol'.
+    query_attribute : str
+        Biomart attribute which defines input data.
+    dataset : str
+        Biomart dataset to use.
+
+    Returns
+    -------
+    gene_dic : dict
+        Dictionary with attribute as key and values as attribute.
+    '''
+
+    # call biomart
+    server = BiomartServer("http://www.ensembl.org/biomart")
+    dataset = server.datasets[dataset]
+    attributes = [query_attribute,attribute]
+    response = dataset.search({'attributes': attributes})
+    responses = response.raw.data.decode('ascii')
+    # store in dictionary
+    gene_dic = {}
+    for line in responses.splitlines():                                              
+        line = line.split('\t')
+        gene_id = line[0]
+        gene_dic[gene_id] = line[1]
+
+    return gene_dic
+
+
+######################### overlap analysis #########################
+
+
 def summarize_df(query_file, reference_path, storage_path):
 
     ''' Summarizes existing tsv files to obtain marginal and joint n_genes, n_snps, n_links.
@@ -173,7 +210,6 @@ def paired_stats_df(df_dic,labels):
 def odds_ratio_poslinks(df,ha_correction=True):
     ''' Provides odds ratio and chi^2 p-value with (+0.5) correction 
     for positive links.
-
     '''
     
     labels = [x for x in df.columns  if '_pos' not in x]
@@ -215,36 +251,170 @@ def normalize_symm(mat):
     return mat_norm
 
 
-def fetch_attribute(attribute,query_attribute='ensembl_gene_id',dataset='hsapiens_gene_ensembl'):
-    ''' Create dictionary mapping for genes to an attribute.
-    
-    Parameters
-    -------
-    attribute : str
-        Biomart attribute you want to obtain, e.g. 'transcription_start_site', 'hgnc_symbol'.
-    query_attribute : str
-        Biomart attribute which defines input data.
-    dataset : str
-        Biomart dataset to use.
+######################### feature addition #########################
 
-    Returns
-    -------
-    gene_dic : dict
-        Dictionary with attribute as key and values as attribute.
+
+def find_gene_distances():
+    ''' Returns dataframe contianing all gene body locations.
     '''
 
     # call biomart
     server = BiomartServer("http://www.ensembl.org/biomart")
-    dataset = server.datasets[dataset]
-    attributes = [query_attribute,attribute]
+    dataset = server.datasets['hsapiens_gene_ensembl']
+    attributes = ['ensembl_gene_id','chromosome_name', 'start_position', 'end_position']
     response = dataset.search({'attributes': attributes})
     responses = response.raw.data.decode('ascii')
-    # store in dictionary
-    gene_dic = {}
-    for line in responses.splitlines():                                              
+    
+    # store results in dataframe
+    gene_df = pd.DataFrame(columns=['gene','gene_chr','gene_start','gene_end'])
+    for i,line in enumerate(responses.splitlines()):                                              
         line = line.split('\t')
-        gene_id = line[0]
-        gene_dic[gene_id] = line[1]
+        gene_df.loc[i] = line
 
-    return gene_dic
+    return gene_df
+
+
+def add_gene_distances(query_df, gene_df, gene_col='gene'):
+    ''' Adds gene body locations and calculates distances.
+    
+    Parameters
+    -------
+    query_df : pd.DataFrame
+        Query dataset. Should contain columns ['chr','start','end',gene_col].
+
+    gene_df : pd.DataFrame
+        Output of find_gene_distances, containing columns ['gene','gene_chr','gene_start','gene_end'].
+
+    gene_col : str
+        Name of column containing linked ENSEMBL IDs.
+    
+    Returns
+    -------
+    intersect_df : pd.DataFrame
+        DataFrame containing distances from assigned genes for query positions.
+
+    '''
+
+    # obtain gene locations
+    intersect_df = query_df.merge(gene_df,how='left',left_on=gene_col,right_on='gene')
+    
+    if 'end' not in query_df.columns:
+        query_df['end'] = query_df['start']
+
+    # chooses positive distance, depending on whether enh is after or before the gene
+    # will choose least negative distance if it is within the gene body
+    intersect_df['distance'] = np.max(intersect_df.gene_start.astype(int) - intersect_df.end.astype(int), \
+                                    intersect_df.start.astype(int) - intersect_df.gene_end.astype(int))
+
+    return intersect_df
+
+
+def add_pli(query_df, pli_dict, gene_col='gene'):
+    ''' Maps genes with pLI. pli_dict should be in format {'gene': pLI}.
+    '''
+    query_df['pli'] = query_df[gene_col].map(pli_dict)
+    return query_df
+
+
+def find_catlas(query,catlas_df,f=1e-9):
+    ''' Add CATLAS-based features.
+    
+    Parameters
+    -------
+    query : str, pd.DataFrame
+        Path to file containing query dataset in .tsv.gz format or query as dataframe. Should 
+        contain columns ['chr','start','gene'].
+
+    catlas_df : pd.DataFrame
+        CATLAS DataFrame, downloaded from http://catlas.org/catlas_downloads/humantissues/.
+        Should conttain columns ['#Chromosome','Start','End','id']. Note that more info can be
+        added from Li et al. Science 2023, Supplementary tables.
+        
+    f : float
+        Specify overlap necessary for bedtools. Default (1e-9) is 1bp.
+
+    Returns
+    -------
+    intersect_df : pd.DataFrame
+        DataFrame containing CATLAS database information for query positions.
+
+    '''
+
+    if isinstance(query,str):
+        query_df = pd.read_csv(query, sep='\t', compression='gzip',index_col=0)
+    else:
+        query_df = query
+
+    query_df = preprocess_df(query_df)
+    query_df = query_df.drop_duplicates(subset=['region','gene'])
+    query_df['ind'] = range(len(query_df)) # add index for ref
+    querybed = BedTool.from_dataframe(query_df[['chr','start','end','ind']])
+
+    # format catlas enhancers
+    catlas_df['id'] = range(len(catlas_df)) # add index for ref
+    catlasbed = BedTool.from_dataframe(catlas_df[['#Chromosome','Start','End','id']])
+
+    # intersect query bed with catlas bed
+    col_names = ['query_chr','query_start','query_end','query_ind',
+                    'catlas_chr','catlas_start','catlas_end','catlas_ind']
+    intersect_df = querybed.intersect(catlasbed,wa=True,wb=True,f=f).to_dataframe()
+    intersect_df.columns = col_names
+    
+    # return intersected catlas and query df
+    intersect_df = intersect_df.merge(catlas_df,how='left',left_on='catlas_ind',right_on='id')
+    intersect_df = intersect_df.drop(columns=['#Chromosome','Start','End','id'])
+    intersect_df = intersect_df.drop_duplicates(subset=['query_ind','catlas_ind'])
+
+    return intersect_df
+
+
+def find_screen(query,screen_df,f=1e-9):
+    ''' Add ENCODE SCREEN-based features.
+    
+    Parameters
+    -------
+    query : str, pd.DataFrame
+        Path to file containing query dataset in .tsv.gz format or query as dataframe. Should 
+        contain columns ['chr','start','gene'].
+
+    screen_df : pd.DataFrame
+        SCREEN DataFrame, downloaded from https://screen.wenglab.org/downloads, All Human cCREs.
+        Should contain columns ['chr','start','end','type'].
+        
+    f : float
+        Specify overlap necessary for bedtools. Default (1e-9) is 1bp.
+
+    Returns
+    -------
+    intersect_df : pd.DataFrame
+        DataFrame containing SCREEN database information for query positions.
+
+    '''
+
+    if isinstance(query,str):
+        query_df = pd.read_csv(query, sep='\t', compression='gzip',index_col=0)
+    else:
+        query_df = query
+
+    query_df = preprocess_df(query_df)
+    query_df = query_df.drop_duplicates(subset=['region','gene'])
+    query_df['ind'] = range(len(query_df))
+    querybed = BedTool.from_dataframe(query_df[['chr','start','end','ind']])
+
+    # screen enhancers
+    screenbed = BedTool.from_dataframe(screen_df[['chr','start','end','type']])
+
+    # intersect query bed with catlas bed
+    col_names = ['query_chr','query_start','query_end','query_ind',
+                    'screen_chr','screen_start','screen_end','screen_type']
+    intersect_df = querybed.intersect(screenbed,wa=True,wb=True,f=f).to_dataframe()
+    intersect_df.columns = col_names
+
+    # add dummy cols for screen types
+    dummy_df = pd.get_dummies(intersect_df['screen_type'])
+    intersect_df = intersect_df.assign(**dummy_df)
+    
+    return intersect_df
+
+
 
