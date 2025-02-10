@@ -271,6 +271,7 @@ def find_gene_distances():
         line = line.split('\t')
         gene_df.loc[i] = line
 
+    gene_df['gene_chr'] = 'chr' + gene_df['gene_chr'].astype(str)
     return gene_df
 
 
@@ -305,6 +306,7 @@ def add_gene_distances(query_df, gene_df, gene_col='gene'):
     # will choose least negative distance if it is within the gene body
     intersect_df['distance'] = np.max(intersect_df.gene_start.astype(int) - intersect_df.end.astype(int), \
                                     intersect_df.start.astype(int) - intersect_df.gene_end.astype(int))
+    intersect_df['same_chr'] = intersect_df['gene_chr'] == intersect_df['chr']
 
     return intersect_df
 
