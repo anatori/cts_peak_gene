@@ -290,7 +290,7 @@ def annotate_with_references(reference_files,map_df,enh_gene_ls=['abc','scent','
         
         if ref_label in enh_gene_ls: # enhancer-gene dfs
             reference_bed = BedTool.from_dataframe(reference_df[['chr','start','end','region']])
-            map_bed = BedTool.from_dataframe(map_df[['chr','start','end','name']])
+            map_bed = BedTool.from_dataframe(map_df[['chr','start','end',map_col]])
             intersection_df = map_bed.intersect(reference_bed,wa=True,c=True,loj=True).to_dataframe() # loj to maintain original order
             result_df[ref_label] = intersection_df['score'] > 0 # score indicates number of overlaps with reference
             
