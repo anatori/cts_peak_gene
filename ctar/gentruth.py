@@ -256,6 +256,51 @@ def normalize_symm(mat):
 ######################### feature addition #########################
 
 
+def annotate_with_references(reference_files,map_df,enh_gene_ls=['abc','scent','crisprflow'],map_col='name'):
+    ''' Add boolean masks specifying whether map region is in any reference file region.
+    
+    Parameters
+    -------
+    reference_files : list of strings
+        List of locations for reference .tsv files.
+
+    map_df : pd.DataFrame
+        Output of find_gene_distances, containing columns ['chr','start','end','region'].
+
+    enh_gene_ls : list of strings
+        List of ref_labels for enhancer-gene strategies in references.
+
+    map_col : str
+        Name of column containing linked ENSEMBL IDs.
+    
+    Returns
+    -------
+    result_df : pd.DataFrame
+        DataFrame with original map_df columns + one boolean array indicating overlap with reference_file.
+
+    '''
+
+    result_df = map_df.copy()
+
+    for ref in reference_files:
+        # read in ref file
+        reference_df = pd.read_csv(ref, sep='\t', compression='gzip',index_col=0)
+        reference_df = preprocess_df(reference_df)
+        ref_label = os.path.basename(ref).removesuffix('.tsv.gz')
+        
+        if ref_label in enh_gene_ls: # enhancer-gene dfs
+            reference_bed = BedTool.from_dataframe(reference_df[['chr','start','end','region']])
+            map_bed = BedTool.from_dataframe(map_df[['chr','start','end','name']])
+            intersection_df = map_bed.intersect(reference_bed,wa=True,c=True,loj=True).to_dataframe() # loj to maintain original order
+            result_df[ref_label] = intersection_df['score'] > 0 # score indicates number of overlaps with reference
+            
+        else: # snp-gene dfs
+            reference_df['region'] = reference_df['chr'] + ':' + reference_df['start'].astype(str) # in case not in correct format
+            result_df[ref_label] = map_df[map_col].isin(reference_df.region)
+
+    return result_df
+
+
 def find_gene_distances():
     ''' Returns dataframe contianing all gene body locations.
     '''
