@@ -208,6 +208,12 @@ def get_gene_coords(gene_df,gene_id_type='ensembl_gene_id',dataset='hsapiens_gen
     return gene_df
 
 
+def read_to_frag(x):
+    # round to nearest even: np.round(x/2) * 2
+    # then divide by 2: np.round(x/2) * 2 / 2
+    return np.round(x / 2) 
+
+
 def preprocess_mu(mdata,
     min_genes = 250,
     min_cells = 50,
