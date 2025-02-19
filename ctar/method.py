@@ -819,6 +819,20 @@ def fit_poisson(x,y,return_both=False):
     return result.params[0], result.params[1]
 
 
+def fit_negbinom(x,y,return_both=False):
+
+    # Simple log(E[y]) ~ x equation with y ~ NB(mu,r)
+    exog = sm.add_constant(x)
+    
+    result = sm.NegativeBinomial(y, exog).fit(disp=0) # sm.GLM(y, exog, family=sm.families.NegativeBinomial())
+    # result = negbinom_model.fit(start_params=[1,1])
+
+    if not return_both:
+        return result.params[1]
+
+    return result.params[0], result.params[1]
+
+
 def get_poiss_coeff(adata,layer='raw',binarize=False,label='poiss_coeff'):
 
     # If binarizing, convert to bool then int
