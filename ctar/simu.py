@@ -158,4 +158,5 @@ class ZeroInflatedPoisson:
     @property
     def name(self):
         return "ZeroInflatedPoisson"
+
   
