@@ -12,7 +12,7 @@ import re
 
 
 def peak_to_gene(peaks_df,genes_df,clean=True,split_peaks=True,distance=500000,col_names=['chr','start','end'],
-                gene_col='gene',peak_col='peak',genome='hg38'):
+                gene_col='gene',peak_col='peak',genome='hg38',sep=';'):
 
     ''' Uses pybedtools to find the overlap between gene body +/- some distance and proximal peaks. 
     
@@ -51,6 +51,9 @@ def peak_to_gene(peaks_df,genes_df,clean=True,split_peaks=True,distance=500000,c
 	genome : str
 		The genome to use for creating distance windows around the gene body.
 
+    sep : str
+        Separator for peak and gene in index.
+
     Returns
     -------
     peak_gene_links : pd.DataFrame
@@ -63,15 +66,14 @@ def peak_to_gene(peaks_df,genes_df,clean=True,split_peaks=True,distance=500000,c
     if clean:
         genes_clean = genes_df[~genes_df[col_names[0]].isna()] # assumes first item in col_names is chr label
         genes_clean = genes_clean[genes_clean.chr.str.startswith('chr')] # removes non chr mapped genes
+        genes_clean[col_names[1:]] = genes_clean[col_names[1:]].astype(int)
     else: genes_clean = genes_df
 
     if split_peaks:
         peaks_clean = peaks_df.copy()
         peaks_clean[col_names] = peaks_clean[peak_col].str.extract(r'(\w+):(\d+)-(\d+)')
+        peaks_clean[col_names[1:]] = peaks_clean[col_names[1:]].astype(int)
     else: peaks_clean = peaks_df
-
-    genes_clean[col_names[1:]] = genes_clean[col_names[1:]].astype(int)
-    peaks_clean[col_names[1:]] = peaks_clean[col_names[1:]].astype(int)
 
     # add indices
     genes_clean['index_y'] = range(len(genes_clean))
@@ -98,7 +100,7 @@ def peak_to_gene(peaks_df,genes_df,clean=True,split_peaks=True,distance=500000,c
     peak_gene_links = peak_gene_links[[gene_col,peak_col]+['distance','index_x','index_y']]
     
     # use unique indices
-    peak_gene_links.index = peak_gene_links[peak_col].astype(str) + ' , ' + peak_gene_links[gene_col].astype(str)
+    peak_gene_links.index = peak_gene_links[peak_col].astype(str) + sep + peak_gene_links[gene_col].astype(str)
 
     return peak_gene_links
 

@@ -440,8 +440,6 @@ def find_catlas(query,catlas_df,f=1e-9):
     else:
         query_df = query
 
-    query_df = preprocess_df(query_df)
-    query_df = query_df.drop_duplicates(subset=['region','gene'])
     query_df['ind'] = range(len(query_df)) # add index for ref
     querybed = BedTool.from_dataframe(query_df[['chr','start','end','ind']])
 
@@ -491,8 +489,6 @@ def find_screen(query,screen_df,f=1e-9):
     else:
         query_df = query
 
-    query_df = preprocess_df(query_df)
-    query_df = query_df.drop_duplicates(subset=['region','gene'])
     query_df['ind'] = range(len(query_df))
     querybed = BedTool.from_dataframe(query_df[['chr','start','end','ind']])
 
@@ -512,4 +508,50 @@ def find_screen(query,screen_df,f=1e-9):
     return intersect_df
 
 
+def annot_enhancer(query_df,enh_df,label='enh',return_intersect=False,sep=';',enh_cols=None):
+    ''' Annotate a SNP query_df with an enhancer_df.
+    Must contain 'label' column containing a unique identifier + whatever additional info you like,
+    separated by sep.
+    '''
+
+    enh_label_length = enh_df['label'].str.count(sep).max() # num of add info
+    querybed = BedTool.from_dataframe(query_df[['chr','start','end','label']])
+    enhbed = BedTool.from_dataframe(enh_df[['chr','start','end','label']])
+
+    # intersect query bed with catlas bed
+    col_names = ['query_chr','query_start','query_end','query_label',
+                    'enh_chr','enh_start','enh_end','enh_label_w_info']
+    intersect_df = querybed.intersect(enhbed,wa=True,wb=True,loj=True).to_dataframe()
+    intersect_df.columns = col_names
+
+    intersect_df[label] = (intersect_df.enh_chr != '.')
+    intersect_df.loc[~intersect_df[label],'enh_chr'] = ''
+    
+    if enh_cols == None:
+        enh_col_names = [f'{label}_name'] + [f'{label}_{x + 1}' for x in range(enh_label_length)]
+    else:
+        enh_col_names = [f'{label}_name'] + [f'{label}_{s}' for s in enh_cols]
+
+    intersect_df[enh_col_names] = intersect_df['enh_label_w_info'].str.split(';',n=enh_label_length,expand=True)
+
+    if return_intersect:
+        return intersect_df
+
+    query_grpby = intersect_df.groupby('query_label')
+    query_df[f'{label}_sum'] = query_grpby[label].sum().values
+    
+    # if there's max 1 enhancer match per query, there are no need to make lists!
+    if query_df[f'{label}_sum'].max() == 1:
+        query_df[enh_col_names] = intersect_df[enh_col_names]
+        return query_df
+
+    # warning: slow!
+    query_df[f'{label}_hits'] = query_grpby[f'{label}_name'].agg(list).values
+
+    # warning: super slow!
+    if len(enh_col_names[1:]) == 0:
+        for enh_col in enh_col_names[1:]: # excluding _hits
+            query_df[f'{label}_{enh_col}'] = query_grpby[enh_col].agg(list).values 
+
+    return query_df
 

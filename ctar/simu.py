@@ -123,4 +123,39 @@ def test_overlap(list1, list2, list_background):
         or_ub = np.exp(np.log(oddsratio) + 1.96 * se_log_or)
         or_lb = np.exp(np.log(oddsratio) - 1.96 * se_log_or)
         return pvalue, oddsratio, or_ub, or_lb
+
+
+class ZeroInflatedPoisson:
+    ''' Custom distribution for ZIP QQ plot.
+    '''
+
+    def __init__(self, pi, lam):
+        self.pi = pi
+        self.lam = lam
+        self.poisson = sp.stats.poisson(mu=lam)
+
+    def ppf(self, q):
+        ''' Percent point function (inverse of CDF).  Crucial for QQ plots.
+        '''
+        # Handle edge cases for q (quantiles/probabilities)
+        q = np.asarray(q)
+        q = np.clip(q, 0, 1) # Make sure q is between 0 and 1.
+
+        # Pre-calculate the Poisson quantiles (for efficiency)
+        poisson_quantiles = self.poisson.ppf(q) # Use scipy.stats ppf
+
+        # Calculate the ZIP quantiles
+        zip_quantiles = np.where(q <= self.pi, 0, poisson_quantiles)
+        return zip_quantiles
+
+    def rvs(self, size=1):
+        ''' Random variate generation.
+        '''
+        poisson_rvs = self.poisson.rvs(size=size) # Use scipy.stats rvs
+        zeros = np.random.binomial(1, self.pi, size=size)
+        return np.where(zeros == 1, 0, poisson_rvs)
+    
+    @property
+    def name(self):
+        return "ZeroInflatedPoisson"
   
