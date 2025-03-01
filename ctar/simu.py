@@ -1,6 +1,9 @@
 import numpy as np
 import pandas as pd 
 import scipy as sp
+import matplotlib.pyplot as plt
+import statsmodels.api as sm
+from statsmodels.discrete.discrete_model import NegativeBinomial
 
 
 def null_peak_gene_pairs(rna, atac):
@@ -159,4 +162,69 @@ class ZeroInflatedPoisson:
     def name(self):
         return "ZeroInflatedPoisson"
 
-  
+
+def analyze_poisson(Y, X, display=True):
+    
+    # regression
+    X_with_intercept = sm.add_constant(X)
+    model = sm.GLM(Y, X_with_intercept, family=sm.families.Poisson())
+    results = model.fit()
+
+    if display:
+        # results
+        print(results.summary())
+
+        plt.plot(Y, results.fittedvalues, 'o', alpha=0.3)
+        plt.plot(Y, Y, ':', label='Y = X',c='grey')
+        plt.ylabel("fitted value")
+        plt.xlabel("observed value")
+        plt.legend()
+        plt.show()
+
+        f, axes = plt.subplots(1, 2, figsize=(17, 6))
+        axes[0].plot(Y, results.resid_response, 'o')
+        axes[0].set_ylabel("Residuals")
+        axes[0].set_xlabel("$Y$")
+        axes[1].plot(Y, results.resid_pearson, 'o')
+        axes[1].axhline(y=-1, linestyle=':', color='black', label='$\\pm 1$')
+        axes[1].axhline(y=+1, linestyle=':', color='black')
+        axes[1].set_ylabel("Standardized residuals")
+        axes[1].set_xlabel("$Y$")
+        plt.legend()
+        plt.show()
+
+    return results
+
+
+def analyze_nb(Y, X, method='nm',optim_kwds_prelim=dict(method='nm', disp=1), display=True):
+    
+    # nb regression
+    X_with_intercept = sm.add_constant(X)
+    model = NegativeBinomial(Y, X_with_intercept)
+    results = model.fit(method=method,optim_kwds_prelim=optim_kwds_prelim)
+
+    if display:
+        # results
+        print(results.summary())
+
+        plt.plot(Y, results.fittedvalues, 'o', alpha=0.3)
+        plt.plot(Y, Y, ':', label='Y = X',c='grey')
+        plt.ylabel("fitted value")
+        plt.xlabel("observed value")
+        plt.legend()
+        plt.show()
+
+        f, axes = plt.subplots(1, 2, figsize=(17, 6))
+        axes[0].plot(Y, results.resid_response, 'o')
+        axes[0].set_ylabel("Residuals")
+        axes[0].set_xlabel("$Y$")
+        axes[1].plot(Y, results.resid_pearson, 'o')
+        axes[1].axhline(y=-1, linestyle=':', color='black', label='$\\pm 1$')
+        axes[1].axhline(y=+1, linestyle=':', color='black')
+        axes[1].set_ylabel("Standardized residuals")
+        axes[1].set_xlabel("$Y$")
+        plt.legend()
+        plt.show()
+
+    return results
+
