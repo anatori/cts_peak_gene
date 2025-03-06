@@ -114,9 +114,6 @@ def sortby_ct_adata(adata,obs_col='celltype'):
     return adata[color_axis.index,:]
 
 
-
-
-
 def multiome_trackplot(df, atac = None, rna = None, sortby = 'poiss_coeff', coeff_label = 'coeff', coeff = 'poiss_coeff', pval_label = 'pval', pval = 'mc_pval', 
                         ascending = False, top_n = 10, adata_sort = False, presorted = False, sort_cells = 'rna', obs_col='celltype',
                         height = 5, width = 18, axlim = None):

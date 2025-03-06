@@ -163,6 +163,41 @@ class ZeroInflatedPoisson:
         return "ZeroInflatedPoisson"
 
 
+class ZeroInflatedNegativeBinomial:
+    ''' Custom distribution for ZINB QQ plot.
+    '''
+
+    def __init__(self, n, p):
+        self.n = n
+        self.p = p
+        self.nbinom = sp.stats.nbinom(n=n,p=p)
+
+    def ppf(self, q):
+        ''' Percent point function (inverse of CDF).  Crucial for QQ plots.
+        '''
+        # Handle edge cases for q (quantiles/probabilities)
+        q = np.asarray(q)
+        q = np.clip(q, 0, 1) # Make sure q is between 0 and 1.
+
+        # Pre-calculate the Poisson quantiles (for efficiency)
+        nb_quantiles = self.nbinom.ppf(q) # Use scipy.stats ppf
+
+        # Calculate the ZIP quantiles
+        zinb_quantiles = np.where(q <= self.p, 0, nb_quantiles)
+        return zinb_quantiles
+
+    def rvs(self, size=1):
+        ''' Random variate generation.
+        '''
+        nbinom_rvs = self.nbinom.rvs(size=size) # Use scipy.stats rvs
+        zeros = np.random.binomial(1, self.p, size=size)
+        return np.where(zeros == 1, 0, nbinom_rvs)
+    
+    @property
+    def name(self):
+        return "ZeroInflatedNegativeBinomial"
+
+
 def analyze_poisson(Y, X, display=True):
     
     # regression
