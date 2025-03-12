@@ -1,0 +1,10 @@
+# .snakemake/slurm/config.yaml
+
+cluster: "sbatch --partition={resources.partition} --cpus-per-task={threads} --mem={resources.mem_mb} --time={resources.time} --job-name=snakemake-{rule}-{wildcards} --output=logs/{rule}-%j.out --error=logs/{rule}-%j.err --array={resources.array}" #added array
+jobs: 100
+default-resources:
+  - partition=normal
+  - mem_mb=4000
+  - time=120
+  - array="0" #added default, will be overwritten
+use-conda: True

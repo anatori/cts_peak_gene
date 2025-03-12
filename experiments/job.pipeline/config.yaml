@@ -1,0 +1,28 @@
+# config.yaml
+
+# --- Input Data ---
+anndata_file: "data/peak_gene_data.h5ad"
+peak_gene_links_file: "data/peak_gene_links.tsv"
+peak_id_col: "peak_id"
+gene_id_col: "gene_id"
+
+# --- Association Method ---
+association_method: "poisson"  # "poisson" or "pearson"
+
+# --- Poisson Regression (if applicable) ---
+pseudocount: 1e-9
+
+# --- Control Peak Generation ---
+num_bins: 5
+n_controls: 1000
+batch_size: 200 #added batch size
+
+# --- P-value Calculation ---
+pval_method: "initial_mcpval"  # "initial_mcpval", "zscore_pval", "pooled_mcpval", "mc_pval"
+
+# --- Slurm Settings ---
+threads_per_job: 4          # For rules that can use multiple threads
+mem_per_job: 8000           # General memory per job (MB)
+time_per_job: 60           # General time per job (minutes)
+mem_per_control_job: 4000  # Memory for control jobs (array jobs)
+time_per_control_job: 120 # Time for control jobs

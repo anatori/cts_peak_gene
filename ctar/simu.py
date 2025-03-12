@@ -167,10 +167,11 @@ class ZeroInflatedNegativeBinomial:
     ''' Custom distribution for ZINB QQ plot.
     '''
 
-    def __init__(self, n, p):
-        self.n = n
-        self.p = p
-        self.nbinom = sp.stats.nbinom(n=n,p=p)
+    def __init__(self, pi, mu, alpha):
+        self.pi = pi
+        self.mu = mu
+        self.alpha = alpha
+        self.nbinom = sp.stats.nbinom(n=mu,p=alpha)
 
     def ppf(self, q):
         ''' Percent point function (inverse of CDF).  Crucial for QQ plots.
@@ -183,14 +184,14 @@ class ZeroInflatedNegativeBinomial:
         nb_quantiles = self.nbinom.ppf(q) # Use scipy.stats ppf
 
         # Calculate the ZIP quantiles
-        zinb_quantiles = np.where(q <= self.p, 0, nb_quantiles)
+        zinb_quantiles = np.where(q <= self.pi, 0, nb_quantiles)
         return zinb_quantiles
 
     def rvs(self, size=1):
         ''' Random variate generation.
         '''
         nbinom_rvs = self.nbinom.rvs(size=size) # Use scipy.stats rvs
-        zeros = np.random.binomial(1, self.p, size=size)
+        zeros = np.random.binomial(1, self.pi, size=size)
         return np.where(zeros == 1, 0, nbinom_rvs)
     
     @property

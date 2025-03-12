@@ -1,0 +1,284 @@
+# Snakefile
+
+import pandas as pd
+import numpy as np
+import anndata as ad
+import scipy as sp
+from cts_peak_gene.ctar.method import (vectorized_poisson_regression,
+                                     create_ctrl_peaks,
+                                     initial_mcpval, zscore_pval, pooled_mcpval,
+                                     mc_pval, cauchy_combination, pearson_corr_sparse,
+                                     get_bins, fit_poisson)
+from tqdm import tqdm
+import os, sys
+
+configfile: "config.yaml"
+
+# --- Helper functions ---
+def get_batches(n_items, batch_size):
+    """Calculates start and end indices for batches."""
+    n_batches = (n_items + batch_size - 1) // batch_size  # Ceiling division
+    batches = []
+    for i in range(n_batches):
+        start = i * batch_size
+        end = min((i + 1) * batch_size, n_items)
+        batches.append((start, end))
+    return batches
+
+# --- Rules ---
+
+rule all:
+    input:
+        "results/association_results.tsv",
+        "results/consolidated_control_association_results.tsv", # Changed!
+        "results/combined_p_values.tsv"
+
+rule calculate_association:
+    input:
+        adata=config["anndata_file"],
+        links=config["peak_gene_links_file"]
+    output:
+        "results/association_results.tsv"
+    threads:
+        config.get("threads_per_job", 1)
+    resources:
+        mem_mb=config.get("mem_per_job", 8000),
+        time=config.get("time_per_job", 60)
+    params:
+        peak_id_col=config["peak_id_col"],
+        gene_id_col=config["gene_id_col"],
+        association_method=config["association_method"]
+    run:
+        adata = ad.read_h5ad(input.adata)
+        links_df = pd.read_csv(input.links, sep="\t")
+
+        if sp.sparse.issparse(adata.X):
+            adata.X = adata.X.toarray()
+
+        peak_id_to_index = {peak_id: i for i, peak_id in enumerate(adata.var[params.peak_id_col])}
+        gene_id_to_index = {gene_id: i for i, gene_id in enumerate(adata.var[params.gene_id_col])}
+        links_df['peak_index'] = links_df['peak'].map(peak_id_to_index)
+        links_df['gene_index'] = links_df['gene'].map(gene_id_to_index)
+        links_df = links_df.dropna(subset=['gene_index','peak_index'])
+
+        peak_counts = adata.X[:, links_df['peak_index'].astype(int)].mean(axis=0)
+        gene_counts = adata.X[:, links_df['gene_index'].astype(int)].mean(axis=0)
+
+        if params.association_method == "poisson":
+            peak_counts = peak_counts + config["pseudocount"]
+            gene_counts = gene_counts + config["pseudocount"]
+            beta0, beta1 = fit_poisson(peak_counts, gene_counts)
+            results_df = pd.DataFrame({
+                'peak': links_df['peak'],
+                'gene': links_df['gene'],
+                'beta0': beta0,
+                'beta1': beta1
+            })
+        elif params.association_method == "pearson":
+            correlations = pearson_corr_sparse(peak_counts.reshape(-1, 1), gene_counts.reshape(-1, 1))
+            results_df = pd.DataFrame({
+                'peak': links_df['peak'],
+                'gene': links_df['gene'],
+                'correlation': correlations
+            })
+        else:
+            raise ValueError("Invalid association_method.")
+
+        results_df.to_csv(output[0], sep="\t", index=False)
+
+rule create_control_peaks:
+    input:
+        adata = config["anndata_file"],
+        links = config["peak_gene_links_file"]
+    output:
+        "results/control_peak_indices.npy"
+    threads:
+        config.get("threads_per_job", 1)
+    resources:
+        mem_mb=config.get("mem_per_job", 8000),
+        time=config.get("time_per_job", 60)
+    params:
+        num_bins=config["num_bins"],
+        n_controls=config["n_controls"],
+        peak_id_col=config["peak_id_col"],
+        gene_id_col=config["gene_id_col"]
+    run:
+        adata = ad.read_h5ad(input.adata)
+        links_df = pd.read_csv(input.links, sep="\t")
+
+        temp_adata = ad.AnnData(X=adata.X.mean(axis=0).reshape(1, -1))
+        temp_adata.var['gene_ids'] = adata.var[params.peak_id_col]
+        temp_adata.var['peak_indices'] = range(len(temp_adata.var))
+        peak_idx_df = temp_adata.var.reset_index(drop=True)
+        merged_df = pd.merge(links_df, peak_idx_df, left_on='peak', right_on='gene_ids', how='left')
+        temp_adata.var = temp_adata.var.drop_duplicates(subset=['gene_ids'])
+
+        ctrl_peaks = create_ctrl_peaks(temp_adata, num_bins=params.num_bins, b=params.n_controls, peak_col='gene_ids')
+        num_focal_peaks = ctrl_peaks.shape[0]
+        num_controls = ctrl_peaks.shape[1]
+        focal_peak_indices = np.repeat(merged_df['index'].values, num_controls)
+        control_peak_indices = ctrl_peaks.flatten()
+        control_df = pd.DataFrame({
+          'focal_peak_index': focal_peak_indices,
+          'control_peak_index': control_peak_indices
+        })
+        np.save(output[0], control_df)
+
+rule control_association:
+    input:
+        adata = config["anndata_file"],
+        links = config["peak_gene_links_file"],
+        control_indices = "results/control_peak_indices.npy"
+    output:
+        "results/control_association_results/control_association_{batch}.tsv"  # Output per batch
+    threads:
+        config.get("threads_per_job", 1)
+    resources:
+        mem_mb=config.get("mem_per_control_job", 4000),  # Potentially less memory per control job
+        time=config.get("time_per_control_job", 120), #increased time
+        array=lambda wildcards, input: get_batches(len(pd.read_csv(input.links,sep="\t")), config["batch_size"])
+    params:
+        peak_id_col=config["peak_id_col"],
+        gene_id_col=config["gene_id_col"],
+        association_method=config["association_method"],
+        batch_size=config["batch_size"]
+    run:
+        adata = ad.read_h5ad(input.adata)
+        links_df = pd.read_csv(input.links, sep="\t")
+        control_df = np.load(input.control_indices, allow_pickle=True).item()
+        control_indices_df = pd.DataFrame.from_dict(control_df)
+        peak_id_to_index = {peak_id: i for i, peak_id in enumerate(adata.var[params.peak_id_col])}
+        gene_id_to_index = {gene_id: i for i, gene_id in enumerate(adata.var[params.gene_id_col])}
+        links_df['gene_index'] = links_df['gene'].map(gene_id_to_index)
+        links_df = links_df.dropna(subset=['gene_index'])
+        links_df = links_df.reset_index(drop=True)
+
+        if sp.sparse.issparse(adata.X):
+            adata.X = adata.X.toarray()
+        gene_counts = adata.X[:, links_df['gene_index'].astype(int)].mean(axis=0)
+
+        peak_idx_df = pd.DataFrame({
+          'peak_id': adata.var[params.peak_id_col],
+          'peak_index': range(len(adata.var))
+        })
+        merged_control = pd.merge(control_indices_df, peak_idx_df, left_on='control_peak_index', right_on='peak_index', how='left')
+        control_peak_counts = adata.X[:, merged_control['control_peak_index'].astype(int)].mean(axis=0)
+        focal_peak_counts = adata.X[:, control_indices_df['focal_peak_index'].astype(int)].mean(axis=0)
+        repeated_gene_counts = np.repeat(gene_counts, config["n_controls"])
+
+        # Batch processing
+        start, end = get_batches(len(links_df), params.batch_size)[wildcards.batch]
+
+        #subset arrays
+        gene_counts_batch = repeated_gene_counts[start * config["n_controls"]: end * config["n_controls"]]
+        control_peak_counts_batch = control_peak_counts[start * config["n_controls"]: end * config["n_controls"]]
+        focal_peak_indices_batch = merged_control['focal_peak_index'].iloc[start * config["n_controls"]: end * config["n_controls"]].values
+        control_peaks_batch = merged_control['peak_id'].iloc[start * config["n_controls"]: end * config["n_controls"]].values
+        gene_indices_batch = np.repeat(links_df['gene_index'].iloc[start:end],config["n_controls"])
+
+        if params.association_method == 'poisson':
+            control_peak_counts_batch = control_peak_counts_batch + config["pseudocount"]
+            gene_counts_batch = gene_counts_batch+config["pseudocount"]
+
+            beta0, beta1 = vectorized_poisson_regression(np.log(control_peak_counts_batch), gene_counts_batch)
+            results_df = pd.DataFrame({
+                  'focal_peak_index': focal_peak_indices_batch,
+                  'control_peak': control_peaks_batch,
+                  'gene_index': gene_indices_batch,
+                  'beta0': beta0,
+                  'beta1': beta1,
+              })
+            merged_results = pd.merge(results_df,links_df, left_on='gene_index', right_on='gene_index')
+            merged_results[['focal_peak_index','control_peak','gene','beta0','beta1']].to_csv(output[0], sep="\t", index=False)
+
+        elif params.association_method == 'pearson':
+            correlations = pearson_corr_sparse(control_peak_counts_batch.reshape(-1, 1), gene_counts_batch.reshape(-1, 1))
+            results_df = pd.DataFrame({
+                  'focal_peak_index': focal_peak_indices_batch,
+                  'control_peak': control_peaks_batch,
+                  'gene_index': gene_indices_batch,
+                  'correlation': correlations,
+              })
+            merged_results = pd.merge(results_df,links_df, left_on='gene_index', right_on='gene_index')
+            merged_results[['focal_peak_index','control_peak','gene','correlation']].to_csv(output[0], sep="\t", index=False)
+        else:
+            raise ValueError("association_method must be 'poisson' or 'pearson'")
+
+rule consolidate_control_results:
+    input:
+        expand("results/control_association_results/control_association_{batch}.tsv", batch=range(len(get_batches(len(pd.read_csv(config["peak_gene_links_file"],sep="\t")),config["batch_size"]))))
+    output:
+        "results/consolidated_control_association_results.tsv"
+    threads: 1  # Consolidation is usually fast, so 1 thread is enough
+    resources:
+      mem_mb = config.get("mem_per_job",4000),
+      time = config.get("time_per_job",60)
+    run:
+        all_control_results = []
+        for file in input:
+            df = pd.read_csv(file, sep="\t")
+            all_control_results.append(df)
+        consolidated_df = pd.concat(all_control_results, ignore_index=True)
+        consolidated_df.to_csv(output[0], sep="\t", index=False)
+
+
+rule combine_p_values:
+    input:
+        focal_association="results/association_results.tsv",
+        control_association="results/consolidated_control_association_results.tsv" # Use consolidated
+    output:
+        "results/combined_p_values.tsv"
+    threads:
+        config.get("threads_per_job", 1)
+    resources:
+        mem_mb=config.get("mem_per_job", 4000),
+        time=config.get("time_per_job", 60)
+    params:
+        pval_method = config["pval_method"],
+        association_method = config["association_method"]
+    run:
+        focal_results_df = pd.read_csv(input.focal_association, sep="\t")
+        control_results_df = pd.read_csv(input.control_association, sep="\t")
+        if params.association_method == 'poisson':
+          # Calculate p-values for focal peak-gene pairs
+          focal_results_df['z'] = (focal_results_df['beta1'] - focal_results_df['beta0'])
+          focal_results_df['focal_pval'] = 1 - sp.stats.norm.cdf(focal_results_df['z'])
+          # Group control results by focal peak and gene, then aggregate beta1 values into lists
+          control_grouped = control_results_df.groupby(['focal_peak_index'])['beta1'].apply(list).reset_index()
+          #add peak indices
+          control_grouped = pd.merge(control_grouped,focal_results_df,left_on='focal_peak_index',right_index=True)
+
+          # Calculate control p-values
+          if params.pval_method == "initial_mcpval":
+              control_grouped['control_pval'] = control_grouped.apply(lambda row: initial_mcpval(np.array(row['beta1_x']), row['beta1_y'], one_sided=True), axis=1)
+          elif params.pval_method == "zscore_pval":
+              control_grouped['control_pval'], _ = zip(*control_grouped.apply(lambda row: zscore_pval(np.array(row['beta1_x']), row['beta1_y']), axis=1))
+          elif params.pval_method == "pooled_mcpval":
+              control_grouped['control_pval'] = control_grouped.apply(lambda row: pooled_mcpval(np.array(row['beta1_x']), row['beta1_y']), axis=1)
+          elif params.pval_method == "mc_pval":
+              control_grouped['control_pval'] = control_grouped.apply(lambda row: mc_pval(np.array(row['beta1_x']), row['beta1_y']), axis=1)
+          else:
+              raise ValueError(f"Unsupported p-value method: {params.pval_method}")
+          # Combine p-values
+          control_grouped['combined_pval'] = cauchy_combination(control_grouped['focal_pval'], control_grouped['control_pval'])
+          control_grouped[['peak','gene','focal_pval','control_pval','combined_pval']].to_csv(output[0], sep="\t", index=False)
+        elif params.association_method == 'pearson':
+          focal_results_df['focal_pval'] = focal_results_df.apply(lambda row: basic_zpval(np.array(control_results_df['correlation']),row['correlation']), axis=1)
+          # Group control results by focal peak index
+          control_grouped = control_results_df.groupby(['focal_peak_index'])['correlation'].apply(list).reset_index()
+          #add peak indices
+          control_grouped = pd.merge(control_grouped,focal_results_df,left_on='focal_peak_index',right_index=True)
+          # Calculate control p-values
+          if params.pval_method == "initial_mcpval":
+              control_grouped['control_pval'] = control_grouped.apply(lambda row: initial_mcpval(np.array(row['correlation_x']), row['correlation_y'], one_sided=True), axis=1)
+          elif params.pval_method == "zscore_pval":
+              control_grouped['control_pval'], _ = zip(*control_grouped.apply(lambda row: zscore_pval(np.array(row['correlation_x']), row['correlation_y']), axis=1))
+          elif params.pval_method == "pooled_mcpval":
+              control_grouped['control_pval'] = control_grouped.apply(lambda row: pooled_mcpval(np.array(row['correlation_x']), row['correlation_y']), axis=1)
+          elif params.pval_method == "mc_pval":
+              control_grouped['control_pval'] = control_grouped.apply(lambda row: mc_pval(np.array(row['correlation_x']), row['correlation_y']), axis=1)
+          else:
+              raise ValueError(f"Unsupported p-value method: {params.pval_method}")
+          # Combine p-values
+          control_grouped['combined_pval'] = cauchy_combination(control_grouped['focal_pval'], control_grouped['control_pval'])
+          control_grouped[['peak','gene','focal_pval','control_pval','combined_pval']].to_csv(output[0], sep="\t", index=False)
