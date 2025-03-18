@@ -167,7 +167,7 @@ def gc_content(adata,genome_file='GRCh38.p13.genome.fa.bgz'):
     return gc
 
 
-def get_bins(adata, num_bins=5, peak_col='gene_ids', distance=False, gc=True):
+def get_bins(adata, num_bins=5, peak_col='gene_ids', gc=True):
 
     ''' Obtains GC and MFA bins for ATAC peaks.
     
@@ -181,8 +181,6 @@ def get_bins(adata, num_bins=5, peak_col='gene_ids', distance=False, gc=True):
         Label for peak column.
     gc : bool
         If True, GC content will be taken.
-    distance : bool
-        If True, takes bins based on enhancer-gene distance rather than MFA.
     
     Returns
     ----------
@@ -208,13 +206,6 @@ def get_bins(adata, num_bins=5, peak_col='gene_ids', distance=False, gc=True):
     except:
         atac_X = adata[:,unique].X
 
-    if distance:
-        try: 
-            bins['distance'] = adata.var[unique]['distance']
-            bins['distance_bin'] = pd.qcut(bins['distance'].rank(method='first'), num_bins, labels=False, duplicates="drop")
-            print('Distance done.')
-        except: print('Must add enhancer-gene distance.')
-
     else:
         bins['mfa'] = atac_X.mean(axis=0).A1
         print('MFA done.')
@@ -232,7 +223,7 @@ def get_bins(adata, num_bins=5, peak_col='gene_ids', distance=False, gc=True):
     return bins
 
 
-def create_ctrl_peaks(adata,num_bins=5,b=1000,update=True,distance=False,gc=True,peak_col='gene_ids'):
+def create_ctrl_peaks(adata,num_bins=5,b=1000,update=True,gc=True,peak_col='gene_ids'):
 
     ''' Obtains GC and MFA bins for ATAC peaks.
     
@@ -244,8 +235,6 @@ def create_ctrl_peaks(adata,num_bins=5,b=1000,update=True,distance=False,gc=True
         Number of desired bins for MFA and GC groupings EACH.
     b : int
         Number of desired random peaks per focal peak-gene pair.
-    distance : bool
-        If True, gets distance bins rather than MFA bins.
     gc : bool
         If True, gets MFA and GC bins. Else, only gets MFA bins.
     peak_col : str
@@ -258,20 +247,18 @@ def create_ctrl_peaks(adata,num_bins=5,b=1000,update=True,distance=False,gc=True
     
     '''
     
-    bins = get_bins(adata, num_bins=num_bins, distance=distance, gc=gc, peak_col=peak_col)
+    bins = get_bins(adata, num_bins=num_bins, gc=gc, peak_col=peak_col)
     print('Get_bins done.')
     
     # Group indices for rand_peaks
-    if distance: bins_grouped = bins[['ind','distance_bin']].groupby(['distance_bin']).ind.apply(np.array)
-    elif gc: bins_grouped = bins[['ind','combined_mfa_gc']].groupby(['combined_mfa_gc']).ind.apply(np.array)
+    if gc: bins_grouped = bins[['ind','combined_mfa_gc']].groupby(['combined_mfa_gc']).ind.apply(np.array)
     else: bins_grouped = bins[['ind','mfa_bin']].groupby(['mfa_bin']).ind.apply(np.array)
     
     # Generate random peaks
     ctrl_peaks = np.empty((len(bins),b))
     # iterate through each row of bins
     for i,peak in enumerate(bins.itertuples()):
-        if distance: row_bin = bins_grouped.loc[peak.distance_bin]
-        elif gc: row_bin = bins_grouped.loc[peak.combined_mfa_gc]
+        if gc: row_bin = bins_grouped.loc[peak.combined_mfa_gc]
         else: row_bin = bins_grouped.loc[peak.mfa_bin]
         row_bin_copy = row_bin[row_bin!=peak.ind]
         ctrl_peaks[i] = np.random.choice(row_bin_copy, size=(b,), replace=False)
