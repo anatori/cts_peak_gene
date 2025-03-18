@@ -167,25 +167,28 @@ def gc_content(adata,genome_file='GRCh38.p13.genome.fa.bgz'):
     return gc
 
 
-def get_bins(adata, num_bins=5, peak_col='gene_ids', gc=True):
+def get_bins(adata, num_bins=5, type='mean', col='gene_ids', layer='atac_raw'):
 
-    ''' Obtains GC and MFA bins for ATAC peaks.
+    ''' Obtains GC and MFA bins for adata peaks.
     
     Parameters
     ----------
     adata : ad.AnnData
         AnnData
-    num_bins : int
-        Number of desired bins for MFA and GC groupings.
-    peak_col : str
+    num_bins : int, ls
+        Number of desired bins for groupings. If multiple binning types, use list of num_bins.
+        First item in list will be used for number of mean bins.
+    col : str
         Label for peak column.
-    gc : bool
-        If True, GC content will be taken.
+    layer : str
+        Layer in adata.layers corresponding to the matrix to base bins on.
+    type : str
+        Metric to base binning on. Options are ['mean','mean_var',or 'mean_gc'].
     
     Returns
     ----------
     bins : pd.DataFrame
-        DataFrame of length (N) with columns [peak_col,'index_x','mfa','gc','combined_mfa_gc']
+        DataFrame of length (N) with columns [col,'index_z',type]
     
     '''
 
@@ -193,37 +196,46 @@ def get_bins(adata, num_bins=5, peak_col='gene_ids', gc=True):
     bins = pd.DataFrame()
     # duplicated peaks will be in the same bin
     # to avoid this, filter them out first
-    unique = ~adata.var.duplicated(subset=peak_col)
+    unique = ~adata.var.duplicated(subset=col)
 
     # Obtain mfa and gc content
-    bins[peak_col] = adata.var[peak_col][unique]
+    bins[col] = adata.var[col][unique]
     # accessing by row is faster
     adata.var['index_z'] = range(len(adata.var))
     bins['ind'] = adata.var.index_z[unique]
     # only take the unique peak info
-    try:
-        atac_X = adata[:,unique].layers['atac_raw']
-    except:
-        atac_X = adata[:,unique].X
+    sparse_X = adata[:,unique].layers[layer]
 
+    # regardless of type, need mean
+    bins['mean'] = sparse_X.mean(axis=0).A1
+    print('Mean done.')
+    if isinstance(num_bins, list):
+        mean_num_bins = num_bins[0]
+        alt_num_bins = num_bins[1]
     else:
-        bins['mfa'] = atac_X.mean(axis=0).A1
-        print('MFA done.')
-        # combine into bins
-        bins['mfa_bin'] = pd.qcut(bins['mfa'].rank(method='first'), num_bins, labels=False, duplicates="drop")
+        mean_num_bins = num_bins
+    # combine into bins
+    bins['mean_bin'] = pd.qcut(bins['mean'].rank(method='first'), mean_num_bins, labels=False, duplicates="drop")
 
-    if gc:
+    if type == 'mean_var':
+        e_squared = sparse_X.power(2).mean(axis=0).A1
+        bins['var'] = e_squared - bins['mean'].values ** 2
+        print('Var done.')
+        bins['var_bin'] = pd.qcut(bins['var'].rank(method='first'), alt_num_bins, labels=False, duplicates="drop")
+        bins['combined_mean_var'] = bins['mean_bin']* 10 + bins['var_bin']
+
+    elif type == 'mean_gc':
         bins['gc'] = gc_content(adata)
         print('GC done.')
         # also add gc bin
-        bins['gc_bin'] = pd.qcut(bins['gc'].rank(method='first'), num_bins, labels=False, duplicates="drop")
+        bins['gc_bin'] = pd.qcut(bins['gc'].rank(method='first'), alt_num_bins, labels=False, duplicates="drop")
         # create combined bin if mfa+gc is included
-        bins['combined_mfa_gc']=bins['mfa_bin']* 10 + bins['gc_bin']
-    
+        bins['combined_mean_gc']=bins['mean_bin']* 10 + bins['gc_bin']
+
     return bins
 
 
-def create_ctrl_peaks(adata,num_bins=5,b=1000,update=True,gc=True,peak_col='gene_ids'):
+def create_ctrl_peaks(adata,num_bins=5,b=1000,type='mean',peak_col='gene_ids',layer='atac_raw'):
 
     ''' Obtains GC and MFA bins for ATAC peaks.
     
@@ -232,13 +244,15 @@ def create_ctrl_peaks(adata,num_bins=5,b=1000,update=True,gc=True,peak_col='gene
     adata : ad.AnnData
         AnnData object of shape (#cells,#peaks).
     num_bins : int
-        Number of desired bins for MFA and GC groupings EACH.
+        Number of desired bins for groupings.
     b : int
         Number of desired random peaks per focal peak-gene pair.
-    gc : bool
-        If True, gets MFA and GC bins. Else, only gets MFA bins.
     peak_col : str
         Label for column containing peak IDs.
+    layer : str
+        Layer in adata.layers corresponding to the matrix to base bins on.
+    type : str
+        Metric to base binning on. Options are ['mean','var',or 'gc'].
     
     Returns
     ----------
@@ -247,19 +261,17 @@ def create_ctrl_peaks(adata,num_bins=5,b=1000,update=True,gc=True,peak_col='gene
     
     '''
     
-    bins = get_bins(adata, num_bins=num_bins, gc=gc, peak_col=peak_col)
+    bins = get_bins(adata, num_bins=num_bins, type=type, col=peak_col, layer=layer)
     print('Get_bins done.')
     
     # Group indices for rand_peaks
-    if gc: bins_grouped = bins[['ind','combined_mfa_gc']].groupby(['combined_mfa_gc']).ind.apply(np.array)
-    else: bins_grouped = bins[['ind','mfa_bin']].groupby(['mfa_bin']).ind.apply(np.array)
+    bins_grouped = bins[['ind',f'{type}_bin']].groupby([f'{type}_bin']).ind.apply(np.array)
     
     # Generate random peaks
     ctrl_peaks = np.empty((len(bins),b))
     # iterate through each row of bins
     for i,peak in enumerate(bins.itertuples()):
-        if gc: row_bin = bins_grouped.loc[peak.combined_mfa_gc]
-        else: row_bin = bins_grouped.loc[peak.mfa_bin]
+        row_bin = bins_grouped.loc[peak[f'{type}_bin']]
         row_bin_copy = row_bin[row_bin!=peak.ind]
         ctrl_peaks[i] = np.random.choice(row_bin_copy, size=(b,), replace=False)
     print('Ctrl index array done.')
@@ -270,6 +282,46 @@ def create_ctrl_peaks(adata,num_bins=5,b=1000,update=True,gc=True,peak_col='gene
     ctrl_peaks = ctrl_peaks[ind,:].astype(int)
     
     return ctrl_peaks
+
+
+def create_ctrl_pairs(
+    adata_atac,
+    adata_rna,
+    mean_atac_bins = 5,
+    mean_rna_bins = 20,
+    var_rna_bins = 20,
+    atac_layer = 'atac_raw',
+    rna_layer = 'rna_raw',
+    b = 100000,
+    peak_col = 'peak',
+    gene_col = 'gene'
+):
+
+    ''' Control pairs.
+    
+    '''
+    
+    atac_bins_df = get_bins(adata_atac,num_bins=mean_atac_bins,type='mean',col=peak_col,layer=atac_layer)
+    rna_bins_df = get_bins(adata_rna,num_bins=[mean_rna_bins,var_rna_bins],type='mean_var',col=gene_col,layer=rna_layer)
+    print('Get_bins done.')
+    
+    # Group indices for rand_peaks
+    pairs = [(i, j) for i in atac_bins_df.mean_bin.unique() for j in rna_bins_df.combined_mean_var.unique()]
+    atac_bins_grouped = atac_bins_df[['ind','mean_bin']].groupby(['mean_bin']).ind.apply(np.array)
+    rna_bins_grouped = rna_bins_df[['ind','combined_mean_var']].groupby(['combined_mean_var']).ind.apply(np.array)
+    
+    # Generate random peaks
+    ctrl_dic = {}
+        
+    for pair in pairs:
+        atac_inds = atac_bins_grouped.loc[pair[0]]
+        rna_inds = rna_bins_grouped.loc[pair[1]]
+        atac_samples = np.random.choice(atac_inds,size=(b,))
+        rna_samples = np.random.choice(rna_inds,size=(b,))
+        ctrl_links = np.vstack([atac_samples,rna_samples]).T
+        ctrl_dic[str(pair[0]) + '_' + str(pair[1])] = ctrl_links
+
+    return ctrl_dic
 
 
 ######################### pvalue methods #########################
