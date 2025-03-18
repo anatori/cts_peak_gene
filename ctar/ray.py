@@ -1,5 +1,6 @@
 import torch
 import torch.optim as optim
+import numpy as np
 from tqdm import trange
 
 # Set device
