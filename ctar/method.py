@@ -221,8 +221,11 @@ def get_bins(adata, num_bins=5, type='mean', col='gene_ids', layer='atac_raw'):
         e_squared = sparse_X.power(2).mean(axis=0).A1
         bins['var'] = e_squared - bins['mean'].values ** 2
         print('Var done.')
-        bins['var_bin'] = pd.qcut(bins['var'].rank(method='first'), alt_num_bins, labels=False, duplicates="drop")
-        bins['combined_mean_var'] = bins['mean_bin']* 10 + bins['var_bin']
+        bins['mean_var_bin'] = ''
+        for bin_i in bins['mean_bin'].unique():
+            inds_select = (bins.mean_bin == bin_i)
+            var_bin = pd.qcut(bins.loc[inds_select,'var'].rank(method='first'), alt_num_bins, labels=False, duplicates="drop")
+            bins.loc[inds_select,'mean_var_bin'] = ['%d.%d' % (bin_i, x) for x in var_bin]
 
     elif type == 'mean_gc':
         bins['gc'] = gc_content(adata)
@@ -294,7 +297,8 @@ def create_ctrl_pairs(
     rna_layer = 'rna_raw',
     b = 100000,
     peak_col = 'peak',
-    gene_col = 'gene'
+    gene_col = 'gene',
+    return_bins_df = True
 ):
 
     ''' Control pairs.
@@ -305,21 +309,37 @@ def create_ctrl_pairs(
     rna_bins_df = get_bins(adata_rna,num_bins=[mean_rna_bins,var_rna_bins],type='mean_var',col=gene_col,layer=rna_layer)
     print('Get_bins done.')
     
-    # Group indices for rand_peaks
-    pairs = [(i, j) for i in atac_bins_df.mean_bin.unique() for j in rna_bins_df.combined_mean_var.unique()]
+    # Group indices for controls
+    pairs = [(i, j) for i in atac_bins_df.mean_bin.unique() for j in rna_bins_df.mean_var_bin.unique()]
     atac_bins_grouped = atac_bins_df[['ind','mean_bin']].groupby(['mean_bin']).ind.apply(np.array)
-    rna_bins_grouped = rna_bins_df[['ind','combined_mean_var']].groupby(['combined_mean_var']).ind.apply(np.array)
+    rna_bins_grouped = rna_bins_df[['ind','mean_var_bin']].groupby(['mean_var_bin']).ind.apply(np.array)
     
-    # Generate random peaks
+    # Generate random pairs
     ctrl_dic = {}
-        
-    for pair in pairs:
+    for pair in tqdm(pairs):
         atac_inds = atac_bins_grouped.loc[pair[0]]
         rna_inds = rna_bins_grouped.loc[pair[1]]
-        atac_samples = np.random.choice(atac_inds,size=(b,))
-        rna_samples = np.random.choice(rna_inds,size=(b,))
+        # increase target size to reduce chance of duplicate pairs
+        atac_samples = np.random.choice(atac_inds,size=b*2)
+        rna_samples = np.random.choice(rna_inds,size=b*2)
         ctrl_links = np.vstack([atac_samples,rna_samples]).T
+        ctrl_links = np.unique(ctrl_links, axis=0)
+
+        n_duplicated = b - ctrl_links.shape[0]
+        while n_duplicated > 0:
+            added_atac_samples = np.random.choice(atac_inds,size=(n_duplicated*2,))
+            added_rna_samples = np.random.choice(rna_inds,size=(n_duplicated*2,))
+            added_ctrl_links = np.vstack([added_atac_samples,added_rna_samples]).T
+            # append to existing
+            ctrl_links = np.vstack([ctrl_links,added_ctrl_links])
+            ctrl_links = np.unique(added_ctrl_links, axis=0)
+            n_duplicated = b - ctrl_links.shape[0]
+
+        ctrl_links = ctrl_links[:b,:]
         ctrl_dic[str(pair[0]) + '_' + str(pair[1])] = ctrl_links
+
+    if return_bins_df:
+        return ctrl_dic,atac_bins_df,rna_bins_df
 
     return ctrl_dic
 
