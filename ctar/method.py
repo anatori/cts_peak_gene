@@ -157,7 +157,7 @@ def gc_content(adata,genome_file='GRCh38.p13.genome.fa.bgz'):
 
     # Get sequences
     atac_seqs = mu.atac.tl.get_sequences(adata,None,fasta_file=genome_file)
-
+ 
     # Store each's gc content
     gc = np.empty(adata.shape[1])
     i=0
@@ -167,7 +167,7 @@ def gc_content(adata,genome_file='GRCh38.p13.genome.fa.bgz'):
     return gc
 
 
-def get_bins(adata, num_bins=5, type='mean', col='gene_ids', layer='atac_raw'):
+def get_bins(adata, num_bins=5, type='mean', col='gene_ids', layer='atac_raw', genome_file=None):
 
     ''' Obtains GC and MFA bins for adata peaks.
     
@@ -228,17 +228,17 @@ def get_bins(adata, num_bins=5, type='mean', col='gene_ids', layer='atac_raw'):
             bins.loc[inds_select,'mean_var_bin'] = ['%d.%d' % (bin_i, x) for x in var_bin]
 
     elif type == 'mean_gc':
-        bins['gc'] = gc_content(adata)
+        bins['gc'] = gc_content(adata, genome_file=genome_file)
         print('GC done.')
         # also add gc bin
         bins['gc_bin'] = pd.qcut(bins['gc'].rank(method='first'), alt_num_bins, labels=False, duplicates="drop")
         # create combined bin if mfa+gc is included
-        bins['combined_mean_gc']=bins['mean_bin']* 10 + bins['gc_bin']
+        bins['mean_gc_bin']= bins['mean_bin'].astype(str) + '.' + bins['gc_bin'].astype(str)
 
     return bins
 
 
-def create_ctrl_peaks(adata,num_bins=5,b=1000,type='mean',peak_col='gene_ids',layer='atac_raw'):
+def create_ctrl_peaks(adata,num_bins=5,b=1000,type='mean',peak_col='gene_ids',layer='atac_raw',return_bins_df=False,genome_file=None):
 
     ''' Obtains GC and MFA bins for ATAC peaks.
     
@@ -264,16 +264,16 @@ def create_ctrl_peaks(adata,num_bins=5,b=1000,type='mean',peak_col='gene_ids',la
     
     '''
     
-    bins = get_bins(adata, num_bins=num_bins, type=type, col=peak_col, layer=layer)
+    bins = get_bins(adata, num_bins=num_bins, type=type, col=peak_col, layer=layer, genome_file=genome_file)
     print('Get_bins done.')
-    
     # Group indices for rand_peaks
     bins_grouped = bins[['ind',f'{type}_bin']].groupby([f'{type}_bin']).ind.apply(np.array)
     
     # Generate random peaks
     ctrl_peaks = np.empty((len(bins),b))
     # iterate through each row of bins
-    for i,peak in enumerate(bins.itertuples()):
+    for i in range(len(bins)):
+        peak = bins.iloc[i]
         row_bin = bins_grouped.loc[peak[f'{type}_bin']]
         row_bin_copy = row_bin[row_bin!=peak.ind]
         ctrl_peaks[i] = np.random.choice(row_bin_copy, size=(b,), replace=False)
@@ -283,6 +283,9 @@ def create_ctrl_peaks(adata,num_bins=5,b=1000,type='mean',peak_col='gene_ids',la
     # since they will be compared with different genes anyway
     ind,_ = pd.factorize(adata.var[peak_col])
     ctrl_peaks = ctrl_peaks[ind,:].astype(int)
+
+    if return_bins_df:
+        return ctrl_peaks,bins
     
     return ctrl_peaks
 
@@ -391,7 +394,7 @@ def pooled_mcpval(ctrl_corr,corr):
     '''
 
     # Center first
-    ctrl_corr_centered,corr_centered = center_ctrls(ctrl_corr,corr)
+    ctrl_corr_centered,corr_centered = center_ctrls(ctrl_corr,corr,axis=1)
     ctrl_corr_centered = np.sort(ctrl_corr_centered)
     n,b = ctrl_corr.shape
     
@@ -400,7 +403,7 @@ def pooled_mcpval(ctrl_corr,corr):
     return (1+indicator)/(1+(n*b))
 
 
-def center_ctrls(ctrl_corray,main_array):
+def center_ctrls(ctrl_corray,main_array,axis=0):
 
     ''' Centers control and focal correlation arrays according to control mean and std.
     
@@ -428,10 +431,14 @@ def center_ctrls(ctrl_corray,main_array):
     
     # Takes all ctrls and centers at same time
     # then centers putative/main with same vals
-    mean = np.mean(ctrl_corray,axis=1)
-    std = np.std(ctrl_corray,axis=1)
-    ctrls = (ctrl_corray - mean.reshape(-1,1)) / std.reshape(-1,1)
+    mean = np.mean(ctrl_corray,axis=axis)
+    std = np.std(ctrl_corray,axis=axis)
+
     main = (main_array - mean) / std
+    if axis == 1:
+        mean = mean.reshape(-1,1)
+        std = std.reshape(-1,1)
+    ctrls = (ctrl_corray - mean) / std
     
     return ctrls.flatten(), main
 
@@ -441,7 +448,7 @@ def basic_mcpval(ctrl_corr,corr):
     '''
 
     ctrl_corr = np.sort(ctrl_corr)
-    indicator = len(ctrl_corr) - np.searchsorted(ctrl_corr,corr)
+    indicator = len(ctrl_corr) - np.searchsorted(ctrl_corr,corr,side='left')
 
     return (1+indicator)/(1+len(ctrl_corr))
 
