@@ -238,6 +238,50 @@ def get_bins(adata, num_bins=5, type='mean', col='gene_ids', layer='atac_raw', g
     return bins
 
 
+def get_value_bins(adata, num_bins=5, b=200, type='mean', col='gene_ids', layer='atac_raw', genome_file=None):
+
+    ''' Attempts to split bins based on mean value with min size b, rather than by quantile.
+    For now, the only implemented type is "mean".
+    
+    '''
+
+    bins = pd.DataFrame()
+    unique = ~adata.var.duplicated(subset=col)
+
+    bins[col] = adata.var[col][unique]
+    adata.var['index_z'] = range(len(adata.var))
+    bins['ind'] = adata.var.index_z[unique]
+    sparse_X = adata[:,unique].layers[layer]
+
+    bins['mean'] = sparse_X.mean(axis=0).A1
+
+    bins['mean_bin'] = pd.cut(bins['mean'], num_bins, labels=False, duplicates="drop")
+    if bins.mean_bin.value_counts().min() > b:
+        print('No resizing needed.')
+        return bins
+
+    max_bins = bins['mean'].nunique() // b
+    multiplier = 1
+    while bins.mean_bin.value_counts().min() < b:
+        
+        if multiplier > max_bins: # fail condition
+            bins['mean_bin'] = pd.qcut(bins['mean'], num_bins, labels=False, duplicates="drop")
+            return bins
+            
+        # take double the amount of bins
+        bins['mean_bin'] = pd.cut(bins['mean'], num_bins*multiplier, labels=False, duplicates="drop")
+        # leave the lower 1/4 of bins, modify the upper 3/4 back to desired num_bins
+        upper_bins = num_bins - (num_bins // 2)
+        bins.loc[bins.mean_bin >= upper_bins,'mean_bin'] = upper_bins + pd.qcut(bins[bins.mean_bin >= upper_bins]['mean'],
+                                                                      upper_bins,
+                                                                      labels=False, 
+                                                                      duplicates="drop")
+        multiplier += 1
+        
+    print('Multiplier: %d' % (multiplier))
+    return bins
+
+
 def create_ctrl_peaks(adata,num_bins=5,b=1000,type='mean',peak_col='gene_ids',layer='atac_raw',return_bins_df=False,genome_file=None):
 
     ''' Obtains GC and MFA bins for ATAC peaks.
@@ -264,7 +308,11 @@ def create_ctrl_peaks(adata,num_bins=5,b=1000,type='mean',peak_col='gene_ids',la
     
     '''
     
-    bins = get_bins(adata, num_bins=num_bins, type=type, col=peak_col, layer=layer, genome_file=genome_file)
+    if type == 'mean_value':
+        bins = get_value_bins(adata, num_bins=num_bins, b=b, type=type, col=peak_col, layer=layer, genome_file=genome_file)
+        type = 'mean' # ensures compatibility for future types
+    else:
+        bins = get_bins(adata, num_bins=num_bins, type=type, col=peak_col, layer=layer, genome_file=genome_file)
     print('Get_bins done.')
     # Group indices for rand_peaks
     bins_grouped = bins[['ind',f'{type}_bin']].groupby([f'{type}_bin']).ind.apply(np.array)
