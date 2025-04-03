@@ -111,12 +111,13 @@ def get_b0_b1_gamma_from_pair(X_pair, Y_pair, W_pair, n_epochs=100000, lr=1e-4):
     b0_est, b1_est, gamma_est, _, _ = run_map_for_pair(X_pair, Y_pair, W_pair, n_epochs=n_epochs, lr=lr)
     return b0_est, b1_est, gamma_est
 
+
 ''' Example usage:
 
 # load covariates
 covars = pd.read_csv("/projects/zhanglab/users/ana/multiome/simulations/for_ray/data/covars.tsv", sep='\t')
-covars_encoded = pd.get_dummies(covars[['log_umi', 'GEX_pct_counts_mt', 'batch']], columns=['batch'])
-# Convert boolean columns to integers
+covars_encoded = pd.get_dummies(covars[['log_umi', 'GEX_pct_counts_mt', 'batch']], 
+                                columns=['batch'], drop_first=True) #fix dimension of one-hot encoding
 for col in covars_encoded.columns:
     if covars_encoded[col].dtype == 'bool':
         covars_encoded[col] = covars_encoded[col].astype(int)
@@ -131,5 +132,4 @@ b0_final, b1_final, gamma_final = get_b0_b1_gamma_from_pair(X_pair, Y_pair, W, n
 print("Final MAP estimates for pair", pair_idx)
 print("b0 =", b0_final)
 print("b1 =", b1_final)
-print("gamma =", gamma_final)
-'''
+print("gamma =", gamma_final) '''
