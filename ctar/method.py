@@ -425,12 +425,12 @@ def initial_mcpval(ctrl_corr,corr,one_sided=True):
     return (1+indicator)/(1+ctrl_corr.shape[1])
 
 
-def zscore_pval(ctrl_corr,corr):
+def zscore_pval(ctrl_corr,corr,axis=1):
     ''' 1-sided Z-score pvalue.
     '''
 
-    mean = np.mean(ctrl_corr,axis=1)
-    sd = np.std(ctrl_corr,axis=1)
+    mean = np.mean(ctrl_corr,axis=axis)
+    sd = np.std(ctrl_corr,axis=axis)
     z = (corr - mean)/sd
     
     p_value = 1 - sp.stats.norm.cdf(z)

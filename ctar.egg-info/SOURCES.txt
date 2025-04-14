@@ -5,9 +5,11 @@ ctar/__init__.py
 ctar/chromatin_potential.py
 ctar/data_loader.py
 ctar/gentruth.py
+ctar/method-Isuru.py
 ctar/method.py
 ctar/mz.py
 ctar/plot.py
+ctar/ray.py
 ctar/simu.py
 ctar/util.py
 ctar/version.py
