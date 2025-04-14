@@ -437,12 +437,12 @@ def zscore_pval(ctrl_corr,corr,axis=1):
     return p_value, z
 
 
-def pooled_mcpval(ctrl_corr,corr):
+def pooled_mcpval(ctrl_corr,corr,axis=1):
     ''' 1-sided MC pooled pvalue.
     '''
 
     # Center first
-    ctrl_corr_centered,corr_centered = center_ctrls(ctrl_corr,corr,axis=1)
+    ctrl_corr_centered,corr_centered = center_ctrls(ctrl_corr,corr,axis=axis)
     ctrl_corr_centered = np.sort(ctrl_corr_centered)
     n,b = ctrl_corr.shape
     
