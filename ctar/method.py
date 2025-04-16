@@ -231,9 +231,11 @@ def get_bins(adata, num_bins=5, type='mean', col='gene_ids', layer='atac_raw', g
         bins['gc'] = gc_content(adata, genome_file=genome_file)
         print('GC done.')
         # also add gc bin
-        bins['gc_bin'] = pd.qcut(bins['gc'].rank(method='first'), alt_num_bins, labels=False, duplicates="drop")
-        # create combined bin if mfa+gc is included
-        bins['mean_gc_bin']= bins['mean_bin'].astype(str) + '.' + bins['gc_bin'].astype(str)
+        bins['mean_var_bin'] = ''
+        for bin_i in bins['mean_bin'].unique():
+            inds_select = (bins.mean_bin == bin_i)
+            gc_bin = pd.qcut(bins.loc[inds_select,'gc'].rank(method='first'), alt_num_bins, labels=False, duplicates="drop")
+            bins.loc[inds_select,'mean_gc_bin'] = ['%d.%d' % (bin_i, x) for x in gc_bin]
 
     return bins
 
