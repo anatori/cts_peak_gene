@@ -13,6 +13,8 @@ import anndata as ad
 import scanpy as sc
 import muon as mu
 import sklearn as sk
+import os
+import re
 
 
 ######################### regression methods #########################
@@ -301,7 +303,7 @@ def create_ctrl_peaks(adata,num_bins=5,b=1000,type='mean',peak_col='gene_ids',la
     layer : str
         Layer in adata.layers corresponding to the matrix to base bins on.
     type : str
-        Metric to base binning on. Options are ['mean','var',or 'gc'].
+        Metric to base binning on. Options are ['mean','mean_var','mean_value','mean_gc'].
     
     Returns
     ----------
@@ -343,9 +345,11 @@ def create_ctrl_peaks(adata,num_bins=5,b=1000,type='mean',peak_col='gene_ids',la
 def create_ctrl_pairs(
     adata_atac,
     adata_rna,
-    mean_atac_bins = 5,
-    mean_rna_bins = 20,
-    var_rna_bins = 20,
+    atac_bins = 5,
+    rna_bins = [20,20],
+    atac_type = 'mean',
+    rna_type = 'mean_var',
+    genome_file=None,
     atac_layer = 'atac_raw',
     rna_layer = 'rna_raw',
     b = 100000,
@@ -358,14 +362,14 @@ def create_ctrl_pairs(
     
     '''
     
-    atac_bins_df = get_bins(adata_atac,num_bins=mean_atac_bins,type='mean',col=peak_col,layer=atac_layer)
-    rna_bins_df = get_bins(adata_rna,num_bins=[mean_rna_bins,var_rna_bins],type='mean_var',col=gene_col,layer=rna_layer)
+    atac_bins_df = get_bins(adata_atac,num_bins=atac_bins,type=atac_type,col=peak_col,layer=atac_layer,genome_file=genome_file)
+    rna_bins_df = get_bins(adata_rna,num_bins=rna_bins,type=rna_type,col=gene_col,layer=rna_layer)
     print('Get_bins done.')
     
     # Group indices for controls
-    pairs = [(i, j) for i in atac_bins_df.mean_bin.unique() for j in rna_bins_df.mean_var_bin.unique()]
-    atac_bins_grouped = atac_bins_df[['ind','mean_bin']].groupby(['mean_bin']).ind.apply(np.array)
-    rna_bins_grouped = rna_bins_df[['ind','mean_var_bin']].groupby(['mean_var_bin']).ind.apply(np.array)
+    pairs = [(i, j) for i in atac_bins_df[f'{atac_type}_bin'].unique() for j in rna_bins_df[f'{rna_type}_bin'].unique()]
+    atac_bins_grouped = atac_bins_df[['ind',f'{atac_type}_bin']].groupby([f'{atac_type}_bin']).ind.apply(np.array)
+    rna_bins_grouped = rna_bins_df[['ind',f'{rna_type}_bin']].groupby([f'{rna_type}_bin']).ind.apply(np.array)
     
     # Generate random pairs
     ctrl_dic = {}
@@ -581,6 +585,71 @@ def cauchy_combination(p_values1, p_values2):
     combined_p_value = 0.5-np.arctan(combined_statistic)/math.pi
 
     return combined_p_value
+
+
+def binned_mcpval(
+    path, 
+    eval_df, 
+    coeffs, 
+    bin_label = 'combined_bin_5.20.20.20', 
+    startswith='poiss_ctrl_', 
+    pattern = r'[\d]+.[\d]+_[\d]+.[\d]+'
+):
+    '''
+    Compute p-values for binned evaluation data using Monte Carlo method.
+
+    Parameters
+    ----------
+    path : str
+        Path to the directory containing control files.
+    eval_df : pd.DataFrame
+        Evaluation DataFrame with coefficients.
+    coeffs : np.array
+        Original Poisson coefficients (assumed global).
+    bin_label : str 
+        Column name to group bins.
+    pattern : str
+        Regex pattern to identify control files.
+
+    Returns
+    ----------
+    tuple : (bin_mcpvals, centered_pvals)
+
+    '''
+
+    poiss_grp_files = [f for f in os.listdir(path) if re.search(startswith + pattern + '.npy', f)]
+    
+    # create dictionary for controls
+    poiss_grp_dic = {
+        re.findall(pattern, f)[0]: np.load(os.path.join(path, f))
+        for f in poiss_grp_files
+    }
+
+    gt_bins = eval_df.copy()
+    gt_bins['ind'] = range(len(gt_bins))
+    grouped_bins = gt_bins.groupby(bin_label)['ind'].agg(list)
+
+    n = len(gt_bins)
+    bin_mcpvals = np.ones(n)
+    centered_coeffs = np.ones(n)
+    all_centered_ctrls = []
+
+    for bin_i in tqdm(grouped_bins.index):
+        
+        indices = grouped_bins.loc[bin_i]
+        bin_coeffs = coeffs[indices]
+        bin_ctrls = poiss_grp_dic[bin_i]
+
+        bin_mcpvals[indices] = basic_mcpval(bin_ctrls,bin_coeffs)
+
+        centered_ctrl, centered_coeff = center_ctrls(bin_ctrls,bin_coeffs,axis=0)
+        centered_coeffs[indices] = centered_coeff
+        all_centered_ctrls.append(centered_ctrl)
+
+    all_centered_ctrls = np.concatenate(all_centered_ctrls)
+    centered_pvals = basic_mcpval(all_centered_ctrls, centered_coeffs)
+
+    return bin_mcpvals, centered_pvals
 
 
 ######################### clustering #########################
