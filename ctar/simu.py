@@ -56,6 +56,18 @@ def null_peak_gene_pairs(rna, atac):
     return null_pairs
 
 
+def odds_ratio(y_arr, label_arr):
+
+    tp = np.sum((label_arr == 1) & y_arr)
+    fp = np.sum((label_arr == 0) & y_arr)
+    fn = np.sum((label_arr == 1) & ~y_arr)
+    tn = np.sum((label_arr == 0) & ~y_arr)
+    table = [[tp, fp], [fn, tn]]
+
+    stat, pval = sp.stats.fisher_exact(table)
+
+    return stat, pval
+
 
 def contingency(link_list_sig, link_list_all, link_list_true):
     """Score links based on the gold/silver standard set.

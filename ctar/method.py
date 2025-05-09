@@ -106,7 +106,8 @@ def vectorized_poisson_regression(X, Y, max_iter=100, tol=1e-6):
     N, P = X.shape
     beta0 = np.zeros(P)
     beta1 = np.zeros(P)
-    Y_broad = Y[:, None]
+    if Y.ndim == 1: Y_broad = Y.reshape(-1,1)
+    else: Y_broad = Y
     
     for iteration in range(max_iter):
         #eta = np.clip(beta0 + X * beta1, -10, 10)
@@ -128,6 +129,54 @@ def vectorized_poisson_regression(X, Y, max_iter=100, tol=1e-6):
         beta0_new = (Sy - beta1_new * Sx) / Sw
         if np.all(np.abs(beta1_new - beta1) < tol) and np.all(np.abs(beta0_new - beta0) < tol):
             print(f"Converged after {iteration+1} iterations.")
+            break
+        # Update beta0 and beta1
+        beta0, beta1 = beta0_new, beta1_new  # Simpler variable update
+
+    return beta0, beta1
+
+
+def vectorized_poisson_regression_sparse(X, Y, max_iter=100, tol=1e-6):
+    """ Fast poisson regression from Alistair
+    
+    Perform vectorized Poisson regression using IRLS.
+    
+    Parameters:
+    - X: Predictor matrix of shape (N, P)
+    - Y: Response vector of shape (N,)
+    - max_iter: Maximum number of iterations
+    - tol: Convergence tolerance
+    
+    Returns:
+    - beta0: Intercept coefficients of shape (P,)
+    - beta1: Slope coefficients of shape (P,)
+    """
+    # Start timing for the entire function
+    
+    N, P = X.shape
+    beta0 = np.zeros(P)
+    beta1 = np.zeros(P)
+    if Y.ndim == 1: Y_broad = Y.reshape(-1,1)
+    else: Y_broad = Y
+
+    for iteration in range(max_iter):
+        eta = beta0 + X.multiply(beta1) # dense
+        eta = np.asarray(eta)
+        mu = np.exp(eta) # dense
+        z = eta + (Y_broad - mu) / mu # dense
+        WX = X.multiply(mu)
+        WX2 = WX.multiply(X)
+        Sw = mu.sum(axis=0)
+        Sx = np.asarray(WX.sum(axis=0)) # is it worth keeping sums in sparse format?
+        Sy = (mu * z).sum(axis=0)
+        Sxy = np.asarray((WX.multiply(z)).sum(axis=0))
+        denom = WX2.sum(axis=0) - (Sx ** 2) / Sw
+        denom = np.where(denom == 0, 1e-8, denom)  # Avoid division by zero
+        
+        beta1_new = (Sxy - (Sx * Sy) / Sw) / denom
+        beta0_new = (Sy - beta1_new * Sx) / Sw
+        if np.all(np.abs(beta1_new - beta1) < tol) and np.all(np.abs(beta0_new - beta0) < tol):
+            # print(f"Converged after {iteration+1} iterations.")
             break
         # Update beta0 and beta1
         beta0, beta1 = beta0_new, beta1_new  # Simpler variable update
@@ -638,7 +687,7 @@ def binned_mcpval(
         
         indices = grouped_bins.loc[bin_i]
         bin_coeffs = coeffs[indices]
-        bin_ctrls = poiss_grp_dic[bin_i]
+        bin_ctrls = poiss_grp_dic[bin_i].flatten()
 
         bin_mcpvals[indices] = basic_mcpval(bin_ctrls,bin_coeffs)
 
