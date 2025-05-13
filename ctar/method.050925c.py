@@ -136,7 +136,7 @@ def vectorized_poisson_regression(X, Y, max_iter=100, tol=1e-6):
     return beta0, beta1
 
 
-def vectorized_poisson_regression2(mat_X, mat_Y, max_iter=100, tol=1e-6, flag_float32=True, flag_sparse=True):
+def vectorized_poisson_regression2(mat_X, mat_Y, max_iter=100, tol=1e-6, flag_float32=True):
     """ Fast poisson regression from Alistair
     
     Perform vectorized Poisson regression using IRLS.
@@ -169,48 +169,48 @@ def vectorized_poisson_regression2(mat_X, mat_Y, max_iter=100, tol=1e-6, flag_fl
     v_beta1 = np.zeros(P, dtype=fct_dtype)
 
 
-    # change mat_Y_broad from (N,) to (N,P)
-    mat_Y_broad = np.repeat(mat_Y_broad, P, axis=1)
-    if flag_sparse is True:
-        mat_X = sp.sparse.csc_matrix(mat_X)
-        mat_Y_broad = sp.sparse.csc_matrix(mat_Y_broad)
+    # if flag_float32 is True: # use np.float32
+    #     mat_X = np.array(mat_X, dtype=np.float32)
+    #     mat_Y = np.array(mat_Y, dtype=np.float32)
+    #     if mat_Y.ndim == 1: 
+    #         mat_Y_broad = mat_Y.reshape(-1,1)
+    #     else: 
+    #         mat_Y_broad = mat_Y
+    #     v_beta0 = np.zeros(P, dtype=np.float32)
+    #     v_beta1 = np.zeros(P, dtype=np.float32)
+    # else: 
+    #     pass # todo: not use np.float32
+    print('check 1')
+    
+    # # old code
+    # N, P = mat_X.shape
+    # beta0 = np.zeros(P)
+    # beta1 = np.zeros(P)
 
-  
+    # if mat_Y.ndim == 1: mat_Y_broad = mat_Y.reshape(-1,1)
+    # else: mat_Y_broad = mat_Y
+    
     for iteration in range(max_iter):
-        # print('iteration:%d' % iteration)
+        print('iteration:%d' % iteration)
         #eta = np.clip(beta0 + X * beta1, -10, 10)
         #mu = np.clip(np.exp(eta), 1e-8, None)
-        # eta = mat_X.multiply(v_beta1) + v_beta0 # N x P
-        # temp_mat = mat_X.multiply(v_beta1).toarray()
-        eta = mat_X.multiply(v_beta1) + v_beta0 # N x P
-        eta = np.asarray(eta)
+        eta = v_beta0 + mat_X * v_beta1 # N x P
         mu = np.exp(eta) # N x P
         z = eta + (mat_Y_broad - mu) / mu # N x P
-        z = np.array(z)
-        WX = mat_X.multiply(mu) # possibly dont compute np.exp unless nonzero
-        WX2 = mat_X.multiply(WX) # N x P
-        # eta = v_beta0 + mat_X * v_beta1 # N x P
-        # mu = np.exp(eta) # N x P
-        # z = eta + (mat_Y_broad - mu) / mu # N x P
-        # WX = mu * mat_X # N x P
-        # WX2 = WX * mat_X # N x P
+        WX = mu * mat_X # N x P
+        WX2 = WX * mat_X # N x P
         Sw = mu.sum(axis=0)        # (P,)
         Sx = WX.sum(axis=0)       # (P,)
         #Sx2 = WX2.sum(axis=0)     # (P,)
         Sy = (mu * z).sum(axis=0)  # (P,)
-        Sxy = WX.multiply(z).sum(axis=0)  # (P,)
-        # Sxy = (WX * z).sum(axis=0)  # (P,)
-        Sx = np.asarray(Sx)
-        # Sy = np.array(Sy)
-        Sxy = np.asarray(Sxy)
-        denom = WX2.sum(axis=0) - ((Sx**2) / Sw) # P
-        # denom = WX2.sum(axis=0)  - (Sx**2) / Sw # P
+        Sxy = (WX * z).sum(axis=0)  # (P,)
+        denom = WX2.sum(axis=0)  - (Sx**2) / Sw # P
         denom = np.where(denom == 0, 1e-8, denom)  # Avoid division by zero
         
         v_beta1_new = (Sxy - (Sx * Sy) / Sw) / denom # P
         v_beta0_new = (Sy - v_beta1_new * Sx) / Sw # P
-        # print(f'convergence statistic of beta1 at iter {iteration}',np.max(np.abs(v_beta1_new - v_beta1)))
-        # print(f'convergence statistic of beta0 at iter {iteration}',np.max(np.abs(v_beta0_new - v_beta0)))
+        print(f'convergence statistic of beta1 at iter {iteration}',np.max(np.abs(v_beta1_new - v_beta1)))
+        print(f'convergence statistic of beta0 at iter {iteration}',np.max(np.abs(v_beta0_new - v_beta0)))
         if np.all(np.abs(v_beta1_new - v_beta1) < tol) and np.all(np.abs(v_beta0_new - v_beta0) < tol):
             print(f"Converged after {iteration+1} iterations.")
             break
