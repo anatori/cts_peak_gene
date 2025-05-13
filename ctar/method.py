@@ -272,7 +272,7 @@ def vectorized_poisson_regression_sparse(X, Y, max_iter=100, tol=1e-6):
 ######################### generate null #########################
 
 
-def gc_content(adata,genome_file='GRCh38.p13.genome.fa.bgz'):
+def gc_content(adata, col='gene_ids', genome_file='GRCh38.p13.genome.fa.bgz'):
     
     ''' Finds GC content for peaks.
     
@@ -281,6 +281,8 @@ def gc_content(adata,genome_file='GRCh38.p13.genome.fa.bgz'):
     adata : ad.AnnData
         AnnData object of size (N,M) with atac mod containing peak range information
         and peak dataframe (in adata.uns). Also assumed to have 'gene_id' column in vars.
+    col : str
+        Label for peak column.
     genome_file : genome.fa.bgz file
         Reference genome in fasta file format.
     
@@ -291,11 +293,16 @@ def gc_content(adata,genome_file='GRCh38.p13.genome.fa.bgz'):
         
     '''
 
+    adata_copy = adata.copy()
+    # muon get_sequences requires peaks to be index name
+    # expected to be named as chrX:NNN-NNN
+    adata_copy.var.index = adata_copy.var[col]
+
     # Get sequences
-    atac_seqs = mu.atac.tl.get_sequences(adata,None,fasta_file=genome_file)
+    atac_seqs = mu.atac.tl.get_sequences(adata_copy,None,fasta_file=genome_file)
  
     # Store each's gc content
-    gc = np.empty(adata.shape[1])
+    gc = np.empty(adata_copy.shape[1])
     i=0
     for seq in atac_seqs:
         gc[i] = gc_fraction(seq)
@@ -364,7 +371,7 @@ def get_bins(adata, num_bins=5, type='mean', col='gene_ids', layer='atac_raw', g
             bins.loc[inds_select,'mean_var_bin'] = ['%d.%d' % (bin_i, x) for x in var_bin]
 
     elif type == 'mean_gc':
-        bins['gc'] = gc_content(adata, genome_file=genome_file)
+        bins['gc'] = gc_content(adata[:,unique], col=col, genome_file=genome_file)
         print('GC done.')
         # also add gc bin
         bins['mean_var_bin'] = ''
