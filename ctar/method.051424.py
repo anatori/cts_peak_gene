@@ -220,83 +220,14 @@ def vectorized_poisson_regression2(mat_X, mat_Y, max_iter=100, tol=1e-6, flag_fl
     return v_beta0, v_beta1
 
 
-def vectorized_poisson_regression3(mat_X, mat_Y, max_iter=100, tol=1e-6, flag_float32=True, flag_sparse=True, flag_div_float64=True):
+def vectorized_poisson_regression_sparse(X, Y, max_iter=100, tol=1e-6):
     """ Fast poisson regression from Alistair
     
     Perform vectorized Poisson regression using IRLS.
     
     Parameters:
-    - X: Predictor matrix of shape (N, P)
-    - Y: Response vector of shape (N,)
-    - max_iter: Maximum number of iterations
-    - tol: Convergence tolerance
-    
-    Returns:
-    - beta0: Intercept coefficients of shape (P,)
-    - beta1: Slope coefficients of shape (P,)
-    """
-    # Start timing for the entire function
-
-    N, P = mat_X.shape
-    if flag_float32 is True:
-        fct_dtype = np.float32
-    else: 
-        fct_dtype = float
-
-    mat_X = np.matrix(mat_X, dtype=fct_dtype)
-    mat_Y = np.matrix(mat_Y, dtype=fct_dtype)
-    if mat_Y.ndim == 1: 
-        mat_Y_broad = mat_Y.reshape(-1,1)
-    else: 
-        mat_Y_broad = mat_Y
-    v_beta0 = np.zeros(P, dtype=fct_dtype)
-    v_beta1 = np.zeros(P, dtype=fct_dtype)
-
-
-    # change mat_Y_broad from (N,) to (N,P)
-    mat_Y_broad = np.repeat(mat_Y_broad, P, axis=1)
-    if flag_sparse is True:
-        mat_X = sp.sparse.csc_matrix(mat_X)
-        mat_Y_broad = sp.sparse.csc_matrix(mat_Y_broad)
-
-  
-    for iteration in range(max_iter):
-        eta = mat_X.multiply(v_beta1) + v_beta0 # N x P
-        mu = np.exp(eta) # N x P
-        z = eta + (mat_Y_broad - mu) / mu # N x P
-        WX = mat_X.multiply(mu) # possibly dont compute np.exp unless nonzero
-        WX2 = mat_X.multiply(WX) # N x P
-        Sw = mu.sum(axis=0)        # (P,)
-        Sx = WX.sum(axis=0)       # (P,)
-        Sy = np.multiply(mu,z).sum(axis=0)  # (P,)
-        Sxy = WX.multiply(z).sum(axis=0)  # (P,)
-        if flag_div_float64:
-            denom = WX2.sum(axis=0) - np.divide(np.power(Sx,2), Sw, dtype=np.float64)
-        else:
-            denom = WX2.sum(axis=0) - (np.power(Sx,2) / Sw)
-        denom = np.where(denom == 0, 1e-8, denom)  # Avoid division by zero
-        
-        v_beta1_new = (Sxy - np.multiply(Sx,Sy) / Sw) / denom # P
-        v_beta0_new = (Sy - np.multiply(v_beta1_new,Sx)) / Sw # P
-        # print(f'convergence statistic of beta1 at iter {iteration} at ind %0.2f' % (np.argmax(np.abs(v_beta1_new - v_beta1))),np.max(np.abs(v_beta1_new - v_beta1)))
-        # print(f'convergence statistic of beta0 at iter {iteration}',np.max(np.abs(v_beta0_new - v_beta0)))
-        if np.all(np.abs(v_beta1_new - v_beta1) < tol) and np.all(np.abs(v_beta0_new - v_beta0) < tol):
-            print(f"Converged after {iteration+1} iterations.")
-            break
-        # Update beta0 and beta1
-        v_beta0, v_beta1 = v_beta0_new, v_beta1_new  # Simpler variable update
-
-    return v_beta0, v_beta1
-
-
-def vectorized_poisson_regression_with_print(X, Y, max_iter=100, tol=1e-6):
-    """ Fast poisson regression from Alistair
-    
-    Perform vectorized Poisson regression using IRLS.
-    
-    Parameters:
-    - X: Predictor matrix of shape (N, P)
-    - Y: Response vector of shape (N,)
+    - X: Predictor matrix of shape (N, P) sparse
+    - Y: Response vector of shape (N,) dense
     - max_iter: Maximum number of iterations
     - tol: Convergence tolerance
     
@@ -306,203 +237,36 @@ def vectorized_poisson_regression_with_print(X, Y, max_iter=100, tol=1e-6):
     """
     # Start timing for the entire function
     
+    # check if sparse + convert to low precision
     N, P = X.shape
     beta0 = np.zeros(P)
     beta1 = np.zeros(P)
     if Y.ndim == 1: Y_broad = Y.reshape(-1,1)
     else: Y_broad = Y
-    
+
     for iteration in range(max_iter):
-        eta = beta0 + X * beta1 # N x P
-        print('eta',eta.flatten())
-        mu = np.exp(eta) # N x P
-        print('mu',mu.flatten())
-        z = eta + (Y_broad - mu) / mu # N x P
-        print('z',z.flatten())
-        WX = mu * X # N x P
-        print('WX',WX.flatten())
-        WX2 = WX * X # N x P
-        print('WX2',WX2.flatten())
-        Sw = mu.sum(axis=0)  
-        print('Sw',Sw)      # (P,)
-        Sx = WX.sum(axis=0)  
-        print('Sx',Sx)      # (P,)
-        #Sx2 = WX2.sum(axis=0)     # (P,)
-        Sy = (mu * z).sum(axis=0) 
-        print('Sy',Sy)  # (P,)
-        Sxy = (WX * z).sum(axis=0)  
-        print('Sxy',Sxy) # (P,)
-        denom = WX2.sum(axis=0)  - (Sx**2) / Sw # P
-        print('denom',denom)
-        denom = np.where(denom == 0, 1e-8, denom)
-        print('denom after np.where',denom)  # Avoid division by zero
+        eta = beta0 + X.multiply(beta1) # dense
+        eta = np.asarray(eta)
+        mu = np.exp(eta) # dense
+        z = eta + (Y_broad - mu) / mu # dense
+        WX = X.multiply(mu)
+        WX2 = WX.multiply(X)
+        Sw = mu.sum(axis=0)
+        Sx = np.asarray(WX.sum(axis=0)) # is it worth keeping sums in sparse format?
+        Sy = (mu * z).sum(axis=0)
+        Sxy = np.asarray((WX.multiply(z)).sum(axis=0))
+        denom = WX2.sum(axis=0) - (Sx ** 2) / Sw
+        denom = np.where(denom == 0, 1e-8, denom)  # Avoid division by zero
         
-        beta1_new = (Sxy - (Sx * Sy) / Sw) / denom # P
-        print('beta1_new',beta1_new)
-        beta0_new = (Sy - beta1_new * Sx) / Sw # P
-        print('beta0_new',beta0_new)
-        print(f'convergence statistic of beta1 at iter {iteration}',np.max(np.abs(beta1_new - beta1)))
+        beta1_new = (Sxy - (Sx * Sy) / Sw) / denom
+        beta0_new = (Sy - beta1_new * Sx) / Sw
         if np.all(np.abs(beta1_new - beta1) < tol) and np.all(np.abs(beta0_new - beta0) < tol):
-            print(f"Converged after {iteration+1} iterations.")
+            # print(f"Converged after {iteration+1} iterations.")
             break
         # Update beta0 and beta1
         beta0, beta1 = beta0_new, beta1_new  # Simpler variable update
 
     return beta0, beta1
-
-
-def vectorized_poisson_regression3_with_print(mat_X, mat_Y, max_iter=100, tol=1e-6, flag_float32=True, flag_sparse=True, flag_div_float64=True):
-    """ Fast poisson regression from Alistair
-    
-    Perform vectorized Poisson regression using IRLS.
-    
-    Parameters:
-    - X: Predictor matrix of shape (N, P)
-    - Y: Response vector of shape (N,)
-    - max_iter: Maximum number of iterations
-    - tol: Convergence tolerance
-    
-    Returns:
-    - beta0: Intercept coefficients of shape (P,)
-    - beta1: Slope coefficients of shape (P,)
-    """
-    # Start timing for the entire function
-
-    N, P = mat_X.shape
-    if flag_float32 is True:
-        fct_dtype = np.float32
-    else: 
-        fct_dtype = float
-
-    mat_X = np.matrix(mat_X, dtype=fct_dtype)
-    mat_Y = np.matrix(mat_Y, dtype=fct_dtype)
-    if mat_Y.ndim == 1: 
-        mat_Y_broad = mat_Y.reshape(-1,1)
-    else: 
-        mat_Y_broad = mat_Y
-    v_beta0 = np.zeros(P, dtype=fct_dtype)
-    v_beta1 = np.zeros(P, dtype=fct_dtype)
-
-
-    # change mat_Y_broad from (N,) to (N,P)
-    mat_Y_broad = np.repeat(mat_Y_broad, P, axis=1)
-    if flag_sparse is True:
-        mat_X = sp.sparse.csc_matrix(mat_X)
-        mat_Y_broad = sp.sparse.csc_matrix(mat_Y_broad)
-
-  
-    for iteration in range(max_iter):
-        eta = mat_X.multiply(v_beta1) + v_beta0 # N x P
-        print('eta',eta.flatten())
-        mu = np.exp(eta) # N x P
-        print('mu',mu.flatten())
-        z = eta + (mat_Y_broad - mu) / mu # N x P
-        print('z',z.flatten())
-        WX = mat_X.multiply(mu) # possibly dont compute np.exp unless nonzero
-        print('WX',WX.toarray().flatten())
-        WX2 = mat_X.multiply(WX) # N x P
-        print('WX2',WX2.toarray().flatten())
-        Sw = mu.sum(axis=0)        # (P,)
-        print('Sw',Sw)
-        Sx = WX.sum(axis=0)       # (P,)
-        print('Sx',Sx)
-        Sy = np.multiply(mu,z).sum(axis=0)  # (P,)
-        print('Sy',Sy)
-        Sxy = WX.multiply(z).sum(axis=0)  # (P,)
-        print('Sxy',Sxy)
-        print('WX2.sum(axis=0)',WX2.sum(axis=0))
-        print('np.power(Sx,2)',np.power(Sx,2))
-        print('(np.power(Sx,2) / Sw)',(np.power(Sx,2) / Sw))
-        print('np.divide(np.power(Sx,2), Sw, dtype=np.float64)',np.divide(np.power(Sx,2), Sw, dtype=np.float64))
-        if flag_div_float64:
-            denom = WX2.sum(axis=0) - np.divide(np.power(Sx,2), Sw, dtype=np.float64)
-        else:
-            denom = WX2.sum(axis=0) - (np.power(Sx,2) / Sw)
-        print('denom',denom)
-        denom = np.where(denom == 0, 1e-8, denom)  # Avoid division by zero
-        print('denom after np.where',denom)
-        
-        v_beta1_new = (Sxy - np.multiply(Sx,Sy) / Sw) / denom # P
-        print('v_beta1_new',v_beta1_new)
-        v_beta0_new = (Sy - np.multiply(v_beta1_new,Sx)) / Sw # P
-        print('v_beta0_new',v_beta0_new)
-        print(f'convergence statistic of beta1 at iter {iteration} at ind %0.2f' % (np.argmax(np.abs(v_beta1_new - v_beta1))),np.max(np.abs(v_beta1_new - v_beta1)))
-        # print(f'convergence statistic of beta0 at iter {iteration}',np.max(np.abs(v_beta0_new - v_beta0)))
-        if np.all(np.abs(v_beta1_new - v_beta1) < tol) and np.all(np.abs(v_beta0_new - v_beta0) < tol):
-            print(f"Converged after {iteration+1} iterations.")
-            break
-        # Update beta0 and beta1
-        v_beta0, v_beta1 = v_beta0_new, v_beta1_new  # Simpler variable update
-
-    return v_beta0, v_beta1
-
-
-def vectorized_poisson_regression3(mat_X, mat_Y, max_iter=100, tol=1e-6, flag_float32=True, flag_sparse=True, flag_div_float64=True):
-    """ Fast poisson regression from Alistair
-    
-    Perform vectorized Poisson regression using IRLS.
-    
-    Parameters:
-    - X: Predictor matrix of shape (N, P)
-    - Y: Response vector of shape (N,)
-    - max_iter: Maximum number of iterations
-    - tol: Convergence tolerance
-    
-    Returns:
-    - beta0: Intercept coefficients of shape (P,)
-    - beta1: Slope coefficients of shape (P,)
-    """
-    # Start timing for the entire function
-
-    N, P = mat_X.shape
-    if flag_float32 is True:
-        fct_dtype = np.float32
-    else: 
-        fct_dtype = float
-
-    mat_X = np.matrix(mat_X, dtype=fct_dtype)
-    mat_Y = np.matrix(mat_Y, dtype=fct_dtype)
-    if mat_Y.ndim == 1: 
-        mat_Y_broad = mat_Y.reshape(-1,1)
-    else: 
-        mat_Y_broad = mat_Y
-    v_beta0 = np.zeros(P, dtype=fct_dtype)
-    v_beta1 = np.zeros(P, dtype=fct_dtype)
-
-
-    # change mat_Y_broad from (N,) to (N,P)
-    mat_Y_broad = np.repeat(mat_Y_broad, P, axis=1)
-    if flag_sparse is True:
-        mat_X = sp.sparse.csc_matrix(mat_X)
-        mat_Y_broad = sp.sparse.csc_matrix(mat_Y_broad)
-
-  
-    for iteration in range(max_iter):
-        eta = mat_X.multiply(v_beta1) + v_beta0 # N x P
-        mu = np.exp(eta) # N x P
-        z = eta + (mat_Y_broad - mu) / mu # N x P
-        WX = mat_X.multiply(mu) # possibly dont compute np.exp unless nonzero
-        WX2 = mat_X.multiply(WX) # N x P
-        Sw = mu.sum(axis=0)        # (P,)
-        Sx = WX.sum(axis=0)       # (P,)
-        Sy = np.multiply(mu,z).sum(axis=0)  # (P,)
-        Sxy = WX.multiply(z).sum(axis=0)  # (P,)
-        if flag_div_float64:
-            denom = WX2.sum(axis=0) - np.divide(np.power(Sx,2), Sw, dtype=np.float64)
-        else:
-            denom = WX2.sum(axis=0) - (np.power(Sx,2) / Sw)
-        denom = np.where(denom == 0, 1e-8, denom)  # Avoid division by zero
-        
-        v_beta1_new = (Sxy - np.multiply(Sx,Sy) / Sw) / denom # P
-        v_beta0_new = (Sy - np.multiply(v_beta1_new,Sx)) / Sw # P
-        
-        if np.all(np.abs(v_beta1_new - v_beta1) < tol) and np.all(np.abs(v_beta0_new - v_beta0) < tol):
-            print(f"Converged after {iteration+1} iterations.")
-            break
-        # Update beta0 and beta1
-        v_beta0, v_beta1 = v_beta0_new, v_beta1_new  # Simpler variable update
-
-    return v_beta0, v_beta1
 
 
 ######################### generate null #########################
