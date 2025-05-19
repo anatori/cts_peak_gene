@@ -221,23 +221,22 @@ def vectorized_poisson_regression2(mat_X, mat_Y, max_iter=100, tol=1e-6, flag_fl
 
 
 def vectorized_poisson_regression3(mat_x, mat_y, max_iter=100, tol=1e-6, flag_float32=True, flag_sparse=True, flag_div_float64=True):
-    """ Fast poisson regression from Alistair
-    
-    Perform vectorized Poisson regression using IRLS.
+    """ Fast poisson regression using IRLS, adapted from Alistair
+
     
     Parameters:
-    - X: Predictor matrix of shape (N, P)
-    - Y: Response vector of shape (N,)
-    - max_iter: Maximum number of iterations
-    - tol: Convergence tolerance
+    - mat_x : Predictor matrix of shape (n_cell, n_ctrl)
+    - mat_y : Response vector of shape (n_cell,)
+    - max_iter : Maximum number of iterations
+    - tol : Convergence tolerance
     
     Returns:
-    - beta0: Intercept coefficients of shape (P,)
-    - beta1: Slope coefficients of shape (P,)
+    - beta0 : Intercept coefficients of shape (n_ctrl,)
+    - beta1 : Slope coefficients of shape (n_ctrl,)
     """
     # Start timing for the entire function
 
-    n_cell, n_ctrl = mat_x.shape
+    n_cell, n_ctrl = mat_x.shape # n_pair is clearer
     
     if flag_float32 is True:
         fct_dtype = np.float32
@@ -248,8 +247,8 @@ def vectorized_poisson_regression3(mat_x, mat_y, max_iter=100, tol=1e-6, flag_fl
     mat_y = np.matrix(mat_y, dtype=fct_dtype)
     
     if mat_y.ndim == 1: 
-        mat_y_broad = mat_y.reshape(-1,1)
-    else: 
+        mat_y_broad = mat_y.reshape(-1,1) # remove mat_y_broad variable, only use mat_y
+    else: # n_cell x n_pair matrix
         mat_y_broad = mat_y
     
     v_beta0 = np.zeros(n_ctrl, dtype=fct_dtype)
@@ -257,20 +256,24 @@ def vectorized_poisson_regression3(mat_x, mat_y, max_iter=100, tol=1e-6, flag_fl
 
 
     # change mat_Y_broad from (N,) to (N,P)
-    mat_y_broad = np.repeat(mat_y_broad, n_ctrl, axis=1)
+    mat_y_broad = np.repeat(mat_y_broad, n_ctrl, axis=1) # large operation, later may change to n_pair
     
     if flag_sparse is True:
-        mat_x = sp.sparse.csc_matrix(mat_x)
+        mat_x = sp.sparse.csc_matrix(mat_x) 
         mat_y_broad = sp.sparse.csc_matrix(mat_y_broad)
 
-
+    # double check that its compatible w both np matrix and scs matrix, e.g. line 267
     for iteration in range(max_iter):
-        v_eta = mat_x.multiply(v_beta1) + v_beta0
-        v_mu = np.exp(v_eta)
+        v_eta = mat_x.multiply(v_beta1) + v_beta0 # (n_cell, n_pair), mat_eta
+        v_mu = np.exp(v_eta) # (n_cell, n_pair)
+        # sum_w
 
-        v_z = v_eta + (mat_y_broad - v_mu) / v_mu
-        v_wx = mat_x.multiply(v_mu)
-        v_wx2 = mat_x.multiply(v_wx)
+        v_z = v_eta + (mat_y_broad - v_mu) / v_mu # (n_cell, n_pair), mat_z, v_z to be v_eta
+        # sum_y
+        v_wx = mat_x.multiply(v_mu) # (n_cell, n_pair), mat_wx
+        # sum_x
+        # sum_xy
+        v_wx2 = mat_x.multiply(v_wx) # (n_cell, n_pair), v_wx2 to be v_wx
 
         sum_w = v_mu.sum(axis=0)
         sum_x = v_wx.sum(axis=0)
@@ -284,13 +287,13 @@ def vectorized_poisson_regression3(mat_x, mat_y, max_iter=100, tol=1e-6, flag_fl
 
         denom = np.maximum(denom, 1e-8)  # Avoid division by zero
         
-        v_beta1_new = (sum_xy - np.multiply(sum_x,sum_y) / sum_w) / denom
-        v_beta0_new = (sum_y - np.multiply(v_beta1_new,sum_x)) / sum_w
+        v_beta1_new = (sum_xy - np.multiply(sum_x,sum_y) / sum_w) / denom # convert to float32 after
+        v_beta0_new = (sum_y - np.multiply(v_beta1_new,sum_x)) / sum_w # convert to float32 after
 
         if np.all(np.abs(v_beta1_new - v_beta1) < tol) and np.all(np.abs(v_beta0_new - v_beta0) < tol):
             print(f"Converged after {iteration+1} iterations.")
             break
-            
+
         # Update beta0 and beta1
         v_beta0, v_beta1 = v_beta0_new, v_beta1_new  # Simpler variable update
 

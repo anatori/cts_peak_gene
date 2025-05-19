@@ -343,3 +343,169 @@ def multiome_trackplot(df, atac = None, rna = None, sortby = 'poiss_coeff', coef
     plt.show();
     
     return
+
+
+def get_bar_centers_grouped(ax, odds_data):
+    """
+    Corrects for patch order in matplotlib when using pandas bar plot with yerr.
+    Returns: dict of method_name -> list of x-center positions per top_n group.
+    """
+    method_names = list(odds_data.columns)
+    topn_groups = odds_data.index
+    n_methods = len(method_names)
+    n_groups = len(topn_groups)
+
+    patches = ax.patches
+    assert len(patches) == n_methods * n_groups, f"Expected {n_methods * n_groups} patches, got {len(patches)}"
+
+    bar_centers = {method: [] for method in method_names}
+
+    # patches are ordered: method_0 for all groups, then method_1 for all groups, etc.
+    for m, method in enumerate(method_names):
+        for g in range(n_groups):
+            patch = patches[m * n_groups + g]
+            x_center = patch.get_x() + patch.get_width() / 2
+            bar_centers[method].append(x_center)
+
+    return bar_centers
+
+
+def add_sig_vs_reference_staggered_global_fdr(
+    ax, odds_data, yerr_upper, corrected_pval_lookup,
+    focal_method, ref_idx, alpha=0.05,
+    line_gap=0.05,  # spacing between lines
+    text_gap=0.03,  # extra spacing above lines for the box
+    fontsize=8,
+    fontsize_gap=2
+):
+    """
+    Annotates significance comparisons against a reference method with FDR-corrected p-values.
+
+    Parameters:
+        ax : matplotlib axis
+        odds_data : pd.DataFrame [n_links x methods]
+        yerr_upper : pd.DataFrame [n_links x methods]
+        corrected_pval_lookup : dict[(focal_method, n_link, comparison_method)] = (raw_p, corr_p)
+        focal_method : str
+        ref_idx : int (index of focal method in columns)
+        alpha : significance threshold
+        line_gap : vertical space between stacked brackets
+        text_gap : space between brackets and text box
+    """
+    num_groups = odds_data.shape[0]
+    num_methods = odds_data.shape[1]
+    ref_method = odds_data.columns[ref_idx]
+    bar_centers = get_bar_centers_grouped(ax, odds_data)
+
+    for i, n_link in enumerate(odds_data.index):  # x-axis group
+        group_methods = odds_data.columns
+
+        # 1. Find maximum bar height + error bar in this group
+        tops = odds_data.loc[n_link] + yerr_upper.loc[n_link]
+        base_y = tops.max()
+
+        # 2. Initialize vertical stacking level
+        current_y = base_y + line_gap
+
+        for m, comp_method in enumerate(group_methods):
+            if m == ref_idx:
+                continue
+
+            key = (focal_method, n_link, comp_method)
+            if key not in corrected_pval_lookup:
+                continue
+
+            raw_p, corr_p = corrected_pval_lookup[key]
+            if corr_p >= alpha:
+                continue  # Not significant
+
+            # x-positions for bracket
+            x_center = i
+            x1 = bar_centers[comp_method][i]
+            x2 = bar_centers[ref_method][i]
+
+            # Draw vertical bracket above current_y
+            line_top = current_y + line_gap
+            ax.plot([x1, x1, x2, x2], [current_y, line_top, line_top, current_y], c='grey', lw=1.2)
+
+            # Draw text above the line
+            text_y = line_top + text_gap
+            ax.text(
+                (x1 + x2) / 2, text_y,
+                f"{raw_p:.3g}\n({corr_p:.3g})",
+                ha='center', va='bottom', fontsize=fontsize,
+                bbox=dict(boxstyle='round,pad=0.1', facecolor='white', edgecolor='grey', linewidth=0.5)
+            )
+
+            # Update current_y to stack the next one higher
+            current_y = (text_y + fontsize_gap) + text_gap # rough height for 2-line text
+
+
+def add_sig_vs_multiple_references_staggered_global_fdr(
+    ax, odds_data, corrected_pval_lookup,
+    focal_methods, alpha=0.05,
+    line_gap=0.05,  # spacing between lines
+    text_gap=0.03,  # extra spacing above lines for the box
+    fontsize=8,
+    fontsize_gap=2,
+    line_color='grey'
+):
+    """
+    Annotates significance comparisons for multiple focal methods with FDR-corrected p-values.
+
+    Parameters:
+        ax : matplotlib axis
+        odds_data : pd.DataFrame [n_links x methods]
+        yerr_upper : pd.DataFrame [n_links x methods]
+        corrected_pval_lookup : dict[(focal_method, n_link, comparison_method)] = (raw_p, corr_p)
+        focal_methods : list of methods to use as references
+        alpha : significance threshold
+    """
+    num_groups = odds_data.shape[0]
+    bar_centers = get_bar_centers_grouped(ax, odds_data)
+    drawn_pairs = set()
+
+    for i, n_link in enumerate(odds_data.index):  # x-axis group
+        # Find max bar + error in this group
+        tops = odds_data.loc[n_link] # + yerr_upper.loc[n_link]
+        base_y = tops.max()
+        current_y = base_y + line_gap
+
+        for focal_method in focal_methods:
+            for comp_method in odds_data.columns:
+                if comp_method == focal_method:
+                    continue
+
+                # Skip already-drawn symmetrical pair
+                pair_key = tuple(sorted([focal_method, comp_method]))
+                pair_id = (n_link, pair_key)
+                if pair_id in drawn_pairs:
+                    continue
+                drawn_pairs.add(pair_id)
+
+                key = (focal_method, n_link, comp_method)
+                if key not in corrected_pval_lookup:
+                    continue
+
+                raw_p, corr_p = corrected_pval_lookup[key]
+                if corr_p >= alpha:
+                    continue  # not significant
+
+                x1 = bar_centers[comp_method][i]
+                x2 = bar_centers[focal_method][i]
+
+                # Draw bracket
+                line_top = current_y + line_gap
+                ax.plot([x1, x1, x2, x2], [current_y, line_top, line_top, current_y], c=line_color, lw=1.2)
+
+                # Add label
+                text_y = line_top + text_gap
+                ax.text(
+                    (x1 + x2) / 2, text_y,
+                    f"{raw_p:.3g}\n({corr_p:.3g})",
+                    ha='center', va='bottom', fontsize=fontsize,
+                    bbox=dict(boxstyle='round,pad=0.1', facecolor='white', edgecolor=line_color, linewidth=0.5)
+                )
+
+                current_y = text_y + fontsize_gap + text_gap
+
