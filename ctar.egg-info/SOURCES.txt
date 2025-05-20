@@ -6,6 +6,10 @@ ctar/chromatin_potential.py
 ctar/data_loader.py
 ctar/gentruth.py
 ctar/method-Isuru.py
+ctar/method.050925.py
+ctar/method.050925b.py
+ctar/method.050925c.py
+ctar/method.051424.py
 ctar/method.py
 ctar/mz.py
 ctar/plot.py

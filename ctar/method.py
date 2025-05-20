@@ -669,7 +669,7 @@ def create_ctrl_pairs(
     rna_bins = [20,20],
     atac_type = 'mean',
     rna_type = 'mean_var',
-    genome_file=None,
+    genome_file = None,
     atac_layer = 'atac_raw',
     rna_layer = 'rna_raw',
     b = 100000,
@@ -690,29 +690,24 @@ def create_ctrl_pairs(
     pairs = [(i, j) for i in atac_bins_df[f'{atac_type}_bin'].unique() for j in rna_bins_df[f'{rna_type}_bin'].unique()]
     atac_bins_grouped = atac_bins_df[['ind',f'{atac_type}_bin']].groupby([f'{atac_type}_bin']).ind.apply(np.array)
     rna_bins_grouped = rna_bins_df[['ind',f'{rna_type}_bin']].groupby([f'{rna_type}_bin']).ind.apply(np.array)
+
     
     # Generate random pairs
     ctrl_dic = {}
     for pair in tqdm(pairs):
         atac_inds = atac_bins_grouped.loc[pair[0]]
         rna_inds = rna_bins_grouped.loc[pair[1]]
-        # increase target size to reduce chance of duplicate pairs
-        atac_samples = np.random.choice(atac_inds,size=b*2)
-        rna_samples = np.random.choice(rna_inds,size=b*2)
-        ctrl_links = np.vstack([atac_samples,rna_samples]).T
-        ctrl_links = np.unique(ctrl_links, axis=0)
+        
+        # Get Cartesian product of indices
+        all_pairs = np.array(np.meshgrid(atac_inds, rna_inds)).T.reshape(-1, 2)
+        n_pairs = all_pairs.shape[0]
 
-        n_duplicated = b - ctrl_links.shape[0]
-        while n_duplicated > 0:
-            added_atac_samples = np.random.choice(atac_inds,size=(n_duplicated*2,))
-            added_rna_samples = np.random.choice(rna_inds,size=(n_duplicated*2,))
-            added_ctrl_links = np.vstack([added_atac_samples,added_rna_samples]).T
-            # append to existing
-            ctrl_links = np.vstack([ctrl_links,added_ctrl_links])
-            ctrl_links = np.unique(added_ctrl_links, axis=0)
-            n_duplicated = b - ctrl_links.shape[0]
+        if n_pairs < b:
+            raise ValueError(f"Not enough unique pairs: {n_pairs} available, {b} requested.")
 
-        ctrl_links = ctrl_links[:b,:]
+        # Randomly sample without replacement
+        selected_idx = np.random.choice(n_pairs, size=b, replace=False)
+        ctrl_links = all_pairs[selected_idx]
         ctrl_dic[str(pair[0]) + '_' + str(pair[1])] = ctrl_links
 
     if return_bins_df:
