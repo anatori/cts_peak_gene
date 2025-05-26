@@ -56,8 +56,10 @@ def null_peak_gene_pairs(rna, atac):
     return null_pairs
 
 
-def odds_ratio(y_arr, label_arr):
+def odds_ratio(y_arr, label_arr, return_table=False, smoothed=False, epsilon=1e-6):
 
+    # (tp * tn) / (fp * fn)
+    
     tp = np.sum((label_arr == 1) & y_arr)
     fp = np.sum((label_arr == 0) & y_arr)
     fn = np.sum((label_arr == 1) & ~y_arr)
@@ -65,8 +67,20 @@ def odds_ratio(y_arr, label_arr):
     table = [[tp, fp], [fn, tn]]
 
     stat, pval = sp.stats.fisher_exact(table)
+    
+    if ( np.isnan(stat)) and smoothed: # np.isinf(stat) or
+
+        tp_s = tp + epsilon
+        fp_s = fp + epsilon
+        fn_s = fn + epsilon
+        tn_s = tn + epsilon
+        stat = (tp_s * tn_s) / (fp_s * fn_s)
+
+    if return_table:
+        return table, stat, pval
 
     return stat, pval
+
 
 
 def contingency(link_list_sig, link_list_all, link_list_true):
