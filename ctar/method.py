@@ -136,126 +136,60 @@ def vectorized_poisson_regression(X, Y, max_iter=100, tol=1e-6):
     return beta0, beta1
 
 
-def vectorized_poisson_regression3(mat_x, mat_y, max_iter=100, tol=1e-6, flag_float32=True, flag_sparse=True, flag_div_float64=True):
-    """ Fast poisson regression using IRLS, adapted from Alistair
+def vectorized_poisson_regression_final(mat_x, mat_y, max_iter=100, tol=1e-6, flag_float32=True):
+    """ Fast poisson regression using IRLS, adapted from Alistair.
+    Using sparsity and optionally low precision.
 
     
-    Parameters:
-    - mat_x : Predictor matrix of shape (n_cell, n_ctrl)
-    - mat_y : Response vector of shape (n_cell,)
-    - max_iter : Maximum number of iterations
-    - tol : Convergence tolerance
-    
-    Returns:
-    - beta0 : Intercept coefficients of shape (n_ctrl,)
-    - beta1 : Slope coefficients of shape (n_ctrl,)
+    Parameters
+    ----------
+    mat_x : np.ndarray
+        Predictor matrix of shape (n_cell, n_pair).
+    mat_y : np.ndarray
+        Response vector of shape (n_cell,) or (n_cell, 1)
+    max_iter : int
+        Maximum number of iterations
+    tol : float
+        Convergence tolerance
+    flag_float32 : bool
+        Determines whether or not dtype will be converted to float32.
+
+    Returns
+    -------
+    v_beta0 : np.ndarray
+        Intercept coefficients of shape (n_pair,)
+    v_beta1 : np.ndarray
+        Slope coefficients of shape (n_pair,)
+
     """
-    # Start timing for the entire function
 
-    n_cell, n_ctrl = mat_x.shape # n_pair is clearer
+    n_cell, n_pair = mat_x.shape
     
     if flag_float32 is True:
         fct_dtype = np.float32
     else: 
         fct_dtype = float
-
-    mat_x = np.matrix(mat_x, dtype=fct_dtype)
-    mat_y = np.matrix(mat_y, dtype=fct_dtype)
-    
-    if mat_y.ndim == 1: 
-        mat_y_broad = mat_y.reshape(-1,1) # remove mat_y_broad variable, only use mat_y
-    else: # n_cell x n_pair matrix
-        mat_y_broad = mat_y
-    
-    v_beta0 = np.zeros(n_ctrl, dtype=fct_dtype)
-    v_beta1 = np.zeros(n_ctrl, dtype=fct_dtype)
-
-
-    # change mat_Y_broad from (N,) to (N,P)
-    mat_y_broad = np.repeat(mat_y_broad, n_ctrl, axis=1) # large operation, later may change to n_pair
-    
-    if flag_sparse is True:
-        mat_x = sp.sparse.csc_matrix(mat_x) 
-        mat_y_broad = sp.sparse.csc_matrix(mat_y_broad)
-
-    # double check that its compatible w both np matrix and scs matrix, e.g. line 267
-    for iteration in range(max_iter):
-        v_eta = mat_x.multiply(v_beta1) + v_beta0 # (n_cell, n_pair), mat_eta
-        v_mu = np.exp(v_eta) # (n_cell, n_pair)
-        # sum_w
-
-        v_z = v_eta + (mat_y_broad - v_mu) / v_mu # (n_cell, n_pair), mat_z, v_z to be v_eta
-        # sum_y
-        v_wx = mat_x.multiply(v_mu) # (n_cell, n_pair), mat_wx
-        # sum_x
-        # sum_xy
-        v_wx2 = mat_x.multiply(v_wx) # (n_cell, n_pair), v_wx2 to be v_wx
-
-        sum_w = v_mu.sum(axis=0)
-        sum_x = v_wx.sum(axis=0)
-        sum_y = np.multiply(v_mu,v_z).sum(axis=0)
-        sum_xy = v_wx.multiply(v_z).sum(axis=0)
-
-        if flag_div_float64:
-            denom = v_wx2.sum(axis=0) - np.divide(np.power(sum_x,2), sum_w, dtype=np.float64)
-        else:
-            denom = v_wx2.sum(axis=0) - (np.power(sum_x,2) / sum_w)
-
-        denom = np.maximum(denom, 1e-8)  # Avoid division by zero
-        
-        v_beta1_new = (sum_xy - np.multiply(sum_x,sum_y) / sum_w) / denom # convert to float32 after
-        v_beta0_new = (sum_y - np.multiply(v_beta1_new,sum_x)) / sum_w # convert to float32 after
-
-        if np.all(np.abs(v_beta1_new - v_beta1) < tol) and np.all(np.abs(v_beta0_new - v_beta0) < tol):
-            print(f"Converged after {iteration+1} iterations.")
-            break
-
-        # Update beta0 and beta1
-        v_beta0, v_beta1 = v_beta0_new, v_beta1_new  # Simpler variable update
-
-    return v_beta0, v_beta1
-
-
-def vectorized_poisson_regression_final(mat_x, mat_y, max_iter=100, tol=1e-6, flag_float32=True, flag_sparse=True):
-    """ Fast poisson regression using IRLS, adapted from Alistair
-
-    
-    Parameters:
-    - mat_x : Predictor matrix of shape (n_cell, n_pair)
-    - mat_y : Response vector of shape (n_cell,)
-    - max_iter : Maximum number of iterations
-    - tol : Convergence tolerance
-    
-    Returns:
-    - beta0 : Intercept coefficients of shape (n_pair,)
-    - beta1 : Slope coefficients of shape (n_pair,)
-    """
-    # Start timing for the entire function
-
-    n_cell, n_pair = mat_x.shape # n_pair is clearer
-    
-    if flag_float32 is True:
-        fct_dtype = np.float32
-    else: 
-        fct_dtype = float
-
-    mat_x = np.matrix(mat_x, dtype=fct_dtype)
-    mat_y = np.matrix(mat_y, dtype=fct_dtype)
     
     if mat_y.ndim == 1: 
         mat_y = mat_y.reshape(-1,1)
     
     v_beta0 = np.zeros(n_pair, dtype=fct_dtype)
     v_beta1 = np.zeros(n_pair, dtype=fct_dtype)
-
-    # change mat_y from (n_cell,) to (n_cell, n_pair)
-    mat_y = np.repeat(mat_y, n_pair, axis=1) # large operation, later may change to n_pair
     
-    if flag_sparse is True:
+    if not sp.sparse.issparse(mat_x):
         mat_x = sp.sparse.csc_matrix(mat_x) 
+    if not sp.sparse.issparse(mat_y):
         mat_y = sp.sparse.csc_matrix(mat_y)
 
-    # double check that its compatible w both np matrix and scs matrix, e.g. line 267
+    if mat_x.dtype != fct_dtype:
+        mat_x = mat_x.astype(fct_dtype)
+    if mat_y.dtype != fct_dtype:
+        mat_y = mat_y.astype(fct_dtype)
+
+    # change mat_y from (n_cell,) to (n_cell, n_pair) if single pair
+    if mat_y.shape[1] == 1:
+        mat_y = sp.sparse.hstack([mat_y] * n_pair)
+
     for iteration in range(max_iter):
 
         sum_xy = mat_x.multiply(v_beta1) + v_beta0 # (n_cell, n_pair)
