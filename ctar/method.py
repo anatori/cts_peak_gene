@@ -169,9 +169,7 @@ def vectorized_poisson_regression_final(mat_x, mat_y, max_iter=100, tol=1e-6, fl
         fct_dtype = np.float32
     else: 
         fct_dtype = float
-    
-    if mat_y.ndim == 1: 
-        mat_y = mat_y.reshape(-1,1)
+
     
     v_beta0 = np.zeros(n_pair, dtype=fct_dtype)
     v_beta1 = np.zeros(n_pair, dtype=fct_dtype)
@@ -186,6 +184,8 @@ def vectorized_poisson_regression_final(mat_x, mat_y, max_iter=100, tol=1e-6, fl
     if mat_y.dtype != fct_dtype:
         mat_y = mat_y.astype(fct_dtype)
 
+    if mat_y.ndim == 1: 
+        mat_y = mat_y.reshape(-1,1)
     # change mat_y from (n_cell,) to (n_cell, n_pair) if single pair
     if mat_y.shape[1] == 1:
         mat_y = sp.sparse.hstack([mat_y] * n_pair)
@@ -262,75 +262,84 @@ def gc_content(adata, col='gene_ids', genome_file='GRCh38.p13.genome.fa.bgz'):
     return gc
 
 
-def get_bins(adata, num_bins=5, type='mean', col='gene_ids', layer='atac_raw', genome_file=None):
+def sub_bin(df, group_col, val_col, num_sub_bins, out_col):
+    ''' Assigns nested bin labels within groups.
+    ''' 
 
+    for bin_i in df[group_col].unique():
+        inds = (df[group_col] == bin_i)
+        ranked = df.loc[inds, val_col].rank(method='first')
+        sub_bin_labels = pd.qcut(ranked, num_sub_bins, labels=False, duplicates='drop')
+        df.loc[inds, out_col] = [f"{int(bin_i)}.{int(x)}" for x in sub_bin_labels]
+
+    return df
+
+
+def get_bins(adata, num_bins=5, type='mean', col='gene_ids', layer='atac_raw', genome_file=None):
     ''' Obtains GC and MFA bins for adata peaks.
     
     Parameters
     ----------
     adata : ad.AnnData
-        AnnData
-    num_bins : int, ls
-        Number of desired bins for groupings. If multiple binning types, use list of num_bins.
-        First item in list will be used for number of mean bins.
-    col : str
-        Label for peak column.
-    layer : str
-        Layer in adata.layers corresponding to the matrix to base bins on.
+        AnnData object
+    num_bins : int or list of int
+        Number of desired bins. If list, first is for mean, second for sub-binning.
     type : str
-        Metric to base binning on. Options are ['mean','mean_var',or 'mean_gc'].
-    
+        Binning type. Options: ['mean', 'mean_var', 'mean_gc', 'cholesky'].
+    col : str
+        Column name in adata.var indicating peak ID.
+    layer : str
+        Name of adata layer with matrix values.
+    genome_file : str or None
+        Path to genome file, required for GC calculations.
+        
     Returns
-    ----------
-    bins : pd.DataFrame
-        DataFrame of length (N) with columns [col,'index_z',type]
-    
+    -------
+    pd.DataFrame
+        DataFrame with peak binning information.
     '''
 
-    # start emtpy df
     bins = pd.DataFrame()
-    # duplicated peaks will be in the same bin
-    # to avoid this, filter them out first
     unique = ~adata.var.duplicated(subset=col)
 
-    # Obtain mfa and gc content
-    bins[col] = adata.var[col][unique]
-    # accessing by row is faster
+    bins[col] = adata.var[col][unique].values
     adata.var['index_z'] = range(len(adata.var))
-    bins['ind'] = adata.var.index_z[unique]
-    # only take the unique peak info
-    sparse_X = adata[:,unique].layers[layer]
+    bins['ind'] = adata.var.loc[unique, 'index_z'].values
 
-    # regardless of type, need mean
+    sparse_X = adata[:, unique].layers[layer]
     bins['mean'] = sparse_X.mean(axis=0).A1
     print('Mean done.')
-    if isinstance(num_bins, list):
-        mean_num_bins = num_bins[0]
-        alt_num_bins = num_bins[1]
-    else:
-        mean_num_bins = num_bins
-    # combine into bins
+
+    mean_num_bins = num_bins[0] if isinstance(num_bins, list) else num_bins
+    alt_num_bins = num_bins[1] if isinstance(num_bins, list) else None
     bins['mean_bin'] = pd.qcut(bins['mean'].rank(method='first'), mean_num_bins, labels=False, duplicates="drop")
 
     if type == 'mean_var':
-        e_squared = sparse_X.power(2).mean(axis=0).A1
-        bins['var'] = e_squared - bins['mean'].values ** 2
+        e2 = sparse_X.power(2).mean(axis=0).A1
+        bins['var'] = e2 - bins['mean'] ** 2
         print('Var done.')
         bins['mean_var_bin'] = ''
-        for bin_i in bins['mean_bin'].unique():
-            inds_select = (bins.mean_bin == bin_i)
-            var_bin = pd.qcut(bins.loc[inds_select,'var'].rank(method='first'), alt_num_bins, labels=False, duplicates="drop")
-            bins.loc[inds_select,'mean_var_bin'] = ['%d.%d' % (bin_i, x) for x in var_bin]
+        bins = sub_bin(bins, 'mean_bin', 'var', alt_num_bins, 'mean_var_bin')
 
     elif type == 'mean_gc':
-        bins['gc'] = gc_content(adata[:,unique], col=col, genome_file=genome_file)
+        bins['gc'] = gc_content(adata[:, unique], col=col, genome_file=genome_file)
         print('GC done.')
-        # also add gc bin
-        bins['mean_var_bin'] = ''
-        for bin_i in bins['mean_bin'].unique():
-            inds_select = (bins.mean_bin == bin_i)
-            gc_bin = pd.qcut(bins.loc[inds_select,'gc'].rank(method='first'), alt_num_bins, labels=False, duplicates="drop")
-            bins.loc[inds_select,'mean_gc_bin'] = ['%d.%d' % (bin_i, x) for x in gc_bin]
+        bins['mean_gc_bin'] = ''
+        bins = sub_bin(bins, 'mean_bin', 'gc', alt_num_bins, 'mean_gc_bin')
+
+    elif type == 'cholesky':
+        bins['sum'] = sparse_X.sum(axis=0).A1
+        bins['log_sum'] = np.log10(bins['sum'] + 1e-10)
+        bins['gc'] = gc_content(adata[:, unique], col='peak', genome_file=genome_file)
+
+        norm_mat = bins[['log_sum', 'gc']].values.T
+        chol_cov = sp.linalg.cholesky(np.cov(norm_mat))
+        trans_mat = np.linalg.solve(chol_cov, norm_mat)
+        bins[['chol_log_sum', 'chol_gc']] = trans_mat.T
+
+        bins['chol_log_sum_bin'] = pd.qcut(bins['chol_log_sum'].rank(method='first'), mean_num_bins, labels=False, duplicates='drop')
+        bins['chol_log_sum_gc_bin'] = ''
+        bins = sub_bin(bins, 'chol_log_sum_bin', 'chol_gc', alt_num_bins, 'chol_log_sum_gc_bin')
 
     return bins
 
