@@ -173,10 +173,19 @@ def vectorized_poisson_regression_final(mat_x, mat_y, max_iter=100, tol=1e-6, fl
     
     v_beta0 = np.zeros(n_pair, dtype=fct_dtype)
     v_beta1 = np.zeros(n_pair, dtype=fct_dtype)
+
+    # change mat_y from (n_cell,) to (n_cell, n_pair) if single pair
+    if mat_y.shape[1] == 1:
+        # if we repeat the sparse array, it can greatly slow performance
+        # (concatenated sparse vectors are not optimized for sparsity)
+        if sp.sparse.issparse(mat_y) is True:
+            mat_y = np.repeat(mat_y.toarray(), n_pair, axis=1)
+        else:
+            mat_y = np.repeat(mat_y, n_pair, axis=1)
     
-    if not sp.sparse.issparse(mat_x):
+    if sp.sparse.issparse(mat_x) is False:
         mat_x = sp.sparse.csc_matrix(mat_x) 
-    if not sp.sparse.issparse(mat_y):
+    if sp.sparse.issparse(mat_y) is False:
         mat_y = sp.sparse.csc_matrix(mat_y)
 
     if mat_x.dtype != fct_dtype:
@@ -186,9 +195,7 @@ def vectorized_poisson_regression_final(mat_x, mat_y, max_iter=100, tol=1e-6, fl
 
     if mat_y.ndim == 1: 
         mat_y = mat_y.reshape(-1,1)
-    # change mat_y from (n_cell,) to (n_cell, n_pair) if single pair
-    if mat_y.shape[1] == 1:
-        mat_y = sp.sparse.hstack([mat_y] * n_pair)
+
 
     for iteration in range(max_iter):
 
@@ -283,7 +290,7 @@ def get_bins(adata, num_bins=5, type='mean', col='gene_ids', layer='atac_raw', g
     adata : ad.AnnData
         AnnData object
     num_bins : int or list of int
-        Number of desired bins. If list, first is for mean, second for sub-binning.
+        Number of desired bins. If list, first is for sub-binning, second for mean.
     type : str
         Binning type. Options: ['mean', 'mean_var', 'mean_gc', 'cholesky'].
     col : str
@@ -310,8 +317,8 @@ def get_bins(adata, num_bins=5, type='mean', col='gene_ids', layer='atac_raw', g
     bins['mean'] = sparse_X.mean(axis=0).A1
     print('Mean done.')
 
-    mean_num_bins = num_bins[0] if isinstance(num_bins, list) else num_bins
-    alt_num_bins = num_bins[1] if isinstance(num_bins, list) else None
+    alt_num_bins = num_bins[0] if isinstance(num_bins, list) else None
+    mean_num_bins = num_bins[1] if isinstance(num_bins, list) else num_bins
     bins['mean_bin'] = pd.qcut(bins['mean'].rank(method='first'), mean_num_bins, labels=False, duplicates="drop")
 
     if type == 'mean_var':
@@ -327,19 +334,19 @@ def get_bins(adata, num_bins=5, type='mean', col='gene_ids', layer='atac_raw', g
         bins['mean_gc_bin'] = ''
         bins = sub_bin(bins, 'mean_bin', 'gc', alt_num_bins, 'mean_gc_bin')
 
-    elif type == 'cholesky':
+    elif type == 'chol_logsum_gc':
         bins['sum'] = sparse_X.sum(axis=0).A1
-        bins['log_sum'] = np.log10(bins['sum'] + 1e-10)
+        bins['logsum'] = np.log10(bins['sum'] + 1e-10)
         bins['gc'] = gc_content(adata[:, unique], col='peak', genome_file=genome_file)
 
-        norm_mat = bins[['log_sum', 'gc']].values.T
+        norm_mat = bins[['logsum', 'gc']].values.T
         chol_cov = sp.linalg.cholesky(np.cov(norm_mat))
         trans_mat = np.linalg.solve(chol_cov, norm_mat)
-        bins[['chol_log_sum', 'chol_gc']] = trans_mat.T
+        bins[['chol_logsum', 'chol_gc']] = trans_mat.T
 
-        bins['chol_log_sum_bin'] = pd.qcut(bins['chol_log_sum'].rank(method='first'), mean_num_bins, labels=False, duplicates='drop')
-        bins['chol_log_sum_gc_bin'] = ''
-        bins = sub_bin(bins, 'chol_log_sum_bin', 'chol_gc', alt_num_bins, 'chol_log_sum_gc_bin')
+        bins['chol_logsum_bin'] = pd.qcut(bins['chol_logsum'].rank(method='first'), mean_num_bins, labels=False, duplicates='drop')
+        bins['chol_logsum_gc_bin'] = ''
+        bins = sub_bin(bins, 'chol_logsum_bin', 'chol_gc', alt_num_bins, 'chol_logsum_gc_bin')
 
     return bins
 
