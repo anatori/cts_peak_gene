@@ -277,7 +277,7 @@ def sub_bin(df, group_col, val_col, num_sub_bins, out_col):
         inds = (df[group_col] == bin_i)
         ranked = df.loc[inds, val_col].rank(method='first')
         sub_bin_labels = pd.qcut(ranked, num_sub_bins, labels=False, duplicates='drop')
-        df.loc[inds, out_col] = [f"{int(bin_i)}.{int(x)}" for x in sub_bin_labels]
+        df.loc[inds, out_col] = [f"{int(x)}.{int(bin_i)}" for x in sub_bin_labels]
 
     return df
 
