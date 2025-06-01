@@ -294,7 +294,7 @@ def extract_range(filename):
         return (int(match.group(1)), int(match.group(2)))
     return (0, 0)  # return if no match is found
 
-def consolidate_null(path,startswith = 'pearsonr_ctrl_',b=101):
+def consolidate_null(path,startswith = 'pearsonr_ctrl_',b=101,remove_empty=True):
     '''Consolidate null arrays from batch job into single numpy array file.
 
     Parameters
@@ -303,6 +303,10 @@ def consolidate_null(path,startswith = 'pearsonr_ctrl_',b=101):
         Path containing input files.
     startswith : str
         Prefix for all input files.
+    b : int
+        Max length along axis 1.
+    remove_empty : bool
+        Determines whether to remove empty arrays or not.
     
     Returns
     ----------
@@ -319,6 +323,9 @@ def consolidate_null(path,startswith = 'pearsonr_ctrl_',b=101):
     consolidated_null = []
     for x in sorted_filenames[0:b]:
         arr = np.load(path + x)
+        if remove_emtpy:
+            if arr.size != 0:
+                continue
         consolidated_null.append(arr)
     consolidated_null = np.vstack(consolidated_null)
     print('Array shape:',consolidated_null.shape)
