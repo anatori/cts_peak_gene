@@ -412,7 +412,7 @@ def create_ctrl_peaks(adata,num_bins=5,b=1000,type='mean',peak_col='gene_ids',la
     layer : str
         Layer in adata.layers corresponding to the matrix to base bins on.
     type : str
-        Metric to base binning on. Options are ['mean','mean_var','mean_value','mean_gc'].
+        Metric to base binning on. Options are ['mean','mean_var','mean_value','mean_gc', 'chol_logsum_gc'].
     
     Returns
     ----------
