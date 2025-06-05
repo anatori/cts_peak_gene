@@ -3,17 +3,17 @@
 # FILE: /projects/zhanglab/users/ana/cts_peak_gene/experiments/job.pearsoncorr/pearsonr.sh
 
 MULTIOME_FILE=/projects/zhanglab/users/ana/multiome/processed/neurips_bmmc/bmmc.h5mu
-LINKS_FILE=/projects/zhanglab/users/ana/multiome/temp/pearsonr_tests_eqtl_additional/eval_df.csv
-TARGET_PATH=/projects/zhanglab/users/ana/multiome/temp/pearsonr_tests_eqtl_additional
+LINKS_FILE=/projects/zhanglab/users/ana/multiome/simulations/pearsonr/eqtl/eval_df.csv
+TARGET_PATH=/projects/zhanglab/users/ana/multiome/simulations/pearsonr/eqtl
 GENOME_FILE=/projects/zhanglab/users/ana/bedtools2/ana_bedfiles/ref/GRCh38.p14.genome.fa.bgz
-BIN_CONFIG='1.1.inf.inf.10000'
+BIN_CONFIG='1.1.20.20.100000'
 BIN_TYPE='mean_var'
 PYBEDTOOLS_PATH=/projects/zhanglab/users/ana/bedtools2/bin
 BATCH_SIZE=100
 
 echo "Beginning $BIN_CONFIG create_ctrl job..."
 # Submit create_ctrl and capture job ID
-CTRL_JOB_ID=$(sbatch -p mzhang -t 1-00:00:00 --mem=80Gb -o /home/asprieto/logs/create_ctrl_%J.err -J "ctrl_$BIN_CONFIG" --wait --parsable --wrap " \
+sbatch -p mzhang,pool1 -t 1-00:00:00 --mem=100Gb -o /home/asprieto/logs/create_ctrl_%J.err -J "ctrl_$BIN_CONFIG" --wait --parsable --wrap " \
 source ~/.bashrc && \
 conda activate ctar && \
 python /projects/zhanglab/users/ana/cts_peak_gene/CLI_ctar.py \
@@ -24,7 +24,7 @@ python /projects/zhanglab/users/ana/cts_peak_gene/CLI_ctar.py \
     --genome_file $GENOME_FILE \
     --binning_config $BIN_CONFIG \
     --binning_type $BIN_TYPE \
-    --pybedtools_path $PYBEDTOOLS_PATH")
+    --pybedtools_path $PYBEDTOOLS_PATH"
 
 # Count control link files
 TOTAL_NUM_BIN=$(find "$TARGET_PATH/ctrl_peaks/ctrl_links_$BIN_CONFIG" -type f | wc -l)
@@ -56,7 +56,7 @@ echo "Found $TOTAL_NUM_BIN control files. Submitting $TOTAL_NUM_BATCHES batch jo
 
 echo "Submitting $BIN_CONFIG compute_corr job..."
 # Submit compute_corr job
-sbatch -p mzhang -t 1-00:00:00 --mem=80Gb $ARRAY_OPT --mail-type=END --mail-user=asprieto@andrew.cmu.edu \
+sbatch -p mzhang,pool1 -t 1-00:00:00 -x compute-1-1 --mem=32Gb $ARRAY_OPT --mail-type=END --mail-user=asprieto@andrew.cmu.edu \
   -o /home/asprieto/logs/compute_corr_%A_%a.err -J "corr_$BIN_CONFIG" --wrap " \
   source ~/.bashrc && \
   conda activate ctar && \
@@ -64,7 +64,7 @@ sbatch -p mzhang -t 1-00:00:00 --mem=80Gb $ARRAY_OPT --mail-type=END --mail-user
       --job compute_corr \
       --multiome_file $MULTIOME_FILE \
       --batch_size $BATCH_SIZE \
-      --batch \$SLURM_ARRAY_TASK_ID \
+      --batch_id \$SLURM_ARRAY_TASK_ID \
       --links_file $LINKS_FILE \
       --target_path $TARGET_PATH \
       --binning_config $BIN_CONFIG \
