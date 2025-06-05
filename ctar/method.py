@@ -277,7 +277,7 @@ def sub_bin(df, group_col, val_col, num_sub_bins, out_col):
         inds = (df[group_col] == bin_i)
         ranked = df.loc[inds, val_col].rank(method='first')
         sub_bin_labels = pd.qcut(ranked, num_sub_bins, labels=False, duplicates='drop')
-        df.loc[inds, out_col] = [f"{int(x)}.{int(bin_i)}" for x in sub_bin_labels]
+        df.loc[inds, out_col] = [f"{int(bin_i)}.{int(x)}" for x in sub_bin_labels]
 
     return df
 
@@ -290,7 +290,7 @@ def get_bins(adata, num_bins=5, type='mean', col='gene_ids', layer='atac_raw', g
     adata : ad.AnnData
         AnnData object
     num_bins : int or list of int
-        Number of desired bins. If list, first is for sub-binning, second for mean.
+        Number of desired bins. If list, first is for mean, second for sub-binning.
     type : str
         Binning type. Options: ['mean', 'mean_var', 'mean_gc', 'cholesky'].
     col : str
@@ -317,8 +317,8 @@ def get_bins(adata, num_bins=5, type='mean', col='gene_ids', layer='atac_raw', g
     bins['mean'] = sparse_X.mean(axis=0).A1
     print('Mean done.')
 
-    alt_num_bins = num_bins[0] if isinstance(num_bins, list) else None
-    mean_num_bins = num_bins[1] if isinstance(num_bins, list) else num_bins
+    mean_num_bins = num_bins[0] if isinstance(num_bins, list) else num_bins
+    alt_num_bins = num_bins[1] if isinstance(num_bins, list) else None
     bins['mean_bin'] = pd.qcut(bins['mean'].rank(method='first'), mean_num_bins, labels=False, duplicates="drop")
 
     if type == 'mean_var':
@@ -726,7 +726,7 @@ def binned_mcpval(
     # create dictionary for controls
     poiss_grp_dic = {
         re.findall(pattern, f)[0]: np.load(os.path.join(path, f))
-        for f in poiss_grp_files
+        for f in tqdm(poiss_grp_files)
     }
 
     gt_bins = eval_df.copy()
