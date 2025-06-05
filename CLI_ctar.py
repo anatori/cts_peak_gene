@@ -43,13 +43,16 @@ def main(args):
     JOB = args.job
     MULTIOME_FILE = args.multiome_file
     BATCH_SIZE = int(args.batch_size)
-    BATCH = int(args.batch)
+    BATCH_ID = int(args.batch_id)
+    BATCH_OFFSET = int(args.batch_offset)
     LINKS_FILE = args.links_file
     TARGET_PATH = args.target_path
     GENOME_FILE = args.genome_file
     BIN_CONFIG = args.binning_config
     BIN_TYPE = args.binning_type
     PYBEDTOOLS_PATH = args.pybedtools_path
+
+    BATCH = BATCH_ID + BATCH_OFFSET
 
     # Parse and check arguments
     LEGAL_JOB_LIST = [
@@ -80,6 +83,8 @@ def main(args):
     header += "--job %s\\\n" % JOB
     header += "--multiome_file %s\\\n" % MULTIOME_FILE
     header += "--batch_size %s\\\n" % BATCH_SIZE
+    header += "--batch_id %s\\\n" % BATCH_ID
+    header += "--batch_offset %s\\\n" % BATCH_OFFSET
     header += "--batch %s\\\n" % BATCH
     header += "--links_file %s\\\n" % LINKS_FILE
     header += "--target_path %s\\\n" % TARGET_PATH
@@ -118,11 +123,16 @@ def main(args):
         else:
             raise ValueError("LINKS_FILE must be .tsv or .csv")
         eval_df = pd.read_csv(LINKS_FILE, sep=sep, index_col=0)
-        links_arr = eval_df.values.T
+        # Convert to ENSEMBL gene ID
+        if eval_df.gene.str.startswith('ENSG').all():
+            adata_rna.var['gene'] = adata_rna.var.gene_id
+            adata_rna.var.index = adata_rna.var.gene_id
+        links_arr = eval_df[['peak','gene']].values.T
 
         # Setting bin config
-        n_atac_gc, n_atac_mean, n_rna_mean, n_rna_var, n_ctrl = BIN_CONFIG.split('.')
-        n_atac_gc, n_atac_mean, n_ctrl = map(int, [n_atac_gc, n_atac_mean, n_ctrl])
+        # Order: MEAN.GC.MEAN.VAR
+        n_atac_mean, n_atac_gc, n_rna_mean, n_rna_var, n_ctrl = BIN_CONFIG.split('.')
+        n_atac_mean, n_atac_gc, n_ctrl = map(int, [n_atac_mean, n_atac_gc, n_ctrl])
 
         # Setting corr destination path
         corr_path = os.path.join(TARGET_PATH, 'ctrl_corr')
@@ -140,10 +150,10 @@ def main(args):
             atac_bins = n_atac_mean # only depends on mean
         if BIN_TYPE == 'cholesky':
             atac_type = 'chol_logsum_gc'
-            atac_bins = [n_atac_gc, n_atac_mean]
+            atac_bins = [n_atac_mean, n_atac_gc]
         else:
             atac_type = 'mean_gc'
-            atac_bins = [n_atac_gc, n_atac_mean]
+            atac_bins = [n_atac_mean, n_atac_gc]
 
     ###########################################################################################
     ######                                  Computation                                  ######
@@ -184,10 +194,10 @@ def main(args):
             atac_bins_df.index = atac_bins_df.peak
             rna_bins_df.index = rna_bins_df.gene
 
-            eval_df[f'atac_{atac_type}_bin_{n_atac_gc}.{n_atac_mean}'] = eval_df.peak.map(atac_bins_df[f'{atac_type}_bin'].to_dict())
+            eval_df[f'atac_{atac_type}_bin_{n_atac_mean}.{n_atac_gc}'] = eval_df.peak.map(atac_bins_df[f'{atac_type}_bin'].to_dict())
             eval_df[f'rna_mean_var_bin_{n_rna_mean}.{n_rna_var}'] = eval_df.gene.map(rna_bins_df['mean_var_bin'].to_dict())
-            eval_df[f'combined_bin_{BIN_CONFIG}'] = eval_df[f'atac_{atac_type}_bin_{n_atac_gc}.{n_atac_mean}'].astype(str) + '_' + eval_df[f'rna_mean_var_bin_{n_rna_mean}.{n_rna_var}'].astype(str)
-            eval_df.to_csv(os.path.join(TARGET_PATH, 'eval_df.tsv'), sep='\t')
+            eval_df[f'combined_bin_{BIN_CONFIG}'] = eval_df[f'atac_{atac_type}_bin_{n_atac_mean}.{n_atac_gc}'].astype(str) + '_' + eval_df[f'rna_mean_var_bin_{n_rna_mean}.{n_rna_var}'].astype(str)
+            eval_df.to_csv(LINKS_FILE, sep=sep)
 
             unique_bins =  eval_df[f'combined_bin_{BIN_CONFIG}'].unique()
             if len(os.listdir(final_ctrl_path)) < len(unique_bins):
@@ -210,7 +220,7 @@ def main(args):
         if os.path.exists(final_corr_path) is False:
             os.makedirs(final_corr_path)
 
-        if n_rna_mean == 'inf':
+        if f'{n_rna_mean}.{n_rna_var}' == 'inf.inf':
 
             ctrl_peaks = np.load(os.path.join(ctrl_path, f'ctrl_peaks_{BIN_CONFIG}.npy'))
             adata_atac.varm['ctrl_peaks'] = ctrl_peaks[:, :n_ctrl]
@@ -231,7 +241,9 @@ def main(args):
                 print(f"# Saving pearsonr_ctrl_{start}_{end}.npy to {final_corr_path}")
                 np.save(os.path.join(final_corr_path, f'pearsonr_ctrl_{start}_{end}.npy'), np.array(ctrl_pearsonr))
 
-            if BATCH == last_batch:
+            curr_n_files = len(os.listdir(final_corr_path))
+            if curr_n_files == (last_batch + 1):
+                print(f"# All {curr_n_files} batches complete. Consolidating null")
                 full_ctrl_pearsonr = ctar.data_loader.consolidate_null(final_corr_path + '/', startswith = 'pearsonr_ctrl_', b=last_batch+1)
                 np.save(os.path.join(corr_path, f'ctrl_corr_{BIN_CONFIG}.npy'), full_ctrl_pearsonr)
 
@@ -261,7 +273,8 @@ if __name__ == "__main__":
     parser.add_argument("--job", type=str, required=True, help="create_ctrl, compute_pr")
     parser.add_argument("--multiome_file", type=str, required=True, default=None)
     parser.add_argument("--batch_size", type=str, required=False, default='100')
-    parser.add_argument("--batch", type=str, required=False, default='0')
+    parser.add_argument("--batch_id", type=str, required=False, default='0')
+    parser.add_argument("--batch_offset", type=str, required=False, default='0', help="offset for batch calculation")
     parser.add_argument("--links_file", type=str, required=True, default=None)
     parser.add_argument("--target_path", type=str, required=True, default=None)
     parser.add_argument(
