@@ -294,7 +294,28 @@ def extract_range(filename):
         return (int(match.group(1)), int(match.group(2)))
     return (0, 0)  # return if no match is found
 
-def consolidate_null(path,startswith = 'pearsonr_ctrl_',b=101,remove_empty=True):
+
+def check_missing_intervals(sorted_filenames):
+    ''' Helper function for consolidate_null. Check if any missing files
+    according to sorted interval.
+    '''
+    missing_intervals = []
+    prev_end = None
+    for i, fname in enumerate(sorted_filenames):
+        start, end = extract_range(fname)
+        if prev_end is not None and start != prev_end:
+            missing_intervals.append((prev_end, start, i))
+        prev_end = end
+    
+    if missing_intervals:
+        print("Missing intervals detected:")
+        for interval in missing_intervals:
+            print(f"  [{interval[2]}] Missing interval: {interval[0]} to {interval[1]}")
+
+    return missing_intervals
+
+
+def consolidate_null(path,startswith = 'pearsonr_ctrl_',b=101,remove_empty=True,print_missing=False):
     '''Consolidate null arrays from batch job into single numpy array file.
 
     Parameters
@@ -319,12 +340,15 @@ def consolidate_null(path,startswith = 'pearsonr_ctrl_',b=101,remove_empty=True)
 
     # sort the filenames based on the extracted ranges
     sorted_filenames = sorted(null_arrs, key=extract_range)
+    
+    if print_missing:
+        missing_intervals = check_missing_intervals(sorted_filenames)
 
     consolidated_null = []
     for x in sorted_filenames[0:b]:
         arr = np.load(path + x)
-        if remove_emtpy:
-            if arr.size != 0:
+        if remove_empty:
+            if arr.size == 0:
                 continue
         consolidated_null.append(arr)
     consolidated_null = np.vstack(consolidated_null)
