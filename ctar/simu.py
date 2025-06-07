@@ -82,6 +82,31 @@ def odds_ratio(y_arr, label_arr, return_table=False, smoothed=False, epsilon=1e-
     return stat, pval
 
 
+def enrichment(scores, pvals, top_n, smoothed=False, epsilon=1e-6):
+
+    ''' ( sum(scores of top nlinks) / top nlinks ) / ( sum(scores of all links) / all links )
+
+    Parameters
+    ----------
+    scores : np.array
+        Array of scores from ground truth data.
+    pvals : np.array
+        Array of p-values from method.
+    top_n : int
+        Number of top smallest p-values to consider true.
+
+    Returns
+    -------
+    enrichment : float
+    
+    '''
+    
+    numerator = np.argsort(pvals)
+    numerator = np.sum(scores[numerator][:top_n]) / top_n
+    denominator = np.sum(scores) / len(scores)
+
+    return numerator / denominator
+
 
 def contingency(link_list_sig, link_list_all, link_list_true):
     """Score links based on the gold/silver standard set.
