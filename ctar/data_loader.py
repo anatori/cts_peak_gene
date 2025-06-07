@@ -315,6 +315,28 @@ def check_missing_intervals(sorted_filenames):
     return missing_intervals
 
 
+def check_missing_bins(ctrl_path, corr_path, prefix = 'pearsonr_'):
+    '''  Check if any results are missing from corr_path based on 
+    available control bins in ctrl_path.
+    '''
+
+    corr_file = os.listdir(corr_path)
+    ctrl_file = os.listdir(ctrl_path)
+
+    missing_bins = []
+    for f in ctrl_file:
+        str_f = prefix + f
+        if str_f not in corr_file:
+            missing_bins.append(f)
+
+    if missing_bins:
+        print("Missing bins detected:")
+        for bin_ in missing_bins:
+            print(f"  Missing bin: {bin_}")
+
+    return missing_bins
+
+
 def consolidate_null(path,startswith = 'pearsonr_ctrl_',b=101,remove_empty=True,print_missing=False):
     '''Consolidate null arrays from batch job into single numpy array file.
 
