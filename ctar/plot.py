@@ -7,6 +7,7 @@ import warnings
 import anndata as ad
 import muon as mu
 from mpl_toolkits.axes_grid1.inset_locator import inset_axes
+import matplotlib.patches as mpatches
 import matplotlib as mpl
 from scipy.stats import poisson, nbinom
 
@@ -508,4 +509,110 @@ def add_sig_vs_multiple_references_staggered_global_fdr(
                 )
 
                 current_y = text_y + fontsize_gap + text_gap
+
+
+def add_sig_vs_multiple_references_staggered_global_fdr(
+    ax, odds_data, corrected_pval_lookup,
+    focal_methods, alpha=0.2,
+    line_gap=0.05,
+    text_gap=0.03,
+    fontsize=8,
+    fontsize_gap=2,
+    line_color='grey',
+    add_legend=True
+):
+    """
+    Annotates significance comparisons for multiple focal methods with FDR-corrected p-values,
+    using significance stars instead of text labels.
+
+    Parameters:
+        ax : matplotlib axis
+        odds_data : pd.DataFrame [n_links x methods]
+        corrected_pval_lookup : dict[(focal_method, n_link, comparison_method)] = (raw_p, corr_p)
+        focal_methods : list of methods to use as references
+        alpha : maximum corrected p-value threshold to annotate
+        add_legend : whether to add a legend for star thresholds
+    """
+
+    def get_sig_stars(p):
+        """Return significance stars based on corrected p-value."""
+        if p < 0.01:
+            return '****'
+        elif p < 0.05:
+            return '***'
+        elif p < 0.1:
+            return '**'
+        elif p < 0.2:
+            return '*'
+        else:
+            return None
+
+    num_groups = odds_data.shape[0]
+    bar_centers = get_bar_centers_grouped(ax, odds_data)
+    drawn_pairs = set()
+
+    for i, n_link in enumerate(odds_data.index):
+        tops = odds_data.loc[n_link]
+        base_y = tops.max()
+        current_y = base_y + line_gap
+
+        for focal_method in focal_methods:
+            for comp_method in odds_data.columns:
+                if comp_method == focal_method:
+                    continue
+
+                pair_key = tuple(sorted([focal_method, comp_method]))
+                pair_id = (n_link, pair_key)
+                if pair_id in drawn_pairs:
+                    continue
+                drawn_pairs.add(pair_id)
+
+                key = (focal_method, n_link, comp_method)
+                if key not in corrected_pval_lookup:
+                    continue
+
+                _, corr_p = corrected_pval_lookup[key]
+                stars = get_sig_stars(corr_p)
+
+                if not stars:
+                    continue
+
+                x1 = bar_centers[comp_method][i]
+                x2 = bar_centers[focal_method][i]
+
+                line_top = current_y + line_gap
+                ax.plot([x1, x1, x2, x2], [current_y, line_top, line_top, current_y], c=line_color, lw=1.2)
+
+                text_y = line_top + text_gap
+                ax.text(
+                    (x1 + x2) / 2, text_y,
+                    stars,
+                    ha='center', va='bottom', fontsize=fontsize
+                )
+
+                current_y = text_y + fontsize_gap * 0.01 + text_gap
+
+    # Add legend for stars if requested
+    if add_legend:
+        # 1. Existing handles/labels from the current plot (e.g., method colors)
+        existing_handles, existing_labels = ax.get_legend_handles_labels()
+
+        # 2. Add star significance explanations
+        star_legend_items = [
+            ('****', 'p < 0.01'),
+            ('***', 'p < 0.05'),
+            ('**',  'p < 0.1'),
+            ('*',   'p < 0.2')
+        ]
+
+        star_handles = [
+            mpatches.Patch(facecolor='none', edgecolor='none', label='**** : p < 0.01'),
+            mpatches.Patch(facecolor='none', edgecolor='none', label='*** : p < 0.05'),
+            mpatches.Patch(facecolor='none', edgecolor='none', label='** : p < 0.1'),
+            mpatches.Patch(facecolor='none', edgecolor='none', label='* : p < 0.2'),
+        ]
+        return star_handles
+        
+    else:
+        return []
 
