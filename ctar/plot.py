@@ -534,15 +534,15 @@ def add_sig_vs_multiple_references_staggered_global_fdr(
         add_legend : whether to add a legend for star thresholds
     """
 
-    def get_sig_stars(p):
+    def get_sig_stars(q):
         """Return significance stars based on corrected p-value."""
-        if p < 0.01:
+        if q < 0.01:
             return '****'
-        elif p < 0.05:
+        elif q < 0.05:
             return '***'
-        elif p < 0.1:
+        elif q < 0.1:
             return '**'
-        elif p < 0.2:
+        elif q < 0.2:
             return '*'
         else:
             return None
@@ -599,17 +599,17 @@ def add_sig_vs_multiple_references_staggered_global_fdr(
 
         # 2. Add star significance explanations
         star_legend_items = [
-            ('****', 'p < 0.01'),
-            ('***', 'p < 0.05'),
-            ('**',  'p < 0.1'),
-            ('*',   'p < 0.2')
+            ('****', 'FDR < 0.01'),
+            ('***', 'FDR < 0.05'),
+            ('**',  'FDR < 0.1'),
+            ('*',   'FDR < 0.2')
         ]
 
         star_handles = [
-            mpatches.Patch(facecolor='none', edgecolor='none', label='**** : p < 0.01'),
-            mpatches.Patch(facecolor='none', edgecolor='none', label='*** : p < 0.05'),
-            mpatches.Patch(facecolor='none', edgecolor='none', label='** : p < 0.1'),
-            mpatches.Patch(facecolor='none', edgecolor='none', label='* : p < 0.2'),
+            mpatches.Patch(facecolor='none', edgecolor='none', label='**** : FDR < 0.01'),
+            mpatches.Patch(facecolor='none', edgecolor='none', label='*** : FDR < 0.05'),
+            mpatches.Patch(facecolor='none', edgecolor='none', label='** : FDR < 0.1'),
+            mpatches.Patch(facecolor='none', edgecolor='none', label='* : FDR < 0.2'),
         ]
         return star_handles
         
