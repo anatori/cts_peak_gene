@@ -4,6 +4,8 @@ import scipy as sp
 import matplotlib.pyplot as plt
 import statsmodels.api as sm
 from statsmodels.discrete.discrete_model import NegativeBinomial
+from statsmodels.stats.multitest import multipletests
+from tqdm import tqdm
 
 
 def null_peak_gene_pairs(rna, atac):
@@ -177,6 +179,175 @@ def test_overlap(list1, list2, list_background):
         or_ub = np.exp(np.log(oddsratio) + 1.96 * se_log_or)
         or_lb = np.exp(np.log(oddsratio) - 1.96 * se_log_or)
         return pvalue, oddsratio, or_ub, or_lb
+
+
+def analyze_odds_ratio_bootstrap(eval_df, nlinks_ls=None, n_bs_samples=1000):
+    """
+    Perform odds ratio analysis with bootstrap confidence intervals
+    for multiple p-value methods in a DataFrame.
+
+    Parameters
+    ----------
+    eval_df: pd.DataFrame
+      DataFrame containing 'label' column and p-value columns.
+    nlinks_ls: list of int, optional
+      List of numbers of links to consider. Default: [500, 1000, 1500, 2000, 2500]
+    n_bs_samples: int, optional
+      Number of bootstrap samples to use. Default: 1000
+
+    Returns
+    ----------
+    odds_df, pval_df, lower_ci_df, upper_ci_df, std_ci_df: pd.DataFrame
+      DataFrames containing the computed statistics indexed by `nlinks_ls`
+      and columns as methods.
+    """
+
+    if nlinks_ls is None:
+        nlinks_ls = [500, 1000, 1500, 2000, 2500]
+
+    methods = [s for s in eval_df.columns if 'pval' in s]
+
+    limit_dic = {
+        method: (eval_df[method] == eval_df[method].min()).sum()
+        for method in methods if 'mc' in method
+    }
+
+    bs_dic = {n: {m: [] for m in methods} for n in nlinks_ls}
+
+    results_shape = (len(nlinks_ls), len(methods))
+    odds_arr = np.full(results_shape, np.nan)
+    pval_arr = np.full(results_shape, np.nan)
+    lower_ci_arr = np.full(results_shape, np.nan)
+    upper_ci_arr = np.full(results_shape, np.nan)
+    std_ci_arr = np.full(results_shape, np.nan)
+
+    bootstrap_idx = np.random.randint(0, len(eval_df), size=(n_bs_samples, len(eval_df)))
+    label_arr = eval_df['label'].values
+
+    for mi, method in enumerate(tqdm(methods)):
+        pval_arr_col = eval_df[method].values
+        sorted_idx = np.argsort(pval_arr_col)
+
+        for ni, nlinks in enumerate(nlinks_ls):
+            y_score = np.zeros(len(eval_df), dtype=bool)
+            y_score[sorted_idx[:nlinks]] = True
+
+            stat, pval = odds_ratio(y_score, label_arr)
+            odds_arr[ni, mi] = stat
+            pval_arr[ni, mi] = pval
+
+            if method in limit_dic and nlinks < limit_dic[method]:
+                odds_arr[ni, mi] = np.nan
+                pval_arr[ni, mi] = np.nan
+                continue
+
+            bs_stats = np.zeros(n_bs_samples)
+            for i in range(n_bs_samples):
+                bs_idx = bootstrap_idx[i]
+                bs_y_score = y_score[bs_idx]
+                bs_label = label_arr[bs_idx]
+
+                stat, _ = odds_ratio(bs_y_score, bs_label)
+                bs_stats[i] = stat
+
+            bs_dic[nlinks][method] = bs_stats
+            lower_ci_arr[ni, mi], upper_ci_arr[ni, mi] = np.percentile(bs_stats, [2.5, 97.5])
+            std_ci_arr[ni, mi] = np.std(bs_stats)
+
+    odds_df = pd.DataFrame(odds_arr, index=nlinks_ls, columns=methods)
+    pval_df = pd.DataFrame(pval_arr, index=nlinks_ls, columns=methods)
+    lower_ci_df = pd.DataFrame(lower_ci_arr, index=nlinks_ls, columns=methods)
+    upper_ci_df = pd.DataFrame(upper_ci_arr, index=nlinks_ls, columns=methods)
+    std_ci_df = pd.DataFrame(std_ci_arr, index=nlinks_ls, columns=methods)
+
+    for df in [odds_df, pval_df, lower_ci_df, upper_ci_df, std_ci_df]:
+        df.index.name = 'nlinks'
+
+    return odds_df, pval_df, lower_ci_df, upper_ci_df, std_ci_df
+
+
+def compute_pairwise_delta_or_with_fdr(selected_methods, bs_dic, odds_df, nlinks_ls):
+    """
+    Compare methods pairwise using bootstrap distributions of odds ratios.
+
+    Parameters
+    ----------
+    selected_methods: list of str
+      Methods to include in the pairwise comparisons.
+    bs_dic: dict
+      Dictionary of bootstrap samples: bs_dic[nlinks][method] -> np.array
+    odds_df: pd.DataFrame
+      DataFrame with odds ratios from the main analysis.
+    nlinks_ls: list of int
+      List of `nlinks` values used in the main analysis.
+
+    Returns
+    ----------
+    corrected_pval_lookup: dict
+      {(focal_method, nlink, comparison_method): (raw_pval, corrected_pval)}
+    all_delta_or_data: dict
+      Focal method -> array of delta ORs (focal - comparator)
+    all_yerr: dict
+      Focal method -> array of 1.96 * std deviation of bootstrap differences
+    """
+
+    all_pvals = []
+    meta_info = []
+
+    all_delta_or_data = {}
+    all_yerr = {}
+
+    for method in selected_methods:
+        focal_method = method
+        comparison_methods = [m for m in selected_methods if m != method]
+
+        delta_std_ci_df = pd.DataFrame(index=nlinks_ls, columns=comparison_methods)
+        delta_mean_ci_df = pd.DataFrame(index=nlinks_ls, columns=comparison_methods)
+
+        for key in nlinks_ls:
+            for m in comparison_methods:
+                delta_or = bs_dic[key][focal_method] - bs_dic[key][m]
+                delta_std_ci_df.loc[key, m] = np.std(delta_or)
+                delta_mean_ci_df.loc[key, m] = np.mean(delta_or)
+
+        std_vals = delta_std_ci_df.values.T.astype(float)
+        mean_vals = delta_mean_ci_df.values.T.astype(float)
+
+        # Compute uncorrected p-values using z-test
+        z = mean_vals / std_vals
+        pvals = 2 * (1 - sp.stats.norm.cdf(np.abs(z)))
+
+        # Store raw p-values and metadata
+        for i, m in enumerate(comparison_methods):
+            for j, key in enumerate(nlinks_ls):
+                all_pvals.append(pvals[i, j])
+                meta_info.append((focal_method, key, m))
+
+        # Store for visualization or further processing
+        delta_or = (
+            odds_df.loc[nlinks_ls, focal_method].values.reshape(-1, 1) -
+            odds_df.loc[nlinks_ls, comparison_methods].values
+        )
+        all_delta_or_data[focal_method] = delta_or
+        all_yerr[focal_method] = std_vals * 1.96
+
+    # Global FDR correction
+    all_pvals_arr = np.array(all_pvals)
+    pvals_corrected_all = np.array(all_pvals)
+    rej, pvals_corrected, _, _ = multipletests(
+        all_pvals_arr[~np.isnan(all_pvals_arr)],
+        alpha=0.05,
+        method='fdr_bh'
+    )
+    pvals_corrected_all[~np.isnan(all_pvals_arr)] = pvals_corrected
+
+    # Lookup dictionary for corrected p-values
+    corrected_pval_lookup = {
+        (focal, key, comp): (raw, corr)
+        for (focal, key, comp), raw, corr in zip(meta_info, all_pvals, pvals_corrected_all)
+    }
+
+    return corrected_pval_lookup, all_delta_or_data, all_yerr
 
 
 class ZeroInflatedPoisson:
