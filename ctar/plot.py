@@ -10,6 +10,7 @@ from mpl_toolkits.axes_grid1.inset_locator import inset_axes
 import matplotlib.patches as mpatches
 import matplotlib as mpl
 from scipy.stats import poisson, nbinom
+from matplotlib.container import BarContainer
 
 
 # custom func from https://stackoverflow.com/questions/7404116/defining-the-midpoint-of-a-colormap-in-matplotlib
@@ -371,6 +372,98 @@ def get_bar_centers_grouped(ax, odds_data):
     return bar_centers
 
 
+def plot_delta_or_with_significance(
+    focal_method,
+    selected_comparison_methods,
+    all_delta_or_data,
+    all_yerr,
+    corrected_pval_lookup,
+    nlinks_ls,
+    selected_methods,
+    title_suffix="",
+    alpha_threshold=0.3,
+    figsize=(15, 5)
+):
+    """
+    Plot delta odds ratios with error bars and FDR-corrected significance annotations.
+
+    Parameters
+    ----------
+    focal_method: str
+      The method used as the focal point for comparison.
+    selected_comparison_methods: list of str
+      Subset of methods to include in the comparison plot.
+    all_delta_or_data: dict
+      Output from bootstrap comparison function (focal -> delta OR array).
+    all_yerr: dict
+      Error bars dictionary (focal -> std deviations * 1.96).
+    corrected_pval_lookup: dict
+      (focal, nlink, comparison) -> (raw_pval, corrected_pval).
+    nlinks_ls: list of int
+      List of `nlinks` values for x-axis indexing.
+    selected_methods: list of str
+      Full list of methods, needed for column alignment.
+    title_suffix: str, optional
+      Additional text for the plot title.
+    alpha_threshold: float, optional
+      FDR threshold to annotate p-values. Default is 0.3.
+    figsize: tuple, optional
+      Size of the plot.
+    """
+
+    comparison_methods = [m for m in selected_comparison_methods if m != focal_method]
+    yerr = all_yerr[focal_method]
+
+    delta_or_df = pd.DataFrame(
+        data=all_delta_or_data[focal_method],
+        index=nlinks_ls,
+        columns=[m for m in selected_methods if m != focal_method]
+    )
+
+    ax = delta_or_df[comparison_methods].plot(
+        kind='bar',
+        figsize=figsize,
+        yerr=yerr,
+        width=0.7
+    )
+
+    # Build bar labels from p-values
+    labels = []
+    for comp in comparison_methods:
+        for key in nlinks_ls:
+            raw, corr = corrected_pval_lookup.get((focal_method, key, comp), (np.nan, np.nan))
+            if corr < alpha_threshold:
+                labels.append(f"{raw:.3g}\n({corr:.3g})")
+            else:
+                labels.append("")
+
+    # Annotate bars
+    label_idx = 0
+    for container in ax.containers:
+        if isinstance(container, BarContainer):
+            num_bars = len(container)
+            if label_idx + num_bars <= len(labels):
+                ax.bar_label(
+                    container,
+                    labels=labels[label_idx:label_idx + num_bars],
+                    fmt='%s',
+                    bbox=dict(boxstyle='round,pad=0.1',
+                              facecolor='white', edgecolor='grey', linewidth=0.5),
+                    label_type='edge',
+                    fontsize=8
+                )
+                label_idx += num_bars
+
+    ymin, ymax = ax.get_ylim()
+    ax.set_ylim(ymin * 1.05, ymax * 1.05)
+    ax.set_xlabel('top_nlinks')
+    ax.set_ylabel('delta_OR')
+    ax.set_title(f'delta_OR ({focal_method} - others){title_suffix}')
+    ax.legend(loc='lower right')
+    plt.tight_layout()
+    plt.show()
+
+
 def add_sig_vs_reference_staggered_global_fdr(
     ax, odds_data, yerr_upper, corrected_pval_lookup,
     focal_method, ref_idx, alpha=0.05,
@@ -382,7 +475,8 @@ def add_sig_vs_reference_staggered_global_fdr(
     """
     Annotates significance comparisons against a reference method with FDR-corrected p-values.
 
-    Parameters:
+    Parameters
+    ----------
         ax : matplotlib axis
         odds_data : pd.DataFrame [n_links x methods]
         yerr_upper : pd.DataFrame [n_links x methods]
@@ -454,7 +548,8 @@ def add_sig_vs_multiple_references_staggered_global_fdr(
     """
     Annotates significance comparisons for multiple focal methods with FDR-corrected p-values.
 
-    Parameters:
+    Parameters
+    ----------
         ax : matplotlib axis
         odds_data : pd.DataFrame [n_links x methods]
         yerr_upper : pd.DataFrame [n_links x methods]
@@ -525,7 +620,8 @@ def add_sig_vs_multiple_references_staggered_global_fdr(
     Annotates significance comparisons for multiple focal methods with FDR-corrected p-values,
     using significance stars instead of text labels.
 
-    Parameters:
+    Parameters
+    ----------
         ax : matplotlib axis
         odds_data : pd.DataFrame [n_links x methods]
         corrected_pval_lookup : dict[(focal_method, n_link, comparison_method)] = (raw_p, corr_p)
