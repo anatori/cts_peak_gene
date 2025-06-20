@@ -197,7 +197,7 @@ def analyze_odds_ratio_bootstrap(eval_df, nlinks_ls=None, n_bs_samples=1000):
 
     Returns
     ----------
-    odds_df, pval_df, lower_ci_df, upper_ci_df, std_ci_df: pd.DataFrame
+    odds_df, pval_df, lower_ci_df, upper_ci_df, std_ci_df, bs_dic: pd.DataFrame
       DataFrames containing the computed statistics indexed by `nlinks_ls`
       and columns as methods.
     """
@@ -263,7 +263,102 @@ def analyze_odds_ratio_bootstrap(eval_df, nlinks_ls=None, n_bs_samples=1000):
     for df in [odds_df, pval_df, lower_ci_df, upper_ci_df, std_ci_df]:
         df.index.name = 'nlinks'
 
-    return odds_df, pval_df, lower_ci_df, upper_ci_df, std_ci_df
+    return odds_df, pval_df, lower_ci_df, upper_ci_df, std_ci_df, bs_dic
+
+
+def split_by_chromosome(df,col='peak',sep=':'):
+    ''' Return categorical variables of chromosomes.
+    '''
+    return df[col].str.split(sep).str[0].astype('category').values
+
+
+def analyze_odds_ratio_jacknife(eval_df, categorical_arr, nlinks_arr=None):
+    """
+    Perform odds ratio analysis with jacknife confidence intervals by
+    chromosome blocks for multiple p-value methods in a DataFrame.
+
+    Parameters
+    ----------
+    eval_df: pd.DataFrame
+      DataFrame containing 'label' column and p-value columns.
+    categorical_arr : np.array
+      Array of values for 
+    nlinks_arr: np.array of int, optional
+      Array of numbers of links to consider. Default: [500, 1000, 1500, 2000, 2500]
+
+    Returns
+    ----------
+    odds_df, pval_df, lower_ci_df, upper_ci_df, std_ci_df, jn_dic: pd.DataFrame
+      DataFrames containing the computed statistics indexed by `nlinks_arr`
+      and columns as methods.
+    """
+
+    if nlinks_arr is None:
+        nlinks_arr = np.array([500, 1000, 1500, 2000, 2500])
+
+    methods = [s for s in eval_df.columns if 'pval' in s]
+
+    limit_dic = {
+        method: (eval_df[method] == eval_df[method].min()).sum()
+        for method in methods if 'mc' in method
+    }
+
+    jn_dic = {n: {m: [] for m in methods} for n in nlinks_arr}
+
+    results_shape = (len(nlinks_arr), len(methods))
+    odds_arr = np.full(results_shape, np.nan)
+    pval_arr = np.full(results_shape, np.nan)
+    lower_ci_arr = np.full(results_shape, np.nan)
+    upper_ci_arr = np.full(results_shape, np.nan)
+    std_ci_arr = np.full(results_shape, np.nan)
+
+    label_arr = eval_df['label'].values
+
+    for mi, method in enumerate(tqdm(methods)):
+        pval_arr_col = eval_df[method].values
+        sorted_idx = np.argsort(pval_arr_col)
+
+        for ni, nlinks in enumerate(nlinks_arr):
+            y_score = np.zeros(len(eval_df), dtype=bool)
+            y_score[sorted_idx[:nlinks]] = True
+
+            odds_arr[ni, mi], pval_arr[ni, mi] = odds_ratio(y_score, label_arr)
+
+            if method in limit_dic and nlinks < limit_dic[method]:
+                odds_arr[ni, mi] = np.nan
+                pval_arr[ni, mi] = np.nan
+                continue
+
+            blocks_arr = np.unique(categorical_arr)
+            n_blocks = len(blocks_arr)
+            ratio_arr = np.zeros(n_blocks)
+            jn_stats = np.zeros(n_blocks)
+
+            for bi,block in enumerate(blocks_arr):
+                ind = np.argwhere(categorical_arr != block).flatten()
+                jn_y_score = y_score[ind]
+                jn_label = label_arr[ind]
+
+                jn_stats[bi], _ = odds_ratio(jn_y_score, jn_label)
+                ratio_arr[bi] = nlinks / sum(ind)
+            
+            tau = ratio_arr * odds_arr[ni,mi] - (ratio_arr - 1) * jn_stats
+            jn_estimates = np.sum(odds_arr[ni,mi] - jn_stats) + np.sum((1/ratio_arr) * jn_stats)
+
+            jn_dic[nlinks][method] = jn_stats
+            lower_ci_arr[ni, mi], upper_ci_arr[ni, mi] = np.percentile(jn_stats, [2.5, 97.5])
+            std_ci_arr[ni, mi] = (1/n_blocks) * np.sum((tau - jn_estimates)**2 / (ratio_arr - 1))
+
+    odds_df = pd.DataFrame(odds_arr, index=nlinks_arr, columns=methods)
+    pval_df = pd.DataFrame(pval_arr, index=nlinks_arr, columns=methods)
+    lower_ci_df = pd.DataFrame(lower_ci_arr, index=nlinks_arr, columns=methods)
+    upper_ci_df = pd.DataFrame(upper_ci_arr, index=nlinks_arr, columns=methods)
+    std_ci_df = pd.DataFrame(std_ci_arr, index=nlinks_arr, columns=methods)
+
+    for df in [odds_df, pval_df, lower_ci_df, upper_ci_df, std_ci_df]:
+        df.index.name = 'nlinks'
+
+    return odds_df, pval_df, lower_ci_df, upper_ci_df, std_ci_df, jn_dic
 
 
 def compute_pairwise_delta_or_with_fdr(selected_methods, bs_dic, odds_df, nlinks_ls):
