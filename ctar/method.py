@@ -224,7 +224,7 @@ def vectorized_poisson_regression_final(mat_x, mat_y, max_iter=100, tol=1e-6, fl
         # Update beta0 and beta1
         v_beta0, v_beta1 = v_beta0_new, v_beta1_new  # Simpler variable update
 
-    return v_beta0, v_beta1
+    return np.asarray(v_beta0), np.asarray(v_beta1)
 
 
 
