@@ -2,6 +2,7 @@ import pytest
 import numpy as np
 import pandas as pd
 import anndata as ad
+import scipy as sp
 import ctar
 
 
@@ -14,7 +15,7 @@ def load_toy_data():
         [2, 3, 12, 22, 101],
         [3, 4, 14, 24, 102]
     ], dtype=float)
-    var_df = pd.DataFrame({'gene_ids': peak_ids})
+    var_df = pd.DataFrame({'gene_ids': peak_ids}, index=peak_ids)
     adata = ad.AnnData(X=data_matrix.copy(), var=var_df.copy())
     adata.layers['atac_raw'] = sp.sparse.csr_matrix(data_matrix.copy())
     # Expected means: (1+2+3)/3=2, (2+3+4)/3=3, (10+12+14)/3=12, (20+22+24)/3=22, (100+101+102)/3=101

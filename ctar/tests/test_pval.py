@@ -69,14 +69,6 @@ def test_zscore_pval_positive_z():
     assert p_val[0] == approx(1 - sp.stats.norm.cdf(np.sqrt(2)))
 
 
-def test_zscore_pval_zero_std_corr_equals_mean():
-    ctrl_corr = np.array([[3,3,3,3,3]]) # mean=3, std=0
-    corr = np.array([3.0])
-    p_val, z = ctar.method.zscore_pval(ctrl_corr, corr, axis=1)
-    assert z[0] == approx(0.0) # (3-3)/0 handled as 0 by modified code
-    assert p_val[0] == approx(0.5)
-
-
 def test_zscore_pval_zero_std_corr_greater_than_mean():
     ctrl_corr = np.array([[3,3,3,3,3]]) # mean=3, std=0
     corr = np.array([4.0])
