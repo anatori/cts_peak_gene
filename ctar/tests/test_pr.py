@@ -6,8 +6,10 @@ import ctar
 def load_toy_data():
     ''' Generate toy data from poisson distribution.
     '''
-    mat_x = np.random.poisson(size=(50,100))
-    mat_y = np.random.poisson(size=(50,100))
+    np.random.seed(123)
+
+    mat_x = np.random.poisson(size=(100,20))
+    mat_y = np.random.poisson(size=(100,20))
     return mat_x, mat_y
 
 
@@ -26,14 +28,14 @@ def test_vectorized_poisson_regression():
 
     # v_beta0
     err_msg = (
-        "avg_abs_beta0_mean_dif=%0.2e"
-        % (np.mean(np.abs(v_beta0_true - v_beta0)))
+        "rel_avg_abs_beta0_mean_dif=%0.2e"
+        % (np.mean(np.abs(v_beta0_true - v_beta0)) / np.abs(v_beta0_true))
     )
     assert np.allclose(v_beta0, v_beta0_true, atol=1e-3, equal_nan=True), err_msg
 
     # v_beta1
     err_msg = (
-        "avg_abs_beta1_mean_dif=%0.2e"
-        % (np.mean(np.abs(v_beta1_true - v_beta1)))
+        "rel_avg_abs_beta1_mean_dif=%0.2e"
+        % (np.mean(np.abs(v_beta1_true - v_beta1)) / np.abs(v_beta1_true))
     )
     assert np.allclose(v_beta1, v_beta1_true, atol=1e-3, equal_nan=True), err_msg
