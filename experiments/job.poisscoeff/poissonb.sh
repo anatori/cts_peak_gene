@@ -11,21 +11,21 @@ BIN_TYPE='mean_var'
 PYBEDTOOLS_PATH=/projects/zhanglab/users/ana/bedtools2/bin
 BATCH_SIZE=100
 
-echo "Beginning $BIN_CONFIG create_ctrl job..."
-# Submit create_ctrl and capture job ID
-sbatch -p mzhang,pool1 -t 1-00:00:00 --mem=100Gb -o /home/asprieto/logs/create_ctrl_%J.err -J "ctrl_$BIN_CONFIG" --wait --wrap " \
-source ~/.bashrc && \
-conda activate ctar && \
-python /projects/zhanglab/users/ana/cts_peak_gene/CLI_ctar.py \
-    --job create_ctrl \
-    --multiome_file $MULTIOME_FILE \
-    --links_file $LINKS_FILE \
-    --target_path $TARGET_PATH \
-    --genome_file $GENOME_FILE \
-    --binning_config $BIN_CONFIG \
-    --binning_type $BIN_TYPE \
-    --pybedtools_path $PYBEDTOOLS_PATH \
-    --method pr" 
+# echo "Beginning $BIN_CONFIG create_ctrl job..."
+# # Submit create_ctrl and capture job ID
+# sbatch -p mzhang,pool1 -t 1-00:00:00 --mem=100Gb -o /home/asprieto/logs/create_ctrl_%J.err -J "ctrl_$BIN_CONFIG" --wait --wrap " \
+# source ~/.bashrc && \
+# conda activate ctar && \
+# python /projects/zhanglab/users/ana/cts_peak_gene/CLI_ctar.py \
+#     --job create_ctrl \
+#     --multiome_file $MULTIOME_FILE \
+#     --links_file $LINKS_FILE \
+#     --target_path $TARGET_PATH \
+#     --genome_file $GENOME_FILE \
+#     --binning_config $BIN_CONFIG \
+#     --binning_type $BIN_TYPE \
+#     --pybedtools_path $PYBEDTOOLS_PATH \
+#     --method pr" 
 
 # Count control link files
 TOTAL_NUM_BIN=$(find "$TARGET_PATH/ctrl_peaks/ctrl_links_$BIN_CONFIG" -type f | wc -l)
@@ -58,7 +58,7 @@ echo "Found $TOTAL_NUM_BIN control files. Submitting $TOTAL_NUM_BATCHES batch jo
 echo "Submitting $BIN_CONFIG compute_pr job..."
 # Submit compute_corr job
 sbatch -p mzhang,pool1 -t 1-00:00:00 -x compute-1-1 --mem=24Gb $ARRAY_OPT --mail-type=END --mail-user=asprieto@andrew.cmu.edu \
-  -o /home/asprieto/logs/compute_pr_%A_%a.err -J "corr_$BIN_CONFIG" --wrap " \
+  -o /home/asprieto/logs/compute_pr_%A_%a.err -J "pr_$BIN_CONFIG" --wrap " \
   source ~/.bashrc && \
   conda activate ctar && \
   python /projects/zhanglab/users/ana/cts_peak_gene/CLI_ctar.py \

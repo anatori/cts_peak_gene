@@ -63,6 +63,7 @@ def main(args):
     LEGAL_JOB_LIST = [
         "create_ctrl",
         "compute_corr",
+        "compute_pr"
     ]
     err_msg = "# CLI_ldspec: --job=%s not supported" % JOB
     assert JOB is not None, "--job required"
@@ -140,10 +141,10 @@ def main(args):
         n_atac_mean, n_atac_gc, n_rna_mean, n_rna_var, n_ctrl = BIN_CONFIG.split('.')
         n_atac_mean, n_atac_gc, n_ctrl = map(int, [n_atac_mean, n_atac_gc, n_ctrl])
 
-        if METHOD == 'pr':
+        if METHOD == 'pr' or JOB == 'compute_pr':
             # Setting corr destination path
             corr_path = os.path.join(TARGET_PATH, 'ctrl_poiss')
-        if METHOD == 'corr':
+        if METHOD == 'corr' or JOB == 'compute_corr':
             # Setting corr destination path
             corr_path = os.path.join(TARGET_PATH, 'ctrl_corr')
         # Setting peak source path
@@ -318,7 +319,7 @@ def main(args):
 
             ctrl_poissonb = []
             for i in range(end - start):
-                beta0, beta1 = ctar.method.vectorized_poisson_regression_final(adata_atac[:, ctrl_peaks[i]].layers['counts'], rna_data[:, [i]])
+                beta0, beta1 = ctar.method.vectorized_poisson_regression_final(adata_atac[:, ctrl_peaks[i]].layers['counts'], rna_data[:, [i]], tol=1e-3)
                 ctrl_poissonb.append(beta1.flatten())
 
             if len(ctrl_poissonb) > 0:
@@ -343,7 +344,7 @@ def main(args):
 
                 atac_data = adata_atac.layers['counts'][:, ctrl_links[:, 0]]
                 rna_data = adata_rna.layers['counts'][:, ctrl_links[:, 1]]
-                _, ctrl_poissonb = ctar.method.vectorized_poisson_regression_final(atac_data, rna_data)
+                _, ctrl_poissonb = ctar.method.vectorized_poisson_regression_final(atac_data, rna_data, tol=1e-3)
                 
                 print(f"# Saving poissonb_{os.path.basename(ctrl_file)} to {final_corr_path}")
                 np.save(os.path.join(final_corr_path, f'poissonb_{os.path.basename(ctrl_file)}'), ctrl_poissonb.flatten())
@@ -363,7 +364,7 @@ def main(args):
 
                     atac_data = adata_atac.layers['counts'][:, ctrl_links[:, 0]]
                     rna_data = adata_rna.layers['counts'][:, ctrl_links[:, 1]]
-                    _, ctrl_poissonb = ctar.method.vectorized_poisson_regression_final(atac_data, rna_data)
+                    _, ctrl_poissonb = ctar.method.vectorized_poisson_regression_final(atac_data, rna_data, tol=1e-3)
                     
                     print(f"# Saving poissonb_{os.path.basename(ctrl_file)} to {final_corr_path}")
                     np.save(os.path.join(final_corr_path, f'poissonb_{os.path.basename(ctrl_file)}'), ctrl_poissonb.flatten())
@@ -373,7 +374,7 @@ def main(args):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="ctar")
 
-    parser.add_argument("--job", type=str, required=True, help="create_ctrl, compute_pr")
+    parser.add_argument("--job", type=str, required=True, help="create_ctrl, compute_corr, compute_pr")
     parser.add_argument("--multiome_file", type=str, required=True, default=None)
     parser.add_argument("--batch_size", type=str, required=False, default='100')
     parser.add_argument("--batch_id", type=str, required=False, default='0')
@@ -392,8 +393,8 @@ if __name__ == "__main__":
     )
     parser.add_argument("--binning_type", type=str, required=False, default=None)
     parser.add_argument("--pybedtools_path", type=str, required=False, default=None)
-    parser.add_argument("--method", type=str, required=True, default=None,
-        help="pr or corr")
+    parser.add_argument("--method", type=str, required=False, default=None,
+        help="pr, corr")
 
     args = parser.parse_args()
     main(args)
