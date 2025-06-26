@@ -277,12 +277,16 @@ def analyze_odds_ratio_jacknife(eval_df, categorical_arr, nlinks_arr=None):
     Perform odds ratio analysis with jacknife confidence intervals by
     chromosome blocks for multiple p-value methods in a DataFrame.
 
+    From Nick Patterson notes on 
+    F.M.T.A. Busing, E. Meijer, and R. van der Leeden. 
+    Delete-m jackknife for unequal m. Statistics and Computing, 9:3–8, 1999.
+
     Parameters
     ----------
     eval_df: pd.DataFrame
       DataFrame containing 'label' column and p-value columns.
     categorical_arr : np.array
-      Array of values for 
+      Array of values corresponding to category to split on for jacknifing (e.g. loci blocks)
     nlinks_arr: np.array of int, optional
       Array of numbers of links to consider. Default: [500, 1000, 1500, 2000, 2500]
 
@@ -340,7 +344,7 @@ def analyze_odds_ratio_jacknife(eval_df, categorical_arr, nlinks_arr=None):
                 jn_label = label_arr[ind]
 
                 jn_stats[bi], _ = odds_ratio(jn_y_score, jn_label)
-                ratio_arr[bi] = nlinks / sum(ind)
+                ratio_arr[bi] = len(categorical_arr) / sum(categorical_arr == block)
             
             tau = ratio_arr * odds_arr[ni,mi] - (ratio_arr - 1) * jn_stats
             jn_estimates = np.sum(odds_arr[ni,mi] - jn_stats) + np.sum((1/ratio_arr) * jn_stats)
@@ -348,6 +352,7 @@ def analyze_odds_ratio_jacknife(eval_df, categorical_arr, nlinks_arr=None):
             jn_dic[nlinks][method] = jn_stats
             lower_ci_arr[ni, mi], upper_ci_arr[ni, mi] = np.percentile(jn_stats, [2.5, 97.5])
             std_ci_arr[ni, mi] = (1/n_blocks) * np.sum((tau - jn_estimates)**2 / (ratio_arr - 1))
+            std_ci_arr[ni, mi] = np.sqrt(std_ci_arr[ni, mi])
 
     odds_df = pd.DataFrame(odds_arr, index=nlinks_arr, columns=methods)
     pval_df = pd.DataFrame(pval_arr, index=nlinks_arr, columns=methods)
@@ -359,6 +364,166 @@ def analyze_odds_ratio_jacknife(eval_df, categorical_arr, nlinks_arr=None):
         df.index.name = 'nlinks'
 
     return odds_df, pval_df, lower_ci_df, upper_ci_df, std_ci_df, jn_dic
+
+
+def analyze_enrichment_bootstrap(eval_df, score_col='gt_pip', nlinks_ls=None, n_bs_samples=1000):
+    """
+    Perform odds ratio analysis with bootstrap confidence intervals
+    for multiple p-value methods in a DataFrame.
+
+    Parameters
+    ----------
+    eval_df: pd.DataFrame
+      DataFrame containing 'label' column and p-value columns.
+    score_col : str, optional
+      Column name for column containing evaluation scores.
+    nlinks_ls: list of int, optional
+      List of numbers of links to consider. Default: [500, 1000, 1500, 2000, 2500]
+    n_bs_samples: int, optional
+      Number of bootstrap samples to use. Default: 1000
+
+    Returns
+    ----------
+    odds_df, lower_ci_df, upper_ci_df, std_ci_df, bs_dic: pd.DataFrame
+      DataFrames containing the computed statistics indexed by `nlinks_ls`
+      and columns as methods.
+    """
+
+    if nlinks_ls is None:
+        nlinks_ls = [500, 1000, 1500, 2000, 2500]
+
+    methods = [s for s in eval_df.columns if 'pval' in s]
+
+    limit_dic = {
+        method: (eval_df[method] == eval_df[method].min()).sum()
+        for method in methods if 'mc' in method
+    }
+
+    bs_dic = {n: {m: [] for m in methods} for n in nlinks_ls}
+
+    results_shape = (len(nlinks_ls), len(methods))
+    enrich_arr = np.full(results_shape, np.nan)
+    lower_ci_arr = np.full(results_shape, np.nan)
+    upper_ci_arr = np.full(results_shape, np.nan)
+    std_ci_arr = np.full(results_shape, np.nan)
+
+    bootstrap_idx = np.random.randint(0, len(eval_df), size=(n_bs_samples, len(eval_df)))
+    score_arr = eval_df[score_col].values
+
+    for mi, method in enumerate(tqdm(methods)):
+        pval_arr_col = eval_df[method].values
+
+        for ni, nlinks in enumerate(nlinks_ls):
+
+            stat = enrichment(score_arr, pval_arr_col, nlinks)
+            enrich_arr[ni, mi] = stat
+
+            if method in limit_dic and nlinks < limit_dic[method]:
+                enrich_arr[ni, mi] = np.nan
+                continue
+
+            bs_stats = np.zeros(n_bs_samples)
+            for i in range(n_bs_samples):
+                bs_idx = bootstrap_idx[i]
+                stat = enrichment(score_arr[bs_idx], pval_arr_col[bs_idx], nlinks)
+                bs_stats[i] = stat
+
+            bs_dic[nlinks][method] = bs_stats
+            lower_ci_arr[ni, mi], upper_ci_arr[ni, mi] = np.percentile(bs_stats, [2.5, 97.5])
+            std_ci_arr[ni, mi] = np.std(bs_stats)
+
+    enrich_df = pd.DataFrame(enrich_arr, index=nlinks_ls, columns=methods)
+    lower_ci_df = pd.DataFrame(lower_ci_arr, index=nlinks_ls, columns=methods)
+    upper_ci_df = pd.DataFrame(upper_ci_arr, index=nlinks_ls, columns=methods)
+    std_ci_df = pd.DataFrame(std_ci_arr, index=nlinks_ls, columns=methods)
+
+    for df in [enrich_df, lower_ci_df, upper_ci_df, std_ci_df]:
+        df.index.name = 'nlinks'
+
+    return enrich_df, lower_ci_df, upper_ci_df, std_ci_df, bs_dic
+
+
+def analyze_enrichment_jacknife(eval_df, categorical_arr, score_col='gt_pip', nlinks_arr=None):
+    """
+    Perform odds ratio analysis with jacknife confidence intervals by
+    chromosome blocks for multiple p-value methods in a DataFrame.
+
+    Parameters
+    ----------
+    eval_df: pd.DataFrame
+      DataFrame containing 'label' column and p-value columns.
+    categorical_arr : np.array
+      Array of values corresponding to category to split on for jacknifing (e.g. loci blocks)
+    score_col : str, optional
+      Column name for column containing evaluation scores.
+    nlinks_arr: np.array of int, optional
+      Array of numbers of links to consider. Default: [500, 1000, 1500, 2000, 2500]
+
+    Returns
+    ----------
+    odds_df, lower_ci_df, upper_ci_df, std_ci_df, jn_dic: pd.DataFrame
+      DataFrames containing the computed statistics indexed by `nlinks_arr`
+      and columns as methods.
+    """
+
+    if nlinks_arr is None:
+        nlinks_arr = np.array([500, 1000, 1500, 2000, 2500])
+
+    methods = [s for s in eval_df.columns if 'pval' in s]
+
+    limit_dic = {
+        method: (eval_df[method] == eval_df[method].min()).sum()
+        for method in methods if 'mc' in method
+    }
+
+    jn_dic = {n: {m: [] for m in methods} for n in nlinks_arr}
+
+    results_shape = (len(nlinks_arr), len(methods))
+    enrich_arr = np.full(results_shape, np.nan)
+    lower_ci_arr = np.full(results_shape, np.nan)
+    upper_ci_arr = np.full(results_shape, np.nan)
+    std_ci_arr = np.full(results_shape, np.nan)
+
+    score_arr = eval_df[score_col].values
+
+    for mi, method in enumerate(tqdm(methods)):
+        pval_arr_col = eval_df[method].values
+
+        for ni, nlinks in enumerate(nlinks_arr):
+
+            enrich_arr[ni, mi] = enrichment(score_arr, pval_arr_col, nlinks)
+
+            if method in limit_dic and nlinks < limit_dic[method]:
+                enrich_arr[ni, mi] = np.nan
+                continue
+
+            blocks_arr = np.unique(categorical_arr)
+            n_blocks = len(blocks_arr)
+            ratio_arr = np.zeros(n_blocks)
+            jn_stats = np.zeros(n_blocks)
+
+            for bi,block in enumerate(blocks_arr):
+                ind = np.argwhere(categorical_arr != block).flatten()
+                jn_stats[bi] = enrichment(score_arr[ind], pval_arr_col[ind], nlinks)
+                ratio_arr[bi] = len(categorical_arr) / sum(categorical_arr == block)
+            
+            tau = ratio_arr * enrich_arr[ni,mi] - (ratio_arr - 1) * jn_stats
+            jn_estimates = np.sum(enrich_arr[ni,mi] - jn_stats) + np.sum((1/ratio_arr) * jn_stats)
+
+            jn_dic[nlinks][method] = jn_stats
+            lower_ci_arr[ni, mi], upper_ci_arr[ni, mi] = np.percentile(jn_stats, [2.5, 97.5])
+            std_ci_arr[ni, mi] = (1/n_blocks) * np.sum((tau - jn_estimates)**2 / (ratio_arr - 1))
+            std_ci_arr[ni, mi] = np.sqrt(std_ci_arr[ni, mi])
+
+    enrich_df = pd.DataFrame(enrich_arr, index=nlinks_arr, columns=methods)
+    lower_ci_df = pd.DataFrame(lower_ci_arr, index=nlinks_arr, columns=methods)
+    upper_ci_df = pd.DataFrame(upper_ci_arr, index=nlinks_arr, columns=methods)
+    std_ci_df = pd.DataFrame(std_ci_arr, index=nlinks_arr, columns=methods)
+
+    for df in [enrich_df, lower_ci_df, upper_ci_df, std_ci_df]:
+        df.index.name = 'nlinks'
+
+    return enrich_df, lower_ci_df, upper_ci_df, std_ci_df, jn_dic
 
 
 def compute_pairwise_delta_or_with_fdr(selected_methods, bs_dic, odds_df, nlinks_ls):
@@ -440,6 +605,248 @@ def compute_pairwise_delta_or_with_fdr(selected_methods, bs_dic, odds_df, nlinks
     corrected_pval_lookup = {
         (focal, key, comp): (raw, corr)
         for (focal, key, comp), raw, corr in zip(meta_info, all_pvals, pvals_corrected_all)
+    }
+
+    return corrected_pval_lookup, all_delta_or_data, all_yerr
+
+
+def analyze_odds_ratio_jacknife_bins(eval_df, binning_col, nlinks_ls=None):
+    """
+    Perform odds ratio analysis with jackknife confidence intervals for
+    multiple p-value methods within predefined bins in a DataFrame.
+
+    Parameters
+    ----------
+    eval_df: pd.DataFrame
+      DataFrame containing 'label' column, p-value columns, and the `binning_col`.
+    binning_col: str
+      Column name in `eval_df` used for defining bins (e.g., 'rna_mean_var_bin_5.5').
+    nlinks_ls: list of int, optional
+      List of numbers of links to consider. Default: [500, 1000, 1500, 2000, 2500]
+
+    Returns
+    ----------
+    odds_df_all_bins, pval_df_all_bins, lower_ci_df_all_bins, upper_ci_df_all_bins, std_ci_df_all_bins, jn_dic_all_bins: tuple of pd.DataFrame and dict
+      DataFrames containing the computed statistics indexed by `nlinks_ls` and columns as methods (multi-indexed by bin).
+      The `jn_dic_all_bins` stores the jackknife samples for each nlink, bin, and method.
+    """
+    if nlinks_ls is None:
+        nlinks_ls = [500, 1000, 1500, 2000, 2500]
+
+    methods = [s for s in eval_df.columns if 'pval' in s]
+    bins = eval_df[binning_col].sort_values().unique()
+
+    # Initialize dictionaries to store results for all bins
+    odds_results = {}
+    pval_results = {}
+    lower_ci_results = {}
+    upper_ci_results = {}
+    std_ci_results = {}
+    jn_dic_all_bins = {n: {b: {m: [] for m in methods} for b in bins} for n in nlinks_ls}
+
+    for mi, method in enumerate(methods):
+        method_odds_df = pd.DataFrame(index=nlinks_ls, columns=bins)
+        method_pval_df = pd.DataFrame(index=nlinks_ls, columns=bins)
+        method_lower_ci_df = pd.DataFrame(index=nlinks_ls, columns=bins)
+        method_upper_ci_df = pd.DataFrame(index=nlinks_ls, columns=bins)
+        method_std_ci_df = pd.DataFrame(index=nlinks_ls, columns=bins)
+
+        for bi, bin_val in enumerate(tqdm(bins, desc=f"Processing method {method}")):
+            eval_subset_df = eval_df.loc[eval_df[binning_col] == bin_val].copy()
+            
+            if eval_subset_df.empty:
+                continue
+
+            pval_arr_col = eval_subset_df[method].values
+            label_arr = eval_subset_df['label'].values
+            
+            # Use chromosome as categorical for jackknife within each bin
+            # Assuming 'peak' column exists in eval_df and can be used to derive chromosome.
+            categorical_arr_subset = split_by_chromosome(eval_subset_df, col='peak')
+
+            sorted_idx = np.argsort(pval_arr_col)
+            
+            # Limit dictionary for this subset
+            limit_dic_subset = {
+                method: (eval_subset_df[method] == eval_subset_df[method].min()).sum()
+                if 'mc' in method else 0
+            }
+
+            for ni, nlinks in enumerate(nlinks_ls):
+                y_score = np.zeros(len(eval_subset_df), dtype=bool)
+                y_score[sorted_idx[:nlinks]] = True
+
+                stat, pval = odds_ratio(y_score, label_arr, smoothed=True)
+                method_odds_df.loc[nlinks, bin_val] = stat
+                method_pval_df.loc[nlinks, bin_val] = pval
+
+                if method in limit_dic_subset and nlinks < limit_dic_subset[method]:
+                    method_odds_df.loc[nlinks, bin_val] = np.nan
+                    method_pval_df.loc[nlinks, bin_val] = np.nan
+                    method_lower_ci_df.loc[nlinks, bin_val] = np.nan
+                    method_upper_ci_df.loc[nlinks, bin_val] = np.nan
+                    method_std_ci_df.loc[nlinks, bin_val] = np.nan
+                    continue
+
+                blocks_arr = np.unique(categorical_arr_subset)
+                n_blocks = len(blocks_arr)
+                if n_blocks == 0: # Handle cases where a bin might have no data with chromosome info
+                    continue
+
+                jn_stats = np.zeros(n_blocks)
+
+                for block_idx, block in enumerate(blocks_arr):
+                    # Exclude the current block (chromosome) for jackknife sample
+                    ind = np.argwhere(categorical_arr_subset != block).flatten()
+                    
+                    if len(ind) == 0: # Ensure there's data left after exclusion
+                        jn_stats[block_idx] = np.nan # Or handle as appropriate
+                        continue
+
+                    jn_y_score = y_score[ind]
+                    jn_label = label_arr[ind]
+
+                    jn_stats[block_idx], _ = odds_ratio(jn_y_score, jn_label, smoothed=True)
+                
+                # Filter out NaN jackknife samples before calculating statistics
+                jn_stats_valid = jn_stats[~np.isnan(jn_stats)]
+                if len(jn_stats_valid) > 1: # Need at least 2 samples for std dev
+                    std_err_jackknife = np.sqrt(((len(jn_stats_valid) - 1) / len(jn_stats_valid)) * np.sum((jn_stats_valid - np.mean(jn_stats_valid))**2))
+                    method_lower_ci_df.loc[nlinks, bin_val] = stat - 1.96 * std_err_jackknife
+                    method_upper_ci_df.loc[nlinks, bin_val] = stat + 1.96 * std_err_jackknife
+                    method_std_ci_df.loc[nlinks, bin_val] = std_err_jackknife
+                else:
+                    method_lower_ci_df.loc[nlinks, bin_val] = np.nan
+                    method_upper_ci_df.loc[nlinks, bin_val] = np.nan
+                    method_std_ci_df.loc[nlinks, bin_val] = np.nan
+
+                jn_dic_all_bins[nlinks][bin_val][method] = jn_stats
+
+        odds_results[method] = method_odds_df
+        pval_results[method] = method_pval_df
+        lower_ci_results[method] = method_lower_ci_df
+        upper_ci_results[method] = method_upper_ci_df
+        std_ci_results[method] = method_std_ci_df
+    
+    # Combine results into multi-indexed DataFrames
+    odds_df_all_bins = pd.concat(odds_results, axis=1, keys=methods)
+    pval_df_all_bins = pd.concat(pval_results, axis=1, keys=methods)
+    lower_ci_df_all_bins = pd.concat(lower_ci_results, axis=1, keys=methods)
+    upper_ci_df_all_bins = pd.concat(upper_ci_results, axis=1, keys=methods)
+    std_ci_df_all_bins = pd.concat(std_ci_results, axis=1, keys=methods)
+
+    for df in [odds_df_all_bins, pval_df_all_bins, lower_ci_df_all_bins, upper_ci_df_all_bins, std_ci_df_all_bins]:
+        df.index.name = 'nlinks'
+        df.columns.names = ['method', binning_col]
+
+    return odds_df_all_bins, pval_df_all_bins, lower_ci_df_all_bins, upper_ci_df_all_bins, std_ci_df_all_bins, jn_dic_all_bins
+
+
+def compute_pairwise_delta_or_with_fdr_bins(
+    focal_method, comparison_method, nlinks_ls, bins, jn_dic_all_bins, odds_df_all_bins
+):
+    """
+    Compare two methods (focal and comparison) across different bins and nlinks values
+    using jackknife distributions of odds ratios, and apply FDR correction.
+
+    Parameters
+    ----------
+    focal_method : str
+        The name of the focal method.
+    comparison_method : str
+        The name of the comparison method.
+    nlinks_ls : list of int
+        List of nlinks values used in the analysis.
+    bins : list
+        List of unique bin values.
+    jn_dic_all_bins : dict
+        Dictionary containing jackknife samples for all nlinks, bins, and methods.
+        Format: jn_dic_all_bins[nlink][bin_val][method] -> np.array of jackknife samples.
+    odds_df_all_bins : pd.DataFrame
+        DataFrame with overall odds ratios for all methods and bins, multi-indexed.
+
+    Returns
+    -------
+    corrected_pval_lookup : dict
+        A dictionary mapping (bin, nlink) to a tuple of (raw_pval, corrected_pval).
+    all_delta_or_data : dict
+        A dictionary where keys are bin values and values are lists of delta ORs
+        (focal - comparison) for each nlink.
+    all_yerr : dict
+        A dictionary where keys are bin values and values are arrays of 1.96 * std deviation
+        of jackknife differences for each nlink.
+    """
+    all_pvals = []
+    meta_info = []
+
+    all_delta_or_data = {}
+    all_yerr = {}
+
+    for bi, bin_ in enumerate(tqdm(bins, desc="Computing delta ORs per bin")):
+        delta_mean_per_nlink = []
+        delta_std_per_nlink = []
+
+        for nlinks in nlinks_ls:
+            jn_focal = jn_dic_all_bins[nlinks][bin_][focal_method]
+            jn_comparison = jn_dic_all_bins[nlinks][bin_][comparison_method]
+
+            # Ensure both arrays are valid and have data
+            jn_focal_valid = jn_focal[~np.isnan(jn_focal)]
+            jn_comparison_valid = jn_comparison[~np.isnan(jn_comparison)]
+            
+            # For jackknife, the comparison is usually between the overall estimate and leave-one-out estimates
+            # For comparing two methods' jackknife distributions, we can approximate the standard error of the difference
+            # by assuming independence for large samples, or directly compute the differences of samples if they are paired.
+            # Assuming jackknife samples for each method within a bin are derived independently,
+            # the variance of the difference is the sum of variances.
+            # However, a simpler approach for a z-test based on jackknife standard errors is often used:
+            
+            if len(jn_focal_valid) > 1 and len(jn_comparison_valid) > 1:
+                # Calculate the difference of the *original* odds ratios for the mean
+                current_focal_or = odds_df_all_bins.loc[nlinks, (focal_method, bin_)]
+                current_comparison_or = odds_df_all_bins.loc[nlinks, (comparison_method, bin_)]
+                
+                delta_or_mean = current_focal_or - current_comparison_or
+
+                # Calculate the standard error of the odds ratios from jackknife for each method
+                # This uses the formula: SE(theta_hat) = sqrt(((n-1)/n) * sum((theta_i - theta_bar)^2))
+                # where theta_i are the jackknife estimates
+                std_err_focal = np.sqrt(((len(jn_focal_valid) - 1) / len(jn_focal_valid)) * np.sum((jn_focal_valid - np.mean(jn_focal_valid))**2))
+                std_err_comparison = np.sqrt(((len(jn_comparison_valid) - 1) / len(jn_comparison_valid)) * np.sum((jn_comparison_valid - np.mean(jn_comparison_valid))**2))
+                
+                # Standard error of the difference (assuming independence of methods)
+                std_err_delta = np.sqrt(std_err_focal**2 + std_err_comparison**2)
+
+                delta_mean_per_nlink.append(delta_or_mean)
+                delta_std_per_nlink.append(std_err_delta)
+
+                # Compute uncorrected p-value using z-test
+                z_score = delta_or_mean / (std_err_delta + 1e-10)
+                pval = 2 * (1 - sp.stats.norm.cdf(np.abs(z_score)))
+                all_pvals.append(pval)
+                meta_info.append((bin_, nlinks))
+            else:
+                delta_mean_per_nlink.append(np.nan)
+                delta_std_per_nlink.append(np.nan)
+                all_pvals.append(np.nan)
+                meta_info.append((bin_, nlinks)) # Still add meta info for NaN p-values
+
+        all_delta_or_data[bin_] = np.array(delta_mean_per_nlink)
+        all_yerr[bin_] = np.array(delta_std_per_nlink) * 1.96 # For 95% CI
+
+    # Global FDR correction
+    all_pvals_arr = np.array(all_pvals)
+    non_nan_pval_inds = np.argwhere(~np.isnan(all_pvals_arr)).flatten()
+    
+    pvals_corrected_arr = np.full(all_pvals_arr.shape, np.nan)
+    if len(non_nan_pval_inds) > 0:
+        rej, pvals_corrected, _, _ = multipletests(all_pvals_arr[non_nan_pval_inds], alpha=0.05, method='fdr_bh')
+        pvals_corrected_arr[non_nan_pval_inds] = pvals_corrected
+
+    # Build lookup for corrected and raw p-values
+    corrected_pval_lookup = {
+        (bin_val, nlink): (raw, corr)
+        for (bin_val, nlink), raw, corr in zip(meta_info, all_pvals_arr, pvals_corrected_arr)
     }
 
     return corrected_pval_lookup, all_delta_or_data, all_yerr
