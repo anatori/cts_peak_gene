@@ -382,7 +382,8 @@ def plot_delta_or_with_significance(
     selected_methods,
     title_type='OR',
     alpha_threshold=0.3,
-    figsize=(15, 5)
+    figsize=(15, 5),
+    color_dic=None,
 ):
     """
     Plot delta odds ratios with error bars and FDR-corrected significance annotations.
@@ -409,6 +410,8 @@ def plot_delta_or_with_significance(
       FDR threshold to annotate p-values. Default is 0.3.
     figsize: tuple, optional
       Size of the plot.
+    color_dic: dictionary, optional
+      Maps colors for each method.
     """
 
     comparison_methods = [m for m in selected_comparison_methods if m != focal_method]
@@ -420,7 +423,19 @@ def plot_delta_or_with_significance(
         columns=[m for m in selected_methods if m != focal_method]
     )
 
-    ax = delta_or_df[comparison_methods].plot(
+    if color_dic is not None:
+
+        ax = delta_or_df[comparison_methods].plot(
+            kind='bar',
+            figsize=figsize,
+            yerr=yerr,
+            width=0.7,
+            color=color_dic,
+        )
+    
+    else:
+
+        ax = delta_or_df[comparison_methods].plot(
         kind='bar',
         figsize=figsize,
         yerr=yerr,
