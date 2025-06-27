@@ -380,7 +380,7 @@ def plot_delta_or_with_significance(
     corrected_pval_lookup,
     nlinks_ls,
     selected_methods,
-    title_suffix="",
+    title_type='OR',
     alpha_threshold=0.3,
     figsize=(15, 5)
 ):
@@ -403,8 +403,8 @@ def plot_delta_or_with_significance(
       List of `nlinks` values for x-axis indexing.
     selected_methods: list of str
       Full list of methods, needed for column alignment.
-    title_suffix: str, optional
-      Additional text for the plot title.
+    title_type: str, default 'OR'
+      Fills in 'delta_{title_type}' for plot title.
     alpha_threshold: float, optional
       FDR threshold to annotate p-values. Default is 0.3.
     figsize: tuple, optional
@@ -457,8 +457,8 @@ def plot_delta_or_with_significance(
     ymin, ymax = ax.get_ylim()
     ax.set_ylim(ymin * 1.05, ymax * 1.05)
     ax.set_xlabel('top_nlinks')
-    ax.set_ylabel('delta_OR')
-    ax.set_title(f'delta_OR ({focal_method} - others){title_suffix}')
+    ax.set_ylabel(f'delta_{title_type}')
+    ax.set_title(f'delta_{title_type} ({focal_method} - others)')
     ax.legend(loc='lower right')
     plt.tight_layout()
     plt.show()
@@ -632,13 +632,13 @@ def add_sig_vs_multiple_references_staggered_global_fdr(
 
     def get_sig_stars(q):
         """Return significance stars based on corrected p-value."""
-        if q < 0.01:
+        if q < 0.0001:
             return '****'
-        elif q < 0.05:
+        elif q < 0.001:
             return '***'
-        elif q < 0.1:
+        elif q < 0.01:
             return '**'
-        elif q < 0.2:
+        elif q < 0.05:
             return '*'
         else:
             return None
@@ -695,17 +695,17 @@ def add_sig_vs_multiple_references_staggered_global_fdr(
 
         # 2. Add star significance explanations
         star_legend_items = [
-            ('****', 'FDR < 0.01'),
-            ('***', 'FDR < 0.05'),
-            ('**',  'FDR < 0.1'),
-            ('*',   'FDR < 0.2')
+            ('****', 'FDR < 0.0001'),
+            ('***', 'FDR < 0.001'),
+            ('**',  'FDR < 0.01'),
+            ('*',   'FDR < 0.05')
         ]
 
         star_handles = [
-            mpatches.Patch(facecolor='none', edgecolor='none', label='**** : FDR < 0.01'),
-            mpatches.Patch(facecolor='none', edgecolor='none', label='*** : FDR < 0.05'),
-            mpatches.Patch(facecolor='none', edgecolor='none', label='** : FDR < 0.1'),
-            mpatches.Patch(facecolor='none', edgecolor='none', label='* : FDR < 0.2'),
+            mpatches.Patch(facecolor='none', edgecolor='none', label='**** : FDR < 0.0001'),
+            mpatches.Patch(facecolor='none', edgecolor='none', label='*** : FDR < 0.001'),
+            mpatches.Patch(facecolor='none', edgecolor='none', label='** : FDR < 0.01'),
+            mpatches.Patch(facecolor='none', edgecolor='none', label='* : FDR < 0.05'),
         ]
         return star_handles
         
