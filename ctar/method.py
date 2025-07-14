@@ -136,10 +136,110 @@ def vectorized_poisson_regression(X, Y, max_iter=100, tol=1e-6):
     return beta0, beta1
 
 
+def vectorized_poisson_regression_safe(mat_x, mat_y, max_iter=100, tol=1e-3, pct_converged=0.9, flag_float32=True):
+    """ Fast poisson regression using IRLS, adapted from Alistair.
+    Using sparsity and optionally low precision.
+    Safe version: clips values to prevent overflow.
+    Note that this is less precise due to clipping with float32.
+    """
+
+    n_cell, n_pair = mat_x.shape
+    fct_dtype = np.float32 if flag_float32 else float
+
+    v_beta0 = np.matrix(np.zeros((1, n_pair), dtype=fct_dtype))
+    v_beta1 = np.matrix(np.zeros((1, n_pair), dtype=fct_dtype))
+    v_beta0_final = np.matrix(np.zeros((1, n_pair), dtype=fct_dtype))
+    v_beta1_final = np.matrix(np.zeros((1, n_pair), dtype=fct_dtype))
+
+    if mat_y.shape[1] == 1:
+        if sp.sparse.issparse(mat_y):
+            mat_y = np.repeat(mat_y.toarray(), n_pair, axis=1)
+        else:
+            mat_y = np.repeat(mat_y, n_pair, axis=1)
+
+    if not sp.sparse.issparse(mat_x):
+        mat_x = sp.sparse.csc_matrix(mat_x)
+    if not sp.sparse.issparse(mat_y):
+        mat_y = sp.sparse.csc_matrix(mat_y)
+
+    if mat_x.dtype != fct_dtype:
+        mat_x = mat_x.astype(fct_dtype)
+    if mat_y.dtype != fct_dtype:
+        mat_y = mat_y.astype(fct_dtype)
+
+    if mat_y.ndim == 1:
+        mat_y = mat_y.reshape(-1, 1)
+
+    is_pct_unconverged = False
+    MAX_EXP = 80.0
+    MAX_VAL = 1e10
+
+    for iteration in range(max_iter):
+        sum_xy = mat_x.multiply(v_beta1) + v_beta0
+        sum_xy = sum_xy.clip(-MAX_EXP, MAX_EXP)
+        sum_w = np.exp(sum_xy)
+
+        sum_x = mat_x.multiply(sum_w)
+        denom = mat_x.multiply(sum_x)
+        sum_w_safe = np.maximum(sum_w, 1e-8)
+        sum_xy = sum_xy + (mat_y - sum_w) / sum_w_safe
+
+        sum_w_safe = np.clip(sum_w_safe, 0, MAX_VAL)
+        sum_y = np.multiply(sum_w_safe, sum_xy).sum(axis=0)
+        sum_xy = sum_x.multiply(sum_xy).sum(axis=0)
+        sum_w = sum_w.sum(axis=0)
+        sum_x = sum_x.sum(axis=0)
+        sum_x = sum_x.clip(-MAX_VAL, MAX_VAL)
+        sum_w = np.maximum(sum_w, 1e-8)
+
+        denom = denom.sum(axis=0) - np.divide(np.power(sum_x, 2), sum_w, out=np.zeros_like(sum_x), where=sum_w != 0)
+        denom = np.maximum(denom, 1e-8)
+
+        sum_y_safe = sum_y.clip(-MAX_VAL, MAX_VAL)
+        sum_x_safe = sum_x.clip(-MAX_VAL, MAX_VAL)
+        sum_w_safe_scalar = np.maximum(sum_w, 1e-8)
+        denom_safe = np.maximum(denom, 1e-8)
+
+        # beta1
+        num1 = sum_xy - np.multiply(sum_x_safe, sum_y_safe) / sum_w_safe_scalar
+        num1 = num1.clip(-MAX_VAL, MAX_VAL)
+        v_beta1_new = num1 / denom_safe
+
+        # beta0
+        num0 = sum_y_safe - np.multiply(v_beta1_new, sum_x_safe)
+        num0 = num0.clip(-MAX_VAL, MAX_VAL)
+        v_beta0_new = num0 / sum_w_safe_scalar
+
+        converged_mask = ((np.abs(v_beta1_new - v_beta1) < tol) & (np.abs(v_beta0_new - v_beta0) < tol)).A
+
+        if not is_pct_unconverged and (np.sum(converged_mask) / n_pair >= pct_converged):
+            print(f"{pct_converged*100}% pairs converged after {iteration+1} iterations.")
+            is_pct_unconverged = True
+            v_beta0_final.A[converged_mask] = v_beta0_new.A[converged_mask]
+            v_beta1_final.A[converged_mask] = v_beta1_new.A[converged_mask]
+            v_beta0_new, v_beta1_new = v_beta0_new.A[~converged_mask], v_beta1_new.A[~converged_mask]
+
+            pct_converged_mask = converged_mask
+            converged_mask = converged_mask.flatten()
+            mat_x = mat_x[:, ~converged_mask]
+            mat_y = mat_y[:, ~converged_mask]
+
+        if np.all(converged_mask) or iteration == (max_iter - 1):
+            print(f"Converged after {iteration+1} iterations.")
+            if is_pct_unconverged:
+                converged_mask = ~pct_converged_mask
+            v_beta0_final.A[converged_mask] = v_beta0_new.A.flatten()
+            v_beta1_final.A[converged_mask] = v_beta1_new.A.flatten()
+            break
+
+        v_beta0, v_beta1 = v_beta0_new, v_beta1_new
+
+    return np.array(v_beta0_final), np.array(v_beta1_final), pct_converged_mask
+
+
 def vectorized_poisson_regression_final(mat_x, mat_y, max_iter=100, tol=1e-3, pct_converged=0.9, flag_float32=True):
     """ Fast poisson regression using IRLS, adapted from Alistair.
     Using sparsity and optionally low precision.
-
     
     Parameters
     ----------
@@ -222,28 +322,33 @@ def vectorized_poisson_regression_final(mat_x, mat_y, max_iter=100, tol=1e-3, pc
         v_beta1_new = (sum_xy - np.multiply(sum_x,sum_y) / sum_w) / denom
         v_beta0_new = (sum_y - np.multiply(v_beta1_new,sum_x)) / sum_w
 
-        converged_mask = ((np.abs(v_beta1_new - v_beta1) < tol) & (np.abs(v_beta0_new - v_beta0) < tol)).A
+        converged_mask = ((np.abs(v_beta1_new - v_beta1) < tol) &
+                          (np.abs(v_beta0_new - v_beta0) < tol)).A
 
         if not is_pct_unconverged and (np.sum(converged_mask) / n_pair >= pct_converged):
-            print(f"{pct_converged*100}% pairs converged after {iteration+1} iterations.")
+            print(f"{pct_converged * 100:.1f}% pairs converged after {iteration + 1} iterations.")
+            is_pct_unconverged = True
 
-            is_pct_unconverged = True 
-            v_beta0_final.A[converged_mask], v_beta1_final.A[converged_mask] = v_beta0_new.A[converged_mask], v_beta1_new.A[converged_mask]
-            v_beta0_new, v_beta1_new = v_beta0_new.A[~converged_mask], v_beta1_new.A[~converged_mask]
+            v_beta0_final.A[converged_mask] = v_beta0_new.A[converged_mask]
+            v_beta1_final.A[converged_mask] = v_beta1_new.A[converged_mask]
 
-            pct_converged_mask = converged_mask
+            v_beta0_new = np.matrix(v_beta0_new.A[~converged_mask])
+            v_beta1_new = np.matrix(v_beta1_new.A[~converged_mask])
+
+            pct_converged_mask = converged_mask.copy()
             converged_mask = converged_mask.flatten()
-            mat_x, mat_y = mat_x[:,~converged_mask], mat_y[:,~converged_mask] # Convert for future operations
+            mat_x = mat_x[:, ~converged_mask]
+            mat_y = mat_y[:, ~converged_mask]
 
-        if np.all(converged_mask) or iteration == (max_iter-1):
-            print(f"Converged after {iteration+1} iterations.")
+        if np.all(converged_mask) or iteration == (max_iter - 1):
+            print(f"Converged after {iteration + 1} iterations.")
             if is_pct_unconverged:
                 converged_mask = ~pct_converged_mask
-            v_beta0_final.A[converged_mask], v_beta1_final.A[converged_mask] = v_beta0_new.A.flatten(), v_beta1_new.A.flatten()
+            v_beta0_final.A[converged_mask] = v_beta0_new.A.flatten()
+            v_beta1_final.A[converged_mask] = v_beta1_new.A.flatten()
             break
 
-        # Update beta0 and beta1
-        v_beta0, v_beta1 = v_beta0_new, v_beta1_new  # Simpler variable update
+        v_beta0, v_beta1 = v_beta0_new, v_beta1_new
 
     return np.array(v_beta0_final), np.array(v_beta1_final), pct_converged_mask
 
