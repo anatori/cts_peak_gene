@@ -136,7 +136,7 @@ def vectorized_poisson_regression(X, Y, max_iter=100, tol=1e-6):
     return beta0, beta1
 
 
-def vectorized_poisson_regression_final(mat_x, mat_y, max_iter=100, tol=1e-3, pct_converged=0.9, flag_float32=True):
+def vectorized_poisson_regression_final(mat_x, mat_y, max_iter=100, tol=1e-6, flag_float32=True):
     """ Fast poisson regression using IRLS, adapted from Alistair.
     Using sparsity and optionally low precision.
 
@@ -144,17 +144,15 @@ def vectorized_poisson_regression_final(mat_x, mat_y, max_iter=100, tol=1e-3, pc
     Parameters
     ----------
     mat_x : np.ndarray
-        Predictor matrix of shape (n_cell, n_pair)
+        Predictor matrix of shape (n_cell, n_pair).
     mat_y : np.ndarray
         Response vector of shape (n_cell,) or (n_cell, 1)
     max_iter : int
         Maximum number of iterations
     tol : float
         Convergence tolerance
-    pct_converged : float
-        Proportion of converged coefficients to solve first
     flag_float32 : bool
-        Determines whether or not dtype will be converted to float32
+        Determines whether or not dtype will be converted to float32.
 
     Returns
     -------
@@ -173,10 +171,8 @@ def vectorized_poisson_regression_final(mat_x, mat_y, max_iter=100, tol=1e-3, pc
         fct_dtype = float
 
     
-    v_beta0 = np.matrix(np.zeros((1,n_pair), dtype=fct_dtype))
-    v_beta1 = np.matrix(np.zeros((1,n_pair), dtype=fct_dtype))
-    v_beta0_final = np.matrix(np.zeros((1,n_pair), dtype=fct_dtype))
-    v_beta1_final = np.matrix(np.zeros((1,n_pair), dtype=fct_dtype))
+    v_beta0 = np.zeros(n_pair, dtype=fct_dtype)
+    v_beta1 = np.zeros(n_pair, dtype=fct_dtype)
 
     # change mat_y from (n_cell,) to (n_cell, n_pair) if single pair
     if mat_y.shape[1] == 1:
@@ -200,7 +196,6 @@ def vectorized_poisson_regression_final(mat_x, mat_y, max_iter=100, tol=1e-3, pc
     if mat_y.ndim == 1: 
         mat_y = mat_y.reshape(-1,1)
 
-    is_pct_unconverged = False
 
     for iteration in range(max_iter):
 
@@ -222,30 +217,15 @@ def vectorized_poisson_regression_final(mat_x, mat_y, max_iter=100, tol=1e-3, pc
         v_beta1_new = (sum_xy - np.multiply(sum_x,sum_y) / sum_w) / denom
         v_beta0_new = (sum_y - np.multiply(v_beta1_new,sum_x)) / sum_w
 
-        converged_mask = ((np.abs(v_beta1_new - v_beta1) < tol) & (np.abs(v_beta0_new - v_beta0) < tol)).A
-
-        if not is_pct_unconverged and (np.sum(converged_mask) / n_pair >= pct_converged):
-            print(f"{pct_converged*100}% pairs converged after {iteration+1} iterations.")
-
-            is_pct_unconverged = True 
-            v_beta0_final.A[converged_mask], v_beta1_final.A[converged_mask] = v_beta0_new.A[converged_mask], v_beta1_new.A[converged_mask]
-            v_beta0_new, v_beta1_new = v_beta0_new.A[~converged_mask], v_beta1_new.A[~converged_mask]
-
-            pct_converged_mask = converged_mask
-            converged_mask = converged_mask.flatten()
-            mat_x, mat_y = mat_x[:,~converged_mask], mat_y[:,~converged_mask] # Convert for future operations
-
-        if np.all(converged_mask) or iteration == (max_iter-1):
+        if np.all(np.abs(v_beta1_new - v_beta1) < tol) and np.all(np.abs(v_beta0_new - v_beta0) < tol):
             print(f"Converged after {iteration+1} iterations.")
-            if is_pct_unconverged:
-                converged_mask = ~pct_converged_mask
-            v_beta0_final.A[converged_mask], v_beta1_final.A[converged_mask] = v_beta0_new.A.flatten(), v_beta1_new.A.flatten()
             break
 
         # Update beta0 and beta1
         v_beta0, v_beta1 = v_beta0_new, v_beta1_new  # Simpler variable update
 
-    return np.array(v_beta0_final), np.array(v_beta1_final), pct_converged_mask
+    return np.asarray(v_beta0), np.asarray(v_beta1)
+
 
 
 ######################### generate null #########################
