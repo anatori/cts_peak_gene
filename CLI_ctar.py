@@ -19,7 +19,7 @@ Job description
 ----------------
 
 create_ctrl : create control peaks or peak-gene pairs
-    - Input : --job | --multiome_file | --links_file | --target_path | --genome_file | --bin_config | --bin_type | --pybedtools_path 
+    - Input : --job | --multiome_file | --links_file | --target_path | --genome_file | --bin_config | --bin_type | --pybedtools_path | --method 
     - Output : an array of control peaks or a folder containing several arrays of peak-gene pairs listed as ATAC and RNA indices of shape (2, n_ctrl), per bin
 
 compute_corr : compute pearson correlation for control pairs
@@ -29,10 +29,18 @@ compute_corr : compute pearson correlation for control pairs
 compute_pr : compute poisson regression coeff for control pairs
     - Input : --job | --multiome_file | --batch_size | --batch | --links_file | --target_path | --bin_config | --bin_type
     - Output : a folder containing several arrays of control peak-gene pair coefficients of shape (n_ctrl,) or (n_batch, n_ctrl)
+
+compute_pval : compute zscore pval, pooled pval, mc pval based on control pairs
+    - Input : --job | --links_file | --target_path | --bin_config | --bin_type | --method
+    - Output : additional columns added to links_file pertaining to computed pvalues
+
+compute_cis_pairs : find cis pairs within 500kb of annotated peak and genes
+    - Input : --job | --target_path | --method
+    - Output : additional columns added to links_file pertaining to computed pvalues
     
 TODO
 ----
-- add poisson regression
+- test compute_cis_pairs
 
 """
 
@@ -63,23 +71,34 @@ def main(args):
     LEGAL_JOB_LIST = [
         "create_ctrl",
         "compute_corr",
-        "compute_pr"
+        "compute_pr",
+        "compute_pval",
+        "compute_cis_pairs"
     ]
-    err_msg = "# CLI_ldspec: --job=%s not supported" % JOB
+    err_msg = "# CLI_ctar: --job=%s not supported" % JOB
     assert JOB is not None, "--job required"
     assert JOB in LEGAL_JOB_LIST, err_msg
 
     if JOB in [
         "create_ctrl",
         "compute_corr",
+        "compute_pr",
+        "compute_pval"
     ]:
-        assert MULTIOME_FILE is not None, "--multiome_file required for --job=%s" % JOB
         assert LINKS_FILE is not None, "--links_file required for --job=%s" % JOB
         assert TARGET_PATH is not None, "--target_path required for --job=%s" % JOB
-    if JOB in ["create_ctrl"]:
         assert BIN_CONFIG is not None, "--binning_config required for --job=%s" % JOB
+    if JOB in [
+        "create_ctrl",
+        "compute_corr",
+        "compute_pr",
+        "compute_cis_pairs",
+    ]:
+        assert MULTIOME_FILE is not None, "--multiome_file required for --job=%s" % JOB
+    if JOB in ["create_ctrl","compute_pval"]:
         assert METHOD is not None, "--method required for --job=%s" % JOB
-    if JOB in ["compute_corr"]:
+        assert BIN_TYPE is not None, "--binning_type required for --job=%s" % BIN_TYPE
+    if JOB in ["compute_corr","compute_pr"]:
         assert BATCH_ID is not None, "--batch_id required for --job=%s" % JOB
 
     # Print input options
@@ -104,12 +123,43 @@ def main(args):
     ######                                  Data Loading                                 ######
     ###########################################################################################
     
-    # Load --multiome_file
     if JOB in [
         "create_ctrl",
         "compute_corr",
-        "compute_pr"
+        "compute_pr",
+        "compute_pval",
     ]:
+
+        print("# Loading --links_file")
+        if LINKS_FILE.endswith('.tsv'):
+            sep='\t'
+        elif LINKS_FILE.endswith('.csv'):
+            sep=','
+        else:
+            raise TypeError("LINKS_FILE must be .tsv or .csv")
+        eval_df = pd.read_csv(LINKS_FILE, sep=sep, index_col=0)
+
+        # Setting bin config
+        # Order: MEAN.GC.MEAN.VAR
+        n_atac_mean, n_atac_gc, n_rna_mean, n_rna_var, n_ctrl = BIN_CONFIG.split('.')
+        n_atac_mean, n_atac_gc, n_ctrl = map(int, [n_atac_mean, n_atac_gc, n_ctrl])
+
+        # Setting corr destination path
+        if METHOD == 'corr' or JOB == 'compute_corr':
+            corr_path = os.path.join(TARGET_PATH, 'ctrl_corr')
+        if METHOD == 'pr' or JOB == 'compute_pr':
+            corr_path = os.path.join(TARGET_PATH, 'ctrl_poiss')
+        
+        # Setting peak source path
+        ctrl_path = os.path.join(TARGET_PATH, 'ctrl_peaks')
+
+    if JOB in [
+        "create_ctrl",
+        "compute_corr",
+        "compute_pr",
+        "compute_cis_pairs",
+    ]:
+
         print("# Loading --multiome_file")
         if MULTIOME_FILE.endswith('.h5mu'):
             adata_rna = mu.read(MULTIOME_FILE)
@@ -122,38 +172,22 @@ def main(args):
         adata_rna.var['gene'] = adata_rna.var.index
         adata_atac.var['peak'] = adata_atac.var.index
 
-        print("# Loading --links_file")
-        if LINKS_FILE.endswith('.tsv'):
-            sep='\t'
-        elif LINKS_FILE.endswith('.csv'):
-            sep=','
-        else:
-            raise ValueError("LINKS_FILE must be .tsv or .csv")
-        eval_df = pd.read_csv(LINKS_FILE, sep=sep, index_col=0)
-        # Convert to ENSEMBL gene ID
+    if JOB in [
+        "create_ctrl",
+        "compute_corr",
+        "compute_pr",
+    ]:
+
+        # Convert genes to ENSEMBL gene ID
         if eval_df.gene.str.startswith('ENSG').all():
             adata_rna.var['gene'] = adata_rna.var.gene_id
             adata_rna.var.index = adata_rna.var.gene_id
         links_arr = eval_df[['peak','gene']].values.T
 
-        # Setting bin config
-        # Order: MEAN.GC.MEAN.VAR
-        n_atac_mean, n_atac_gc, n_rna_mean, n_rna_var, n_ctrl = BIN_CONFIG.split('.')
-        n_atac_mean, n_atac_gc, n_ctrl = map(int, [n_atac_mean, n_atac_gc, n_ctrl])
-
-        if METHOD == 'pr' or JOB == 'compute_pr':
-            # Setting corr destination path
-            corr_path = os.path.join(TARGET_PATH, 'ctrl_poiss')
-        if METHOD == 'corr' or JOB == 'compute_corr':
-            # Setting corr destination path
-            corr_path = os.path.join(TARGET_PATH, 'ctrl_corr')
-        # Setting peak source path
-        ctrl_path = os.path.join(TARGET_PATH, 'ctrl_peaks')
-
-    # Load --pybedtools_path
-    if JOB in ["create_ctrl"]:
-        print("# Setting --pybedtools_path")
-        pybedtools.helpers.set_bedtools_path(PYBEDTOOLS_PATH)
+    if JOB in [
+        "create_ctrl",
+        "compute_pval",
+    ]:
 
         # Setting atac bin type
         if (n_atac_gc == 1) and (n_atac_mean > 1):
@@ -165,6 +199,51 @@ def main(args):
         else:
             atac_type = 'mean_gc'
             atac_bins = [n_atac_mean, n_atac_gc]
+        rna_type = 'mean_var'
+
+    if JOB in ["create_ctrl"]:
+        print("# Setting --pybedtools_path")
+        pybedtools.helpers.set_bedtools_path(PYBEDTOOLS_PATH)
+
+    if JOB in ["compute_pval"]:
+
+        try:
+            if f'combined_bin_{BIN_CONFIG}' in eval_df.columns:
+                pass
+
+            elif (
+                os.path.exists(os.path.join(TARGET_PATH, 'atac_bins_df.csv')) and
+                os.path.exists(os.path.join(TARGET_PATH, 'rna_bins_df.csv'))
+            ):
+                existing_atac_df = pd.read_csv(os.path.join(TARGET_PATH, 'atac_bins_df.csv'))
+                existing_rna_df = pd.read_csv(os.path.join(TARGET_PATH, 'rna_bins_df.csv'))
+
+                if (
+                    f'atac_{atac_type}_bin_{n_atac_mean}.{n_atac_gc}' in existing_atac_df.columns and
+                    f'rna_{rna_type}_bin_{n_rna_mean}.{n_rna_var}' in existing_rna_df.columns
+                ):
+                    pass
+                else:
+                    raise FileNotFoundError("Required ATAC or RNA bin columns not found in respective CSVs.")
+            else:
+                raise FileNotFoundError("ATAC or RNA bin CSV files not found in control path.")
+        except Exception as e:
+            raise FileNotFoundError(
+                f"Either eval_df must contain 'combined_bin_{BIN_CONFIG}', "
+                f"or both individual ATAC and RNA bin columns must exist in their CSVs. Error: {str(e)}"
+            )
+
+        if METHOD == 'corr':
+            corr_type = 'pearsonr'
+            file_prefix = 'pearsonr_ctrl_'
+        if METHOD == 'pr':
+            corr_type = 'poissonb'
+            file_prefix = 'poissonb_ctrl_'
+
+        if corr_type in eval_df.columns:
+            corr = eval_df[f'{corr_type}'].values
+        else:
+            raise FileNotFoundError(f"LINKS_FILE must contain {corr_type} in columns")
 
     ###########################################################################################
     ######                                  Computation                                  ######
@@ -198,15 +277,30 @@ def main(args):
             n_rna_mean, n_rna_var = map(int, [n_rna_mean, n_rna_var])
             ctrl_dic, atac_bins_df, rna_bins_df = ctar.method.create_ctrl_pairs(
                 adata_atac, adata_rna, atac_bins=atac_bins, rna_bins=[n_rna_mean, n_rna_var],
-                atac_type=atac_type, rna_type='mean_var', b=n_ctrl,
+                atac_type=atac_type, rna_type=rna_type, b=n_ctrl,
                 atac_layer='counts', rna_layer='counts', genome_file=GENOME_FILE
             )
 
             atac_bins_df.index = atac_bins_df.peak
             rna_bins_df.index = rna_bins_df.gene
 
-            eval_df[f'atac_{atac_type}_bin_{n_atac_mean}.{n_atac_gc}'] = eval_df.peak.map(atac_bins_df[f'{atac_type}_bin'].to_dict())
-            eval_df[f'rna_mean_var_bin_{n_rna_mean}.{n_rna_var}'] = eval_df.gene.map(rna_bins_df['mean_var_bin'].to_dict())
+            atac_bins_dict = atac_bins_df[f'{atac_type}_bin'].to_dict()
+            rna_bins_dict = rna_bins_df['mean_var_bin'].to_dict()
+
+            try:
+                existing_atac_df = pd.read_csv(os.path.join(TARGET_PATH, 'atac_bins_df.csv'))
+                existing_rna_df = pd.read_csv(os.path.join(TARGET_PATH, 'rna_bins_df.csv'))
+                existing_atac_df[f'atac_{atac_type}_bin_{n_atac_mean}.{n_atac_gc}'] = existing_atac_df.peak.map(atac_bins_dict)
+                existing_rna_df[f'rna_mean_var_bin_{n_rna_mean}.{n_rna_var}'] = existing_rna_df.gene.map(rna_bins_dict)
+                
+                existing_atac_df.to_csv(os.path.join(TARGET_PATH, 'atac_bins_df.csv'),index=None)
+                existing_rna_df.to_csv(os.path.join(TARGET_PATH, 'rna_bins_df.csv'),index=None)
+
+            except FileNotFoundError:
+                print("No atac_bins_df.csv or rna_bins_df.csv file found; refraining from adding binning columns")
+
+            eval_df[f'atac_{atac_type}_bin_{n_atac_mean}.{n_atac_gc}'] = eval_df.peak.map(atac_bins_dict)
+            eval_df[f'rna_mean_var_bin_{n_rna_mean}.{n_rna_var}'] = eval_df.gene.map(rna_bins_dict)
             eval_df[f'combined_bin_{BIN_CONFIG}'] = eval_df[f'atac_{atac_type}_bin_{n_atac_mean}.{n_atac_gc}'].astype(str) + '_' + eval_df[f'rna_mean_var_bin_{n_rna_mean}.{n_rna_var}'].astype(str)
             eval_df.to_csv(LINKS_FILE, sep=sep)
 
@@ -369,18 +463,107 @@ def main(args):
                     print(f"# Saving poissonb_{os.path.basename(ctrl_file)} to {final_corr_path}")
                     np.save(os.path.join(final_corr_path, f'poissonb_{os.path.basename(ctrl_file)}'), ctrl_poissonb.flatten())
 
+    if JOB == "compute_cis_pairs":
+        print("# Running --job compute_cis_pairs")
+
+        adata_rna.var = ctar.data_loader.get_gene_coords(adata_rna.var)
+        cis_pairs_df = ctar.data_loader.peak_to_gene(adata_atac.var, adata_rna.var, split_peaks=True)
+
+        adata_atac.var['ind'] = range(len(adata_atac.var))
+        adata_rna.var['ind'] = range(len(adata_rna.var))
+
+        cis_peak_inds = adata_atac[:,cis_pairs_df.peak].var['ind'].values
+        cis_gene_inds = adata_rna[:,cis_pairs_df.gene].var['ind'].values
+
+        atac_data = adata_atac.layers['counts']
+        rna_data = adata_rna.layers['counts']
+
+        corr = []
+        for i in tqdm(range((len(eval_df) // BATCH_SIZE) + 1)):
+
+            atac_subset = atac_data[:,cis_peak_inds[i*BATCH_SIZE:(i+1)*BATCH_SIZE]]
+            rna_subset = rna_data[:,cis_gene_inds[i*BATCH_SIZE:(i+1)*BATCH_SIZE]]
+
+            if METHOD == 'corr':
+                pearsonr = ctar.method.pearson_corr_sparse(atac_subset,rna_subset)[0]
+                corr.append(pearsonr)
+            if METHOD == 'poiss':
+                _, poissonb = ctar.method.vectorized_poisson_regression_final(atac_subset,rna_subset)
+                corr.append(poissonb)
+            else:
+                raise ValueError("Must choose correlation method (currently implemented: corr, poiss)")
+
+        corr = np.concatenate(corr,axis=None)
+        eval_df[f'{METHOD}'] = corr
+
+        cis_pairs_df.to_csv('/projects/zhanglab/users/ana/multiome/simulations/bin_analysis/cis_pairs_df.csv')
+
+    if JOB == "compute_pval":
+        print("# Running --job compute_pval")
+
+        if f'{n_rna_mean}.{n_rna_var}' == 'inf.inf':
+
+            ctrl_corr = np.load(os.path.join(corr_path, f'{file_prefix}{BIN_CONFIG}.npy'))
+            eval_df[f'{BIN_CONFIG}_mcpval'] = ctar.method.initial_mcpval(ctrl_corr,corr)
+            eval_df[f'{BIN_CONFIG}_ppval'] = ctar.method.pooled_mcpval(ctrl_corr,corr)
+            eval_df[f'{BIN_CONFIG}_zpval'] = ctar.method.zscore_pval(ctrl_corr,corr)[0]
+
+        else:
+
+            try:
+                atac_col = f'atac_{atac_type}_bin_{n_atac_mean}.{n_atac_gc}'
+                rna_col = f'rna_{rna_type}_bin_{n_rna_mean}.{n_rna_var}'
+                combined_col = f'combined_bin_{BIN_CONFIG}'
+
+                eval_df[combined_col] = eval_df[atac_col].astype(str) + '_' + eval_df[rna_col].astype(str)
+
+            except KeyError:
+                print("# Required bin columns missing in eval_df. Attempting to load and map from bin CSVs...")
+
+                atac_bins_df = pd.read_csv(os.path.join(TARGET_PATH, 'atac_bins_df.csv'))
+                rna_bins_df = pd.read_csv(os.path.join(TARGET_PATH, 'rna_bins_df.csv'))
+
+                atac_bins_df.set_index('peak', inplace=True)
+                rna_bins_df.set_index('gene', inplace=True)
+
+                # bin column names
+                atac_col = f'atac_{atac_type}_bin_{n_atac_mean}.{n_atac_gc}'
+                rna_col = f'rna_{rna_type}_bin_{n_rna_mean}.{n_rna_var}'
+                combined_col = f'combined_bin_{BIN_CONFIG}'
+
+                # mapping
+                atac_bin_dict = atac_bins_df[atac_col].to_dict()
+                rna_bin_dict = rna_bins_df[rna_col].to_dict()
+                eval_df[atac_col] = eval_df['peak'].map(atac_bin_dict)
+                eval_df[rna_col] = eval_df['gene'].map(rna_bin_dict)
+
+                # combined bin label
+                eval_df[combined_col] = eval_df[atac_col].astype(str) + '_' + eval_df[rna_col].astype(str)
+
+            pattern = r'[\d]+.[\d]+_[\d]+.[\d]+'
+            folder_prefix = os.path.basename(corr_path)
+            mcpval, ppval = ctar.method.binned_mcpval(os.path.join(corr_path, f'{folder_prefix}_{BIN_CONFIG}'),
+                                                      eval_df, corr, 
+                                                      pattern = pattern,
+                                                      startswith=file_prefix,
+                                                      bin_label = f'combined_bin_{BIN_CONFIG}')
+            eval_df[f'{BIN_CONFIG}_mcpval'] = mcpval
+            eval_df[f'{BIN_CONFIG}_ppval'] = ppval
+
+        eval_df.to_csv(LINKS_FILE)
+
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="ctar")
 
-    parser.add_argument("--job", type=str, required=True, help="create_ctrl, compute_corr, compute_pr")
-    parser.add_argument("--multiome_file", type=str, required=True, default=None)
+    parser.add_argument("--job", type=str, required=True, help="create_ctrl, compute_corr, compute_pr, compute_pval, compute_cis_pairs")
+    parser.add_argument("--multiome_file", type=str, required=False, default=None)
     parser.add_argument("--batch_size", type=str, required=False, default='100')
     parser.add_argument("--batch_id", type=str, required=False, default='0')
     parser.add_argument("--batch_offset", type=str, required=False, default='0', help="offset for batch calculation")
-    parser.add_argument("--links_file", type=str, required=True, default=None)
-    parser.add_argument("--target_path", type=str, required=True, default=None)
+    parser.add_argument("--links_file", type=str, required=False, default=None)
+    parser.add_argument("--target_path", type=str, required=False, default=None)
     parser.add_argument(
         "--genome_file", type=str, required=False, default=None, help="GRCh38.p14.genome.fa.bgz reference"
     )
@@ -391,7 +574,7 @@ if __name__ == "__main__":
         default=None,
         help="{# ATAC mean bins}.{# ATAC GC bins}.{# RNA mean bins}.{# RNA var bins}.{# Sampled controls per bin}",
     )
-    parser.add_argument("--binning_type", type=str, required=False, default=None)
+    parser.add_argument("--binning_type", type=str, required=False, default='mean_var', help='mean_var, cholesky')
     parser.add_argument("--pybedtools_path", type=str, required=False, default=None)
     parser.add_argument("--method", type=str, required=False, default=None,
         help="pr, corr")

@@ -3,29 +3,30 @@
 # FILE: /projects/zhanglab/users/ana/cts_peak_gene/experiments/job.pearsoncorr/pearsonr.sh
 
 MULTIOME_FILE=/projects/zhanglab/users/ana/multiome/processed/neurips_bmmc/bmmc.h5mu
-LINKS_FILE=/projects/zhanglab/users/ana/multiome/simulations/bin_analysis/abc_eval_df.csv
+LINKS_FILE=/projects/zhanglab/users/ana/multiome/simulations/bin_analysis/eqtl_full_eval_df_deduplicated_clean.csv
 TARGET_PATH=/projects/zhanglab/users/ana/multiome/simulations/bin_analysis/
 GENOME_FILE=/projects/zhanglab/users/ana/bedtools2/ana_bedfiles/ref/GRCh38.p14.genome.fa.bgz
-BIN_CONFIG='1.1.100.100.10000'
+BIN_CONFIG=$1
 BIN_TYPE='mean_var'
 PYBEDTOOLS_PATH=/projects/zhanglab/users/ana/bedtools2/bin
-BATCH_SIZE=100
+BATCH_SIZE=1000
 
-echo "Beginning $BIN_CONFIG create_ctrl job..."
-# Submit create_ctrl and capture job ID
-sbatch -p mzhang,pool1 -t 1-00:00:00 --mem=100Gb -o /home/asprieto/logs/create_ctrl_%J.err -J "ctrl_$BIN_CONFIG" --wrap " \
-source ~/.bashrc && \e
-conda activate ctar && \
-python /projects/zhanglab/users/ana/cts_peak_gene/CLI_ctar.py \
-    --job create_ctrl \
-    --multiome_file $MULTIOME_FILE \
-    --links_file $LINKS_FILE \
-    --target_path $TARGET_PATH \
-    --genome_file $GENOME_FILE \
-    --binning_config $BIN_CONFIG \
-    --binning_type $BIN_TYPE \
-    --pybedtools_path $PYBEDTOOLS_PATH \
-    --method corr" 
+# echo "Beginning $BIN_CONFIG create_ctrl job..."
+# # Submit create_ctrl job
+# sbatch -p mzhang,pool1 -t 1-00:00:00 --mem=82Gb -o /home/asprieto/logs/create_ctrl_%J.err -J "ctrl_$BIN_CONFIG" --wrap " \
+# source ~/.bashrc && \
+# conda activate ctar && \
+# python /projects/zhanglab/users/ana/cts_peak_gene/CLI_ctar.py \
+#     --job create_ctrl \
+#     --multiome_file $MULTIOME_FILE \
+#     --links_file $LINKS_FILE \
+#     --target_path $TARGET_PATH \
+#     --genome_file $GENOME_FILE \
+#     --binning_config $BIN_CONFIG \
+#     --binning_type $BIN_TYPE \
+#     --pybedtools_path $PYBEDTOOLS_PATH \
+#     --method corr" 
+
 
 # # Count control link files
 # TOTAL_NUM_BIN=$(find "$TARGET_PATH/ctrl_peaks/ctrl_links_$BIN_CONFIG" -type f | wc -l)
@@ -57,7 +58,7 @@ python /projects/zhanglab/users/ana/cts_peak_gene/CLI_ctar.py \
 
 # echo "Submitting $BIN_CONFIG compute_corr job..."
 # # Submit compute_corr job
-# sbatch -p mzhang,pool1 -t 1-00:00:00 -x compute-1-1 --mem=24Gb $ARRAY_OPT --mail-type=END --mail-user=asprieto@andrew.cmu.edu \
+# sbatch -p mzhang,pool1 -t 1-00:00:00 --mem=32Gb $ARRAY_OPT --mail-type=END --mail-user=asprieto@andrew.cmu.edu \
 #   -o /home/asprieto/logs/compute_corr_%A_%a.err -J "corr_$BIN_CONFIG" --wrap " \
 #   source ~/.bashrc && \
 #   conda activate ctar && \
@@ -71,3 +72,17 @@ python /projects/zhanglab/users/ana/cts_peak_gene/CLI_ctar.py \
 #       --binning_config $BIN_CONFIG \
 #       --binning_type $BIN_TYPE \
 #       --pybedtools_path $PYBEDTOOLS_PATH"
+
+
+echo "Beginning $BIN_CONFIG compute_pval job..."
+# Submit compute_pval job
+sbatch -p mzhang,pool1 -t 1-00:00:00 --mem=82Gb -o /home/asprieto/logs/compute_pval_%J.err -J "pval_$BIN_CONFIG" --wrap " \
+source ~/.bashrc && \
+conda activate ctar && \
+python /projects/zhanglab/users/ana/cts_peak_gene/CLI_ctar.py \
+    --job compute_pval \
+    --links_file $LINKS_FILE \
+    --target_path $TARGET_PATH \
+    --binning_config $BIN_CONFIG \
+    --binning_type $BIN_TYPE \
+    --method corr" 

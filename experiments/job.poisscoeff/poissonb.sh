@@ -3,13 +3,13 @@
 # FILE: /projects/zhanglab/users/ana/cts_peak_gene/experiments/job.poisscoeff/poissonb.sh
 
 MULTIOME_FILE=/projects/zhanglab/users/ana/multiome/processed/neurips_bmmc/bmmc.h5mu
-LINKS_FILE=/projects/zhanglab/users/ana/multiome/simulations/bin_analysis/abc_eval_df.csv
+LINKS_FILE=/projects/zhanglab/users/ana/multiome/simulations/bin_analysis/abc_0.9r_full_eval_df_deduplicated.csv
 TARGET_PATH=/projects/zhanglab/users/ana/multiome/simulations/bin_analysis/
 GENOME_FILE=/projects/zhanglab/users/ana/bedtools2/ana_bedfiles/ref/GRCh38.p14.genome.fa.bgz
 BIN_CONFIG='1.1.1.1.10000'
 BIN_TYPE='mean_var'
 PYBEDTOOLS_PATH=/projects/zhanglab/users/ana/bedtools2/bin
-BATCH_SIZE=100
+BATCH_SIZE=200
 
 # echo "Beginning $BIN_CONFIG create_ctrl job..."
 # # Submit create_ctrl and capture job ID
@@ -57,7 +57,7 @@ echo "Found $TOTAL_NUM_BIN control files. Submitting $TOTAL_NUM_BATCHES batch jo
 
 echo "Submitting $BIN_CONFIG compute_pr job..."
 # Submit compute_corr job
-sbatch -p mzhang,pool1 -t 1-00:00:00 -x compute-1-1 --mem=24Gb $ARRAY_OPT --mail-type=END --mail-user=asprieto@andrew.cmu.edu \
+sbatch -p mzhang,pool1 -t 1-00:00:00 -x compute-1-1 --mem=32Gb $ARRAY_OPT --mail-type=END --mail-user=asprieto@andrew.cmu.edu \
   -o /home/asprieto/logs/compute_pr_%A_%a.err -J "pr_$BIN_CONFIG" --wrap " \
   source ~/.bashrc && \
   conda activate ctar && \
