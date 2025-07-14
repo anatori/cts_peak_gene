@@ -29,7 +29,7 @@ def peak_to_gene(peaks_df,genes_df,clean=True,split_peaks=True,distance=500000,c
         and change start and end locations to integer types.
         
     split_peaks : bool
-        If true, peaks must be in format chr:start-end and will be extracted from this
+        If true, peaks must be in format chr[:-]start-end and will be extracted from this
         string format into a bed-suitable format (split into chr,start,end columns).
         Start and end locations will also be changed into integer types.
 
@@ -71,7 +71,7 @@ def peak_to_gene(peaks_df,genes_df,clean=True,split_peaks=True,distance=500000,c
 
     if split_peaks:
         peaks_clean = peaks_df.copy()
-        peaks_clean[col_names] = peaks_clean[peak_col].str.extract(r'(\w+):(\d+)-(\d+)')
+        peaks_clean[col_names] = peaks_clean[peak_col].str.extract(r'(\w+)[-:](\d+)-(\d+)')
         peaks_clean[col_names[1:]] = peaks_clean[col_names[1:]].astype(int)
     else: peaks_clean = peaks_df
 
