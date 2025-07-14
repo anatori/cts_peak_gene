@@ -272,7 +272,7 @@ def split_by_chromosome(df,col='peak',sep=':'):
     return df[col].str.split(sep).str[0].astype('category').values
 
 
-def analyze_odds_ratio_jacknife(eval_df, categorical_arr, nlinks_arr=None):
+def analyze_odds_ratio_jacknife(eval_df, categorical_arr, nlinks_ls=None):
     """
     Perform odds ratio analysis with jacknife confidence intervals by
     chromosome blocks for multiple p-value methods in a DataFrame.
@@ -287,8 +287,8 @@ def analyze_odds_ratio_jacknife(eval_df, categorical_arr, nlinks_arr=None):
       DataFrame containing 'label' column and p-value columns.
     categorical_arr : np.array
       Array of values corresponding to category to split on for jacknifing (e.g. loci blocks)
-    nlinks_arr: np.array of int, optional
-      Array of numbers of links to consider. Default: [500, 1000, 1500, 2000, 2500]
+    nlinks_ls: list of int, optional
+      List of numbers of links to consider. Default: [500, 1000, 1500, 2000, 2500]
 
     Returns
     ----------
@@ -297,8 +297,9 @@ def analyze_odds_ratio_jacknife(eval_df, categorical_arr, nlinks_arr=None):
       and columns as methods.
     """
 
-    if nlinks_arr is None:
-        nlinks_arr = np.array([500, 1000, 1500, 2000, 2500])
+    if nlinks_ls is None:
+        nlinks_ls = [500, 1000, 1500, 2000, 2500]
+    nlinks_arr = np.sort(np.array(nlinks_ls))
 
     methods = [s for s in eval_df.columns if 'pval' in s]
 
@@ -368,7 +369,7 @@ def analyze_odds_ratio_jacknife(eval_df, categorical_arr, nlinks_arr=None):
 
 def analyze_enrichment_bootstrap(eval_df, score_col='gt_pip', nlinks_ls=None, n_bs_samples=1000):
     """
-    Perform odds ratio analysis with bootstrap confidence intervals
+    Perform enrichment analysis with bootstrap confidence intervals
     for multiple p-value methods in a DataFrame.
 
     Parameters
@@ -443,9 +444,9 @@ def analyze_enrichment_bootstrap(eval_df, score_col='gt_pip', nlinks_ls=None, n_
     return enrich_df, lower_ci_df, upper_ci_df, std_ci_df, bs_dic
 
 
-def analyze_enrichment_jacknife(eval_df, categorical_arr, score_col='gt_pip', nlinks_arr=None):
+def analyze_enrichment_jacknife(eval_df, categorical_arr, score_col='gt_pip', nlinks_ls=None):
     """
-    Perform odds ratio analysis with jacknife confidence intervals by
+    Perform enrichment analysis with jacknife confidence intervals by
     chromosome blocks for multiple p-value methods in a DataFrame.
 
     Parameters
@@ -456,8 +457,8 @@ def analyze_enrichment_jacknife(eval_df, categorical_arr, score_col='gt_pip', nl
       Array of values corresponding to category to split on for jacknifing (e.g. loci blocks)
     score_col : str, optional
       Column name for column containing evaluation scores.
-    nlinks_arr: np.array of int, optional
-      Array of numbers of links to consider. Default: [500, 1000, 1500, 2000, 2500]
+    nlinks_ls: list of int, optional
+      List of numbers of links to consider. Default: [500, 1000, 1500, 2000, 2500]
 
     Returns
     ----------
@@ -466,8 +467,9 @@ def analyze_enrichment_jacknife(eval_df, categorical_arr, score_col='gt_pip', nl
       and columns as methods.
     """
 
-    if nlinks_arr is None:
-        nlinks_arr = np.array([500, 1000, 1500, 2000, 2500])
+    if nlinks_ls is None:
+        nlinks_ls = [500, 1000, 1500, 2000, 2500]
+    nlinks_arr = np.sort(np.array(nlinks_ls))
 
     methods = [s for s in eval_df.columns if 'pval' in s]
 
@@ -524,6 +526,94 @@ def analyze_enrichment_jacknife(eval_df, categorical_arr, score_col='gt_pip', nl
         df.index.name = 'nlinks'
 
     return enrich_df, lower_ci_df, upper_ci_df, std_ci_df, jn_dic
+
+
+def analyze_enrichment_auc_midpoint_jackknife(eval_df, categorical_arr, score_col='gt_pip', nlinks_ls=None):
+    """
+    Compute enrichment AUC via midpoint rule using jackknife confidence intervals.
+    
+    Parameters
+    ----------
+    eval_df : pd.DataFrame
+        DataFrame with p-value columns and a score column.
+    categorical_arr : np.array
+        Jackknife blocking array (e.g., chromosomes).
+    score_col : str
+        Name of the score column to use for enrichment ranking.
+    nlinks_ls : list of int
+        List of N link cutoffs (e.g. [500, 1000, ...]).
+    
+    Returns
+    ----------
+    auc_df, lower_ci_df, upper_ci_df, std_ci_df, jn_dic : pd.DataFrame, ...
+        AUCs and jackknife CIs, all indexed by method.
+    """
+    if nlinks_ls is None:
+        nlinks_ls = [500, 1000, 1500, 2000, 2500]
+    nlinks_arr = np.sort(np.array(nlinks_ls))
+
+    methods = [s for s in eval_df.columns if 'pval' in s]
+    score_arr = eval_df[score_col].values
+    blocks_arr = np.unique(categorical_arr)
+    n_blocks = len(blocks_arr)
+
+    # Midpoint and delta arrays
+    midpoints = (nlinks_arr[:-1] + nlinks_arr[1:]) / 2
+    deltas = np.diff(nlinks_arr)
+
+    auc_vals = []
+    lower_ci_vals = []
+    upper_ci_vals = []
+    std_ci_vals = []
+    jn_dic = {0:{}}
+
+    for method in tqdm(methods):
+        pval_arr = eval_df[method].values
+
+        enrich_at_mid = np.array([
+            enrichment(score_arr, pval_arr, int(n)) for n in midpoints
+        ])
+        auc = np.sum(enrich_at_mid * deltas)
+        auc_vals.append(auc)
+
+        # Jackknife
+        jn_estimates = np.zeros(n_blocks)
+        ratio_arr = np.zeros(n_blocks)
+        enrich_jn = np.zeros((n_blocks, len(midpoints)))
+
+        for bi, block in enumerate(blocks_arr):
+            mask = categorical_arr != block
+            ratio_arr[bi] = len(categorical_arr) / np.sum(categorical_arr == block)
+            score_sub = score_arr[mask]
+            pval_sub = pval_arr[mask]
+
+            enrich_jn[bi] = np.array([
+                enrichment(score_sub, pval_sub, int(n)) for n in midpoints
+            ])
+            jn_estimates[bi] = np.sum(enrich_jn[bi] * deltas)
+
+        jn_dic[0][method] = jn_estimates
+
+        # CI and Std
+        lower, upper = np.percentile(jn_estimates, [2.5, 97.5])
+        mean_jn = np.sum(auc - jn_estimates) + np.sum((1/ratio_arr) * jn_estimates)
+        tau = ratio_arr * auc - (ratio_arr - 1) * jn_estimates
+        std = np.sqrt((1 / n_blocks) * np.sum((tau - mean_jn)**2 / (ratio_arr - 1)))
+
+        lower_ci_vals.append(lower)
+        upper_ci_vals.append(upper)
+        std_ci_vals.append(std)
+
+    index = [0]
+    auc_df = pd.DataFrame([auc_vals], columns=methods, index=index)
+    lower_ci_df = pd.DataFrame([lower_ci_vals], columns=methods, index=index)
+    upper_ci_df = pd.DataFrame([upper_ci_vals], columns=methods, index=index)
+    std_ci_df = pd.DataFrame([std_ci_vals], columns=methods, index=index)
+
+    for df in [auc_df, lower_ci_df, upper_ci_df, std_ci_df]:
+        df.index.name = 'nlinks'
+
+    return auc_df, lower_ci_df, upper_ci_df, std_ci_df, jn_dic
 
 
 def compute_pairwise_delta_or_with_fdr(selected_methods, bs_dic, odds_df, nlinks_ls):

@@ -553,76 +553,6 @@ def add_sig_vs_reference_staggered_global_fdr(
 
 def add_sig_vs_multiple_references_staggered_global_fdr(
     ax, odds_data, corrected_pval_lookup,
-    focal_methods, alpha=0.05,
-    line_gap=0.05,  # spacing between lines
-    text_gap=0.03,  # extra spacing above lines for the box
-    fontsize=8,
-    fontsize_gap=2,
-    line_color='grey'
-):
-    """
-    Annotates significance comparisons for multiple focal methods with FDR-corrected p-values.
-
-    Parameters
-    ----------
-        ax : matplotlib axis
-        odds_data : pd.DataFrame [n_links x methods]
-        yerr_upper : pd.DataFrame [n_links x methods]
-        corrected_pval_lookup : dict[(focal_method, n_link, comparison_method)] = (raw_p, corr_p)
-        focal_methods : list of methods to use as references
-        alpha : significance threshold
-    """
-    num_groups = odds_data.shape[0]
-    bar_centers = get_bar_centers_grouped(ax, odds_data)
-    drawn_pairs = set()
-
-    for i, n_link in enumerate(odds_data.index):  # x-axis group
-        # Find max bar + error in this group
-        tops = odds_data.loc[n_link] # + yerr_upper.loc[n_link]
-        base_y = tops.max()
-        current_y = base_y + line_gap
-
-        for focal_method in focal_methods:
-            for comp_method in odds_data.columns:
-                if comp_method == focal_method:
-                    continue
-
-                # Skip already-drawn symmetrical pair
-                pair_key = tuple(sorted([focal_method, comp_method]))
-                pair_id = (n_link, pair_key)
-                if pair_id in drawn_pairs:
-                    continue
-                drawn_pairs.add(pair_id)
-
-                key = (focal_method, n_link, comp_method)
-                if key not in corrected_pval_lookup:
-                    continue
-
-                raw_p, corr_p = corrected_pval_lookup[key]
-                if corr_p >= alpha:
-                    continue  # not significant
-
-                x1 = bar_centers[comp_method][i]
-                x2 = bar_centers[focal_method][i]
-
-                # Draw bracket
-                line_top = current_y + line_gap
-                ax.plot([x1, x1, x2, x2], [current_y, line_top, line_top, current_y], c=line_color, lw=1.2)
-
-                # Add label
-                text_y = line_top + text_gap
-                ax.text(
-                    (x1 + x2) / 2, text_y,
-                    f"{raw_p:.3g}\n({corr_p:.3g})",
-                    ha='center', va='bottom', fontsize=fontsize,
-                    bbox=dict(boxstyle='round,pad=0.1', facecolor='white', edgecolor=line_color, linewidth=0.5)
-                )
-
-                current_y = text_y + fontsize_gap + text_gap
-
-
-def add_sig_vs_multiple_references_staggered_global_fdr(
-    ax, odds_data, corrected_pval_lookup,
     focal_methods, alpha=0.2,
     line_gap=0.05,
     text_gap=0.03,
@@ -632,21 +562,20 @@ def add_sig_vs_multiple_references_staggered_global_fdr(
     add_legend=True
 ):
     """
-    Annotates significance comparisons for multiple focal methods with FDR-corrected p-values,
-    using significance stars instead of text labels.
+    Annotates significance comparisons (FDR-corrected p-values) between multiple methods.
+
+    Handles both standard enrichment (multi-nlinks) and AUC (single-row) data.
 
     Parameters
     ----------
-        ax : matplotlib axis
-        odds_data : pd.DataFrame [n_links x methods]
-        corrected_pval_lookup : dict[(focal_method, n_link, comparison_method)] = (raw_p, corr_p)
-        focal_methods : list of methods to use as references
-        alpha : maximum corrected p-value threshold to annotate
-        add_legend : whether to add a legend for star thresholds
+    ax : matplotlib axis
+    odds_data : pd.DataFrame [n_links x methods]
+    corrected_pval_lookup : dict[(focal_method, n_link, comparison_method)] = (raw_p, corr_p)
+    focal_methods : list of methods to use as references
+    alpha : FDR threshold for significance annotation
     """
 
     def get_sig_stars(q):
-        """Return significance stars based on corrected p-value."""
         if q < 0.0001:
             return '****'
         elif q < 0.001:
@@ -658,11 +587,13 @@ def add_sig_vs_multiple_references_staggered_global_fdr(
         else:
             return None
 
-    num_groups = odds_data.shape[0]
+    is_auc = odds_data.shape[0] == 1
     bar_centers = get_bar_centers_grouped(ax, odds_data)
     drawn_pairs = set()
 
-    for i, n_link in enumerate(odds_data.index):
+    if is_auc:
+        n_link = odds_data.index[0]
+        i = 0
         tops = odds_data.loc[n_link]
         base_y = tops.max()
         current_y = base_y + line_gap
@@ -673,10 +604,9 @@ def add_sig_vs_multiple_references_staggered_global_fdr(
                     continue
 
                 pair_key = tuple(sorted([focal_method, comp_method]))
-                pair_id = (n_link, pair_key)
-                if pair_id in drawn_pairs:
+                if pair_key in drawn_pairs:
                     continue
-                drawn_pairs.add(pair_id)
+                drawn_pairs.add(pair_key)
 
                 key = (focal_method, n_link, comp_method)
                 if key not in corrected_pval_lookup:
@@ -695,27 +625,51 @@ def add_sig_vs_multiple_references_staggered_global_fdr(
                 ax.plot([x1, x1, x2, x2], [current_y, line_top, line_top, current_y], c=line_color, lw=1.2)
 
                 text_y = line_top + text_gap
-                ax.text(
-                    (x1 + x2) / 2, text_y,
-                    stars,
-                    ha='center', va='bottom', fontsize=fontsize
-                )
+                ax.text((x1 + x2) / 2, text_y, stars,
+                        ha='center', va='bottom', fontsize=fontsize)
 
                 current_y = text_y + fontsize_gap * 0.01 + text_gap
 
-    # Add legend for stars if requested
+    else:
+        for i, n_link in enumerate(odds_data.index):
+            tops = odds_data.loc[n_link]
+            base_y = tops.max()
+            current_y = base_y + line_gap
+
+            for focal_method in focal_methods:
+                for comp_method in odds_data.columns:
+                    if comp_method == focal_method:
+                        continue
+
+                    pair_key = tuple(sorted([focal_method, comp_method]))
+                    pair_id = (n_link, pair_key)
+                    if pair_id in drawn_pairs:
+                        continue
+                    drawn_pairs.add(pair_id)
+
+                    key = (focal_method, n_link, comp_method)
+                    if key not in corrected_pval_lookup:
+                        continue
+
+                    _, corr_p = corrected_pval_lookup[key]
+                    stars = get_sig_stars(corr_p)
+
+                    if not stars:
+                        continue
+
+                    x1 = bar_centers[comp_method][i]
+                    x2 = bar_centers[focal_method][i]
+
+                    line_top = current_y + line_gap
+                    ax.plot([x1, x1, x2, x2], [current_y, line_top, line_top, current_y], c=line_color, lw=1.2)
+
+                    text_y = line_top + text_gap
+                    ax.text((x1 + x2) / 2, text_y, stars,
+                            ha='center', va='bottom', fontsize=fontsize)
+
+                    current_y = text_y + fontsize_gap * 0.01 + text_gap
+
     if add_legend:
-        # 1. Existing handles/labels from the current plot (e.g., method colors)
-        existing_handles, existing_labels = ax.get_legend_handles_labels()
-
-        # 2. Add star significance explanations
-        star_legend_items = [
-            ('****', 'FDR < 0.0001'),
-            ('***', 'FDR < 0.001'),
-            ('**',  'FDR < 0.01'),
-            ('*',   'FDR < 0.05')
-        ]
-
         star_handles = [
             mpatches.Patch(facecolor='none', edgecolor='none', label='**** : FDR < 0.0001'),
             mpatches.Patch(facecolor='none', edgecolor='none', label='*** : FDR < 0.001'),
@@ -723,7 +677,7 @@ def add_sig_vs_multiple_references_staggered_global_fdr(
             mpatches.Patch(facecolor='none', edgecolor='none', label='* : FDR < 0.05'),
         ]
         return star_handles
-        
     else:
         return []
+
 
