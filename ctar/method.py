@@ -151,6 +151,8 @@ def vectorized_poisson_regression_safe(mat_x, mat_y, max_iter=100, tol=1e-3, pct
     v_beta0_final = np.matrix(np.zeros((1, n_pair), dtype=fct_dtype))
     v_beta1_final = np.matrix(np.zeros((1, n_pair), dtype=fct_dtype))
 
+    pct_converged_mask = np.full((n_pair,), False)
+
     if mat_y.shape[1] == 1:
         if sp.sparse.issparse(mat_y):
             mat_y = np.repeat(mat_y.toarray(), n_pair, axis=1)
@@ -228,8 +230,12 @@ def vectorized_poisson_regression_safe(mat_x, mat_y, max_iter=100, tol=1e-3, pct
             print(f"Converged after {iteration+1} iterations.")
             if is_pct_unconverged:
                 converged_mask = ~pct_converged_mask
-            v_beta0_final.A[converged_mask] = v_beta0_new.A.flatten()
-            v_beta1_final.A[converged_mask] = v_beta1_new.A.flatten()
+                v_beta0_final.A[converged_mask] = v_beta0_new.A.flatten()
+                v_beta1_final.A[converged_mask] = v_beta1_new.A.flatten()
+            else:
+                v_beta0_final = v_beta0_new
+                v_beta1_final = v_beta1_new
+
             break
 
         v_beta0, v_beta1 = v_beta0_new, v_beta1_new
@@ -277,6 +283,8 @@ def vectorized_poisson_regression_final(mat_x, mat_y, max_iter=100, tol=1e-3, pc
     v_beta1 = np.matrix(np.zeros((1,n_pair), dtype=fct_dtype))
     v_beta0_final = np.matrix(np.zeros((1,n_pair), dtype=fct_dtype))
     v_beta1_final = np.matrix(np.zeros((1,n_pair), dtype=fct_dtype))
+
+    pct_converged_mask = np.full((n_pair,), False)
 
     # change mat_y from (n_cell,) to (n_cell, n_pair) if single pair
     if mat_y.shape[1] == 1:
@@ -344,8 +352,11 @@ def vectorized_poisson_regression_final(mat_x, mat_y, max_iter=100, tol=1e-3, pc
             print(f"Converged after {iteration + 1} iterations.")
             if is_pct_unconverged:
                 converged_mask = ~pct_converged_mask
-            v_beta0_final.A[converged_mask] = v_beta0_new.A.flatten()
-            v_beta1_final.A[converged_mask] = v_beta1_new.A.flatten()
+                v_beta0_final.A[converged_mask] = v_beta0_new.A.flatten()
+                v_beta1_final.A[converged_mask] = v_beta1_new.A.flatten()
+            else:
+                v_beta0_final = v_beta0_new
+                v_beta1_final = v_beta1_new
             break
 
         v_beta0, v_beta1 = v_beta0_new, v_beta1_new
