@@ -3,7 +3,7 @@
 # FILE: /projects/zhanglab/users/ana/cts_peak_gene/experiments/job.pearsoncorr/pearsonr.sh
 
 MULTIOME_FILE=/projects/zhanglab/users/ana/multiome/processed/neurips_bmmc/bmmc.h5mu
-LINKS_FILE=/projects/zhanglab/users/ana/multiome/simulations/bin_analysis/eqtl_full_eval_df_deduplicated_clean.csv
+LINKS_FILE=/projects/zhanglab/users/ana/multiome/processed/neurips_bmmc/cis_pairs.tsv
 TARGET_PATH=/projects/zhanglab/users/ana/multiome/simulations/bin_analysis/
 GENOME_FILE=/projects/zhanglab/users/ana/bedtools2/ana_bedfiles/ref/GRCh38.p14.genome.fa.bgz
 BIN_CONFIG=$1
