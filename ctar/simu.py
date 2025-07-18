@@ -181,7 +181,7 @@ def test_overlap(list1, list2, list_background):
         return pvalue, oddsratio, or_ub, or_lb
 
 
-def analyze_odds_ratio_bootstrap(eval_df, nlinks_ls=None, n_bs_samples=1000):
+def analyze_odds_ratio_bootstrap(eval_df, nlinks_ls=None, methods=None, n_bs_samples=1000):
     """
     Perform odds ratio analysis with bootstrap confidence intervals
     for multiple p-value methods in a DataFrame.
@@ -205,7 +205,8 @@ def analyze_odds_ratio_bootstrap(eval_df, nlinks_ls=None, n_bs_samples=1000):
     if nlinks_ls is None:
         nlinks_ls = [500, 1000, 1500, 2000, 2500]
 
-    methods = [s for s in eval_df.columns if 'pval' in s]
+    if methods is None:
+        methods = [s for s in eval_df.columns if 'pval' in s]
 
     limit_dic = {
         method: (eval_df[method] == eval_df[method].min()).sum()
@@ -272,7 +273,7 @@ def split_by_chromosome(df,col='peak',sep=':'):
     return df[col].str.split(sep).str[0].astype('category').values
 
 
-def analyze_odds_ratio_jacknife(eval_df, categorical_arr, nlinks_ls=None):
+def analyze_odds_ratio_jacknife(eval_df, categorical_arr, methods=None, nlinks_ls=None):
     """
     Perform odds ratio analysis with jacknife confidence intervals by
     chromosome blocks for multiple p-value methods in a DataFrame.
@@ -301,7 +302,8 @@ def analyze_odds_ratio_jacknife(eval_df, categorical_arr, nlinks_ls=None):
         nlinks_ls = [500, 1000, 1500, 2000, 2500]
     nlinks_arr = np.sort(np.array(nlinks_ls))
 
-    methods = [s for s in eval_df.columns if 'pval' in s]
+    if methods is None:
+        methods = [s for s in eval_df.columns if 'pval' in s]
 
     limit_dic = {
         method: (eval_df[method] == eval_df[method].min()).sum()
@@ -367,7 +369,7 @@ def analyze_odds_ratio_jacknife(eval_df, categorical_arr, nlinks_ls=None):
     return odds_df, pval_df, lower_ci_df, upper_ci_df, std_ci_df, jn_dic
 
 
-def analyze_enrichment_bootstrap(eval_df, score_col='gt_pip', nlinks_ls=None, n_bs_samples=1000):
+def analyze_enrichment_bootstrap(eval_df, score_col='gt_pip', nlinks_ls=None, methods=None, n_bs_samples=1000):
     """
     Perform enrichment analysis with bootstrap confidence intervals
     for multiple p-value methods in a DataFrame.
@@ -393,7 +395,8 @@ def analyze_enrichment_bootstrap(eval_df, score_col='gt_pip', nlinks_ls=None, n_
     if nlinks_ls is None:
         nlinks_ls = [500, 1000, 1500, 2000, 2500]
 
-    methods = [s for s in eval_df.columns if 'pval' in s]
+    if methods is None:
+        methods = [s for s in eval_df.columns if 'pval' in s]
 
     limit_dic = {
         method: (eval_df[method] == eval_df[method].min()).sum()
@@ -444,7 +447,7 @@ def analyze_enrichment_bootstrap(eval_df, score_col='gt_pip', nlinks_ls=None, n_
     return enrich_df, lower_ci_df, upper_ci_df, std_ci_df, bs_dic
 
 
-def analyze_enrichment_jacknife(eval_df, categorical_arr, score_col='gt_pip', nlinks_ls=None):
+def analyze_enrichment_jacknife(eval_df, categorical_arr, score_col='gt_pip', methods=None, nlinks_ls=None):
     """
     Perform enrichment analysis with jacknife confidence intervals by
     chromosome blocks for multiple p-value methods in a DataFrame.
@@ -471,7 +474,8 @@ def analyze_enrichment_jacknife(eval_df, categorical_arr, score_col='gt_pip', nl
         nlinks_ls = [500, 1000, 1500, 2000, 2500]
     nlinks_arr = np.sort(np.array(nlinks_ls))
 
-    methods = [s for s in eval_df.columns if 'pval' in s]
+    if methods is None:
+        methods = [s for s in eval_df.columns if 'pval' in s]
 
     limit_dic = {
         method: (eval_df[method] == eval_df[method].min()).sum()
@@ -528,7 +532,7 @@ def analyze_enrichment_jacknife(eval_df, categorical_arr, score_col='gt_pip', nl
     return enrich_df, lower_ci_df, upper_ci_df, std_ci_df, jn_dic
 
 
-def analyze_enrichment_auc_midpoint_jackknife(eval_df, categorical_arr, score_col='gt_pip', nlinks_ls=None):
+def analyze_enrichment_auc_midpoint_jackknife(eval_df, categorical_arr, score_col='gt_pip', methods=None, nlinks_ls=None):
     """
     Compute enrichment AUC via midpoint rule using jackknife confidence intervals.
     
@@ -552,7 +556,9 @@ def analyze_enrichment_auc_midpoint_jackknife(eval_df, categorical_arr, score_co
         nlinks_ls = [500, 1000, 1500, 2000, 2500]
     nlinks_arr = np.sort(np.array(nlinks_ls))
 
-    methods = [s for s in eval_df.columns if 'pval' in s]
+    if methods is None:
+        methods = [s for s in eval_df.columns if 'pval' in s]
+
     score_arr = eval_df[score_col].values
     blocks_arr = np.unique(categorical_arr)
     n_blocks = len(blocks_arr)
@@ -570,8 +576,9 @@ def analyze_enrichment_auc_midpoint_jackknife(eval_df, categorical_arr, score_co
     for method in tqdm(methods):
         pval_arr = eval_df[method].values
 
+        nan_mask = ~np.isnan(score_arr) & ~np.isnan(pval_arr)
         enrich_at_mid = np.array([
-            enrichment(score_arr, pval_arr, int(n)) for n in midpoints
+            enrichment(score_arr[nan_mask], pval_arr[nan_mask], int(n)) for n in midpoints
         ])
         auc = np.sum(enrich_at_mid * deltas)
         auc_vals.append(auc)
@@ -582,17 +589,37 @@ def analyze_enrichment_auc_midpoint_jackknife(eval_df, categorical_arr, score_co
         enrich_jn = np.zeros((n_blocks, len(midpoints)))
 
         for bi, block in enumerate(blocks_arr):
-            mask = categorical_arr != block
+            mask_block = categorical_arr != block
             ratio_arr[bi] = len(categorical_arr) / np.sum(categorical_arr == block)
-            score_sub = score_arr[mask]
-            pval_sub = pval_arr[mask]
+            score_sub = score_arr[mask_block]
+            pval_sub = pval_arr[mask_block]
+
+            # remove nans
+            nan_mask = ~np.isnan(score_sub) & ~np.isnan(pval_sub)
+            if len(score_sub) == 0 or len(pval_sub) == 0:
+                print(f'Excluding {method}, {block} from JN computation...')
+                enrich_jn[bi] = np.nan
+                jn_estimates[bi] = np.nan
+                ratio_arr[bi] = np.nan
+                continue
 
             enrich_jn[bi] = np.array([
-                enrichment(score_sub, pval_sub, int(n)) for n in midpoints
+                enrichment(score_sub[nan_mask], pval_sub[nan_mask], int(n)) for n in midpoints
             ])
             jn_estimates[bi] = np.sum(enrich_jn[bi] * deltas)
 
         jn_dic[0][method] = jn_estimates
+
+        # Remove NaNs before CI/stat calculation
+        valid = ~np.isnan(jn_estimates) & ~np.isnan(ratio_arr)
+        jn_estimates = jn_estimates[valid]
+        ratio_arr = ratio_arr[valid]
+
+        if len(jn_estimates) == 0:
+            lower_ci_vals.append(np.nan)
+            upper_ci_vals.append(np.nan)
+            std_ci_vals.append(np.nan)
+            continue
 
         # CI and Std
         lower, upper = np.percentile(jn_estimates, [2.5, 97.5])
