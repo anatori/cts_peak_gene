@@ -173,8 +173,8 @@ def multiome_trackplot(df, atac = None, rna = None, sortby = 'poiss_coeff', coef
     # create subplots, including a smaller plot at the bottom for the ct colormap
     nrows = len(sorted_df)
     fig,axs = plt.subplots(
-        figsize=(width,height), nrows=nrows, ncols=2,
-        sharex=False, sharey=False, gridspec_kw={'hspace':0,'wspace':0,'height_ratios':[2]*nrows}
+        figsize=(width,height), nrows=nrows+1, ncols=2,
+        sharex=False, sharey=False, gridspec_kw={'hspace':0,'wspace':0,'height_ratios':[2]*nrows + [0.5]}
         )
 
     # extract gene and peak ids
@@ -203,20 +203,20 @@ def multiome_trackplot(df, atac = None, rna = None, sortby = 'poiss_coeff', coef
     ct_sizes = np.cumsum(np.array(ct_sizes))
 
     color_length = len(ct_sizes)-1
-    if color_length < 20: cmap = plt.get_cmap('tab20',color_length)
-    else:
-        colors = list(mpl.colors._colors_full_map.values()) # expanded color map
-        while len(colors) < color_length: 
-            colors += colors
-        colors = colors[:color_length]
-        cmap = mpl.colors.ListedColormap(colors)
+    # if color_length < 20: 
+    cmap = plt.get_cmap('tab20',color_length)
+    # else:
+    #     colors = list(mpl.colors._colors_full_map.values()) # expanded color map
+    #     while len(colors) < color_length: 
+    #         colors += colors
+    #     colors = colors[:color_length]
+    #     cmap = mpl.colors.ListedColormap(colors)
     idx = []
     
     for i in np.arange(len(sorted_df)):
         
-        # rna gene label
-        axs[i,0].set_xlim(0,len(x_axis))
-        axs[i,0].set_ylim(maxneg,maxpos)
+        # axs[i,0].set_xlim(0,len(x_axis))
+        # axs[i,0].set_ylim(maxneg,maxpos)
         
         axs[i,0].tick_params(
             axis="y",
@@ -262,6 +262,15 @@ def multiome_trackplot(df, atac = None, rna = None, sortby = 'poiss_coeff', coef
         # get info for particular link
         peak = atac[:,[i]]
         gene = rna[:,[i]]
+
+        # rna gene label
+        rna_max = np.max(gene)
+        rna_min = np.min(gene)
+        atac_max = np.max(peak)
+        atac_min = np.min(peak)
+
+        axs[i, 0].set_ylim(rna_min, rna_max)
+        axs[i, 1].set_ylim(atac_min, atac_max)
 
         # for each ct
         for k in np.arange(cts.unique().shape[0]):
