@@ -413,7 +413,9 @@ def main(args):
 
             ctrl_poissonb = []
             for i in range(end - start):
-                beta0, beta1 = ctar.method.vectorized_poisson_regression_final(adata_atac[:, ctrl_peaks[i]].layers['counts'], rna_data[:, [i]], tol=1e-3)
+                atac_i = adata_atac[:,ctrl_peaks[i]].layers['counts']
+                rna_i = rna_data[:,[i]]
+                beta0, beta1, _ = ctar.method.vectorized_poisson_regression_safe_converged(atac_i, rna_i, tol=1e-3)
                 ctrl_poissonb.append(beta1.flatten())
 
             if len(ctrl_poissonb) > 0:
@@ -434,11 +436,11 @@ def main(args):
             ctrl_files = ctrl_files[start:end]
 
             for ctrl_file in ctrl_files:
-                ctrl_links = np.load(os.path.join(ctrl_path, f'ctrl_links_{BIN_CONFIG}', ctrl_file))[:, :n_ctrl]
+                ctrl_links = np.load(os.path.join(ctrl_path, f'ctrl_links_{BIN_CONFIG}', ctrl_file))[:n_ctrl]
 
                 atac_data = adata_atac.layers['counts'][:, ctrl_links[:, 0]]
                 rna_data = adata_rna.layers['counts'][:, ctrl_links[:, 1]]
-                _, ctrl_poissonb = ctar.method.vectorized_poisson_regression_final(atac_data, rna_data, tol=1e-3)
+                _, ctrl_poissonb, _ = ctar.method.vectorized_poisson_regression_safe_converged(atac_data, rna_data, tol=1e-3)
                 
                 print(f"# Saving poissonb_{os.path.basename(ctrl_file)} to {final_corr_path}")
                 np.save(os.path.join(final_corr_path, f'poissonb_{os.path.basename(ctrl_file)}'), ctrl_poissonb.flatten())
@@ -458,7 +460,7 @@ def main(args):
 
                     atac_data = adata_atac.layers['counts'][:, ctrl_links[:, 0]]
                     rna_data = adata_rna.layers['counts'][:, ctrl_links[:, 1]]
-                    _, ctrl_poissonb = ctar.method.vectorized_poisson_regression_final(atac_data, rna_data, tol=1e-3)
+                    _, ctrl_poissonb, _ = ctar.method.vectorized_poisson_regression_safe_converged(atac_data, rna_data, tol=1e-3)
                     
                     print(f"# Saving poissonb_{os.path.basename(ctrl_file)} to {final_corr_path}")
                     np.save(os.path.join(final_corr_path, f'poissonb_{os.path.basename(ctrl_file)}'), ctrl_poissonb.flatten())
@@ -488,7 +490,7 @@ def main(args):
                 pearsonr = ctar.method.pearson_corr_sparse(atac_subset,rna_subset)[0]
                 corr.append(pearsonr)
             if METHOD == 'poiss':
-                _, poissonb = ctar.method.vectorized_poisson_regression_final(atac_subset,rna_subset)
+                _, poissonb, _ = ctar.method.vectorized_poisson_regression_safe_converged(atac_subset,rna_subset)
                 corr.append(poissonb)
             else:
                 raise ValueError("Must choose correlation method (currently implemented: corr, poiss)")
