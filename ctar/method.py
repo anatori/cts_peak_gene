@@ -17,7 +17,7 @@ import os
 import re
 
 import numba
-from numba import njit, prange
+from numba import njit
 
 
 ######################### regression methods #########################
@@ -89,102 +89,44 @@ def pearson_corr_sparse(mat_X, mat_Y, var_filter=False):
     return mat_corr
 
 
-@njit(parallel=True, fastmath=True)
-def _poisson_regression_core(X, Y, beta0, beta1, max_iter, tol, MAX_EXP, MAX_VAL):
-    n_cell, n_pair = X.shape
-    beta0 = beta0.copy()
-    beta1 = beta1.copy()
-    converged = np.full((n_pair,), False)
-
-    for iteration in range(max_iter):
-        
-        for j in prange(n_pair):
-            if converged[j]:
-                continue
-
-            x = X[:, j]
-            y = Y[:, j]
-
-            xb = beta0[j] + beta1[j] * x
-            xb = np.clip(xb, -MAX_EXP, MAX_EXP)
-
-            W = np.exp(xb)
-            W_safe = np.maximum(W, 1e-8)
-            z = xb + (y - W) / W_safe
-
-            sw = np.sum(W)
-            sx = np.sum(W * x)
-            sy = np.sum(W * z)
-            sxx = np.sum(W * x * x)
-            sxz = np.sum(W * x * z)
-
-            denom = sxx - (sx * sx) / sw
-            denom = max(denom, 1e-8)
-
-            num1 = sxz - (sx * sy) / sw
-            beta1_new = min(MAX_VAL, max(-MAX_VAL, num1 / denom))
-
-            num0 = sy - beta1_new * sx
-            beta0_new = min(MAX_VAL, max(-MAX_VAL, num0 / sw))
-
-            if max(np.abs(beta0_new - beta0[j]), np.abs(beta1_new - beta1[j])) < tol:
-                converged[j] = True
-
-            beta0[j] = beta0_new
-            beta1[j] = beta1_new
-
-        if np.all(converged):
-            print(f"Converged at iteration {iteration+1}")
-            break
-
-    return beta0, beta1
-
-
-def vectorized_poisson_regression_numba(mat_x, mat_y, max_iter=100, tol=1e-3, flag_float32=True):
-    fct_dtype = np.float32 if flag_float32 else np.float64
-    MAX_EXP = 80.0
-    MAX_VAL = 1e10
-
-    if sp.sparse.issparse(mat_x):
-        mat_x = mat_x.toarray()
-    if sp.sparse.issparse(mat_y):
-        mat_y = mat_y.toarray()
-
-    if mat_y.shape[1] == 1:
-        mat_y = np.repeat(mat_y, mat_x.shape[1], axis=1)
-
-    mat_x = mat_x.astype(fct_dtype)
-    mat_y = mat_y.astype(fct_dtype)
-
-    beta0_init = np.log(np.maximum(np.mean(mat_y, axis=0), 1e-8)).astype(fct_dtype)
-    beta1_init = np.zeros(mat_x.shape[1], dtype=fct_dtype)
-
-    beta0, beta1 = _poisson_regression_core(
-        mat_x, mat_y, beta0_init, beta1_init, max_iter, tol, MAX_EXP, MAX_VAL
-    )
-
-    return beta0.reshape(1, -1), beta1.reshape(1, -1)
-
-
 def vectorized_poisson_regression_safe_converged(mat_x, mat_y, max_iter=100, tol=1e-3, pct_converged=0.9, flag_float32=True):
     """ Fast poisson regression using IRLS, adapted from Alistair.
     Using sparsity and optionally low precision.
-    Safe version: clips values to prevent overflow.
-    Note that this is less precise due to clipping with float32.
+
+    
+    Parameters
+    ----------
+    mat_x : np.ndarray
+        Predictor matrix of shape (n_cell, n_pair).
+    mat_y : np.ndarray
+        Response vector of shape (n_cell,) or (n_cell, 1)
+    max_iter : int
+        Maximum number of iterations
+    tol : float
+        Convergence tolerance
+    flag_float32 : bool
+        Determines whether or not dtype will be converted to float32.
+
+    Returns
+    -------
+    v_beta0 : np.ndarray
+        Intercept coefficients of shape (n_pair,)
+    v_beta1 : np.ndarray
+        Slope coefficients of shape (n_pair,)
+
     """
 
     n_cell, n_pair = mat_x.shape
     fct_dtype = np.float32 if flag_float32 else float
 
-    v_beta0 = np.matrix(np.zeros((1, n_pair), dtype=fct_dtype))
-    v_beta1 = np.matrix(np.zeros((1, n_pair), dtype=fct_dtype))
-    v_beta0_final = np.matrix(np.zeros((1, n_pair), dtype=fct_dtype))
-    v_beta1_final = np.matrix(np.zeros((1, n_pair), dtype=fct_dtype))
-
+    v_beta0 = np.zeros((1, n_pair), dtype=fct_dtype)
+    v_beta1 = np.zeros((1, n_pair), dtype=fct_dtype)
+    v_beta0_final = np.zeros((1, n_pair), dtype=fct_dtype)
+    v_beta1_final = np.zeros((1, n_pair), dtype=fct_dtype)
     pct_converged_mask = np.full((n_pair,), False)
 
     if mat_y.shape[1] == 1:
-        if sp.sparse.issparse(mat_y):
+        if sp.sparse.issparse(mat_y) is True:
             mat_y = np.repeat(mat_y.toarray(), n_pair, axis=1)
         else:
             mat_y = np.repeat(mat_y, n_pair, axis=1)
@@ -203,68 +145,72 @@ def vectorized_poisson_regression_safe_converged(mat_x, mat_y, max_iter=100, tol
         mat_y = mat_y.reshape(-1, 1)
 
     is_pct_unconverged = False
-    MAX_EXP = 80.0
-    MAX_VAL = 1e10
+    MAX_EXP = np.float32(80.0)
+    MAX_VAL = np.float32(1e10)
+    MIN_VAL = np.float32(1e-8)
 
     for iteration in range(max_iter):
-        sum_xy = mat_x.multiply(v_beta1) + v_beta0
+
+        sum_xy = (mat_x.multiply(v_beta1) + v_beta0).A # adding returns matrix
         sum_xy = sum_xy.clip(-MAX_EXP, MAX_EXP)
         sum_w = np.exp(sum_xy)
 
         sum_x = mat_x.multiply(sum_w)
         denom = mat_x.multiply(sum_x)
-        sum_w_safe = np.maximum(sum_w, 1e-8)
-        sum_xy = sum_xy + (mat_y - sum_w) / sum_w_safe
+        sum_w_safe = np.maximum(sum_w, MIN_VAL)
+        temp = (mat_y - sum_w).A 
+        temp /= sum_w_safe
+        sum_xy = sum_xy + temp
 
         sum_w_safe = np.clip(sum_w_safe, 0, MAX_VAL)
-        sum_y = np.multiply(sum_w_safe, sum_xy).sum(axis=0)
-        sum_xy = sum_x.multiply(sum_xy).sum(axis=0)
+        sum_y = (sum_w_safe * sum_xy)
+        sum_y = sum_y.sum(axis=0)
+        sum_xy = sum_x.tocsc().multiply(sum_xy).sum(axis=0).A # faster, mem eff
         sum_w = sum_w.sum(axis=0)
-        sum_x = sum_x.sum(axis=0)
+        sum_x = sum_x.sum(axis=0).A
         sum_x = sum_x.clip(-MAX_VAL, MAX_VAL)
-        sum_w = np.maximum(sum_w, 1e-8)
+        sum_w = np.maximum(sum_w, MIN_VAL)
 
-        denom = denom.sum(axis=0) - np.divide(np.power(sum_x, 2), sum_w, out=np.zeros_like(sum_x), where=sum_w != 0)
-        denom = np.maximum(denom, 1e-8)
+        denom = denom.sum(axis=0).A - (sum_x ** 2) / sum_w
+        denom = np.maximum(denom, MIN_VAL)
 
         sum_y_safe = sum_y.clip(-MAX_VAL, MAX_VAL)
         sum_x_safe = sum_x.clip(-MAX_VAL, MAX_VAL)
-        sum_w_safe_scalar = np.maximum(sum_w, 1e-8)
-        denom_safe = np.maximum(denom, 1e-8)
+        sum_w_safe = np.maximum(sum_w, MIN_VAL)
+        denom_safe = np.maximum(denom, MIN_VAL)
 
         # beta1
-        num1 = sum_xy - np.multiply(sum_x_safe, sum_y_safe) / sum_w_safe_scalar
-        num1 = num1.clip(-MAX_VAL, MAX_VAL)
-        v_beta1_new = num1 / denom_safe
+        v_beta1_new = sum_xy - (sum_x_safe * sum_y_safe) / sum_w_safe
+        v_beta1_new = v_beta1_new.clip(-MAX_VAL, MAX_VAL)
+        v_beta1_new /= denom_safe
 
         # beta0
-        num0 = sum_y_safe - np.multiply(v_beta1_new, sum_x_safe)
-        num0 = num0.clip(-MAX_VAL, MAX_VAL)
-        v_beta0_new = num0 / sum_w_safe_scalar
+        v_beta0_new = sum_y_safe - (v_beta1_new * sum_x_safe)
+        v_beta0_new = v_beta0_new.clip(-MAX_VAL, MAX_VAL)
+        v_beta0_new /= sum_w_safe
 
-        converged_mask = ((np.abs(v_beta1_new - v_beta1) < tol) & (np.abs(v_beta0_new - v_beta0) < tol)).A
+        converged_mask = ((np.abs(v_beta1_new - v_beta1) < tol) & (np.abs(v_beta0_new - v_beta0) < tol))
 
         if not is_pct_unconverged and (np.sum(converged_mask) / n_pair >= pct_converged):
             print(f"{pct_converged*100}% pairs converged after {iteration+1} iterations.")
             is_pct_unconverged = True
             
-            v_beta0_final.A[converged_mask] = v_beta0_new.A[converged_mask]
-            v_beta1_final.A[converged_mask] = v_beta1_new.A[converged_mask]
+            v_beta0_final[converged_mask] = v_beta0_new[converged_mask]
+            v_beta1_final[converged_mask] = v_beta1_new[converged_mask]
 
-            v_beta0_new = np.matrix(v_beta0_new.A[~converged_mask])
-            v_beta1_new = np.matrix(v_beta1_new.A[~converged_mask])
+            v_beta0_new = v_beta0_new[~converged_mask].copy()
+            v_beta1_new = v_beta1_new[~converged_mask].copy()
 
-            pct_converged_mask = converged_mask
             converged_mask = converged_mask.flatten()
+            pct_converged_mask = converged_mask.copy()
             mat_x = mat_x[:, ~converged_mask].copy()
             mat_y = mat_y[:, ~converged_mask].copy()
 
         if np.all(converged_mask) or iteration == (max_iter - 1):
             print(f"Converged after {iteration+1} iterations.")
             if is_pct_unconverged:
-                converged_mask = ~pct_converged_mask
-                v_beta0_final.A[converged_mask] = v_beta0_new.A.flatten()
-                v_beta1_final.A[converged_mask] = v_beta1_new.A.flatten()
+                v_beta0_final[:,~pct_converged_mask] = v_beta0_new
+                v_beta1_final[:,~pct_converged_mask] = v_beta1_new
             else:
                 v_beta0_final = v_beta0_new
                 v_beta1_final = v_beta1_new
@@ -273,131 +219,10 @@ def vectorized_poisson_regression_safe_converged(mat_x, mat_y, max_iter=100, tol
 
         v_beta0, v_beta1 = v_beta0_new, v_beta1_new
 
-    return np.array(v_beta0_final), np.array(v_beta1_final), pct_converged_mask
+    return v_beta0_final, v_beta1_final, pct_converged_mask
 
 
-def vectorized_poisson_regression_converged(mat_x, mat_y, max_iter=100, tol=1e-3, pct_converged=0.9, flag_float32=True):
-    """ Fast poisson regression using IRLS, adapted from Alistair.
-    Using sparsity and optionally low precision.
-    
-    Parameters
-    ----------
-    mat_x : np.ndarray
-        Predictor matrix of shape (n_cell, n_pair)
-    mat_y : np.ndarray
-        Response vector of shape (n_cell,) or (n_cell, 1)
-    max_iter : int
-        Maximum number of iterations
-    tol : float
-        Convergence tolerance
-    pct_converged : float
-        Proportion of converged coefficients to solve first
-    flag_float32 : bool
-        Determines whether or not dtype will be converted to float32
-
-    Returns
-    -------
-    v_beta0 : np.ndarray
-        Intercept coefficients of shape (n_pair,)
-    v_beta1 : np.ndarray
-        Slope coefficients of shape (n_pair,)
-
-    """
-
-    n_cell, n_pair = mat_x.shape
-    
-    if flag_float32 is True:
-        fct_dtype = np.float32
-    else: 
-        fct_dtype = float
-
-    
-    v_beta0 = np.matrix(np.zeros((1,n_pair), dtype=fct_dtype))
-    v_beta1 = np.matrix(np.zeros((1,n_pair), dtype=fct_dtype))
-    v_beta0_final = np.matrix(np.zeros((1,n_pair), dtype=fct_dtype))
-    v_beta1_final = np.matrix(np.zeros((1,n_pair), dtype=fct_dtype))
-
-    pct_converged_mask = np.full((n_pair,), False)
-
-    # change mat_y from (n_cell,) to (n_cell, n_pair) if single pair
-    if mat_y.shape[1] == 1:
-        # if we repeat the sparse array, it can greatly slow performance
-        # (concatenated sparse vectors are not optimized for sparsity)
-        if sp.sparse.issparse(mat_y) is True:
-            mat_y = np.repeat(mat_y.toarray(), n_pair, axis=1)
-        else:
-            mat_y = np.repeat(mat_y, n_pair, axis=1)
-    
-    if sp.sparse.issparse(mat_x) is False:
-        mat_x = sp.sparse.csc_matrix(mat_x) 
-    if sp.sparse.issparse(mat_y) is False:
-        mat_y = sp.sparse.csc_matrix(mat_y)
-
-    if mat_x.dtype != fct_dtype:
-        mat_x = mat_x.astype(fct_dtype)
-    if mat_y.dtype != fct_dtype:
-        mat_y = mat_y.astype(fct_dtype)
-
-    if mat_y.ndim == 1: 
-        mat_y = mat_y.reshape(-1,1)
-
-    is_pct_unconverged = False
-
-    for iteration in range(max_iter):
-
-        sum_xy = mat_x.multiply(v_beta1) + v_beta0 # (n_cell, n_pair)
-        sum_w = np.exp(sum_xy) # (n_cell, n_pair)
-
-        sum_xy = sum_xy + (mat_y - sum_w) / sum_w # (n_cell, n_pair)
-        sum_x = mat_x.multiply(sum_w) # (n_cell, n_pair)
-        denom = mat_x.multiply(sum_x) # (n_cell, n_pair)
-
-        sum_y = np.multiply(sum_w,sum_xy).sum(axis=0)
-        sum_xy = sum_x.multiply(sum_xy).sum(axis=0)
-        sum_w = sum_w.sum(axis=0)
-        sum_x = sum_x.sum(axis=0)
-
-        denom = denom.sum(axis=0) - (np.power(sum_x,2) / sum_w)
-        denom = np.maximum(denom, 1e-8)  # Avoid division by zero
-        
-        v_beta1_new = (sum_xy - np.multiply(sum_x,sum_y) / sum_w) / denom
-        v_beta0_new = (sum_y - np.multiply(v_beta1_new,sum_x)) / sum_w
-
-        converged_mask = ((np.abs(v_beta1_new - v_beta1) < tol) &
-                          (np.abs(v_beta0_new - v_beta0) < tol)).A
-
-        if not is_pct_unconverged and (np.sum(converged_mask) / n_pair >= pct_converged):
-            print(f"{pct_converged * 100:.1f}% pairs converged after {iteration + 1} iterations.")
-            is_pct_unconverged = True
-
-            v_beta0_final.A[converged_mask] = v_beta0_new.A[converged_mask]
-            v_beta1_final.A[converged_mask] = v_beta1_new.A[converged_mask]
-
-            v_beta0_new = np.matrix(v_beta0_new.A[~converged_mask])
-            v_beta1_new = np.matrix(v_beta1_new.A[~converged_mask])
-
-            pct_converged_mask = converged_mask.copy()
-            converged_mask = converged_mask.flatten()
-            mat_x = mat_x[:, ~converged_mask].copy()
-            mat_y = mat_y[:, ~converged_mask].copy()
-
-        if np.all(converged_mask) or iteration == (max_iter - 1):
-            print(f"Converged after {iteration + 1} iterations.")
-            if is_pct_unconverged:
-                converged_mask = ~pct_converged_mask
-                v_beta0_final.A[converged_mask] = v_beta0_new.A.flatten()
-                v_beta1_final.A[converged_mask] = v_beta1_new.A.flatten()
-            else:
-                v_beta0_final = v_beta0_new
-                v_beta1_final = v_beta1_new
-            break
-
-        v_beta0, v_beta1 = v_beta0_new, v_beta1_new
-
-    return np.array(v_beta0_final), np.array(v_beta1_final), pct_converged_mask
-
-
-def vectorized_poisson_regression_final(mat_x, mat_y, max_iter=100, tol=1e-6, flag_float32=True):
+def vectorized_poisson_regression_fast(mat_x, mat_y, max_iter=100, tol=1e-6, flag_float32=True):
     """ Fast poisson regression using IRLS, adapted from Alistair.
     Using sparsity and optionally low precision.
 
