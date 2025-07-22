@@ -205,6 +205,11 @@ def main(args):
         print("# Setting --pybedtools_path")
         pybedtools.helpers.set_bedtools_path(PYBEDTOOLS_PATH)
 
+        if METHOD == 'corr':
+            final_path_prefix = 'ctrl_corr_'
+        if METHOD == 'pr':
+            final_path_prefix = 'ctrl_poiss_'
+
     if JOB in ["compute_pval"]:
 
         try:
@@ -313,7 +318,7 @@ def main(args):
             else:
                 print(f"# {final_ctrl_path} is already complete.")
             
-            final_corr_path = os.path.join(corr_path, f'ctrl_corr_{BIN_CONFIG}')
+            final_corr_path = os.path.join(corr_path, f'{final_path_prefix}{BIN_CONFIG}')
             if os.path.exists(final_corr_path) is False:
                 os.makedirs(final_corr_path)
 
@@ -435,15 +440,10 @@ def main(args):
             if n_ctrl_files < end: end = n_ctrl_files
             ctrl_files = ctrl_files[start:end]
 
-            for ctrl_file in ctrl_files:
-                ctrl_links = np.load(os.path.join(ctrl_path, f'ctrl_links_{BIN_CONFIG}', ctrl_file))[:n_ctrl]
-
-                atac_data = adata_atac.layers['counts'][:, ctrl_links[:, 0]]
-                rna_data = adata_rna.layers['counts'][:, ctrl_links[:, 1]]
-                _, ctrl_poissonb, _ = ctar.method.vectorized_poisson_regression_safe_converged(atac_data, rna_data, tol=1e-3)
-                
-                print(f"# Saving poissonb_{os.path.basename(ctrl_file)} to {final_corr_path}")
-                np.save(os.path.join(final_corr_path, f'poissonb_{os.path.basename(ctrl_file)}'), ctrl_poissonb.flatten())
+            start_time = time.time()
+            # ctar.method.run_parallel_pr(ctrl_path, BIN_CONFIG, n_ctrl, adata_atac, adata_rna, final_corr_path, n_jobs=4)
+            ctar.method.parallel_poisson_shared_sparse(ctrl_path, BIN_CONFIG, start, end, n_ctrl, adata_atac, adata_rna, final_corr_path, n_jobs=4)
+            print('# Time taken = %0.2fs' % (time.time() - start_time))
 
             # check for missing files
             if end == n_ctrl_files:
