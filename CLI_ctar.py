@@ -103,7 +103,7 @@ def main(args):
 
     # Print input options
     header = ctar.util.get_cli_head()
-    header += "Call: CLI_ldspec.py \\\n"
+    header += "Call: CLI_ctar.py \\\n"
     header += "--job %s\\\n" % JOB
     header += "--multiome_file %s\\\n" % MULTIOME_FILE
     header += "--batch_size %s\\\n" % BATCH_SIZE
@@ -411,14 +411,10 @@ def main(args):
         if use_in_memory:
 
             print("# Using in-memory ctrl_links (inf.inf)")
-            ctrl_peaks = np.load(os.path.join(ctrl_path, f'ctrl_peaks_{BIN_CONFIG}.npy'))
-            adata_atac.varm['ctrl_peaks'] = ctrl_peaks[:, :n_ctrl]
 
             # Adjust end for last batch
             last_batch = eval_df.shape[0] // BATCH_SIZE
             if BATCH == last_batch: end = eval_df.shape[0]
-
-            links = links_arr[:, start:end]
 
             start_time = time.time()
             ctar.multiprocess.parallel_poisson_shared_sparse(
@@ -432,18 +428,18 @@ def main(args):
                 final_corr_path=final_corr_path,
                 n_jobs=n_jobs,
                 mode='memory',
-                ctrl_links_arr=links_arr
+                links_arr=links_arr
             )
             print('# Time taken = %0.2fs' % (time.time() - start_time))
 
             # Consolidation if all batches complete
             curr_n_files = len(os.listdir(final_corr_path))
-            if curr_n_files == (last_batch + 1):
+            if curr_n_files == (eval_df.shape[0] + 1):
                 print(f"# All {curr_n_files} batches complete. Consolidating null")
-                full_ctrl_poissonb = ctar.data_loader.consolidate_null(
+                full_ctrl_poissonb = ctar.data_loader.consolidate_individual_nulls(
                     final_corr_path + '/',
                     startswith='poissonb_ctrl_',
-                    b=last_batch + 1
+                    b=(eval_df.shape[0] + 1)
                 )
                 np.save(os.path.join(corr_path, f'ctrl_poiss_{BIN_CONFIG}.npy'), full_ctrl_poissonb)
 
