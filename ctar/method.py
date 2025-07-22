@@ -16,8 +16,8 @@ import sklearn as sk
 import os
 import re
 
-import numba
-from numba import njit
+from multiprocessing import shared_memory, cpu_count
+from concurrent.futures import ProcessPoolExecutor
 
 
 ######################### regression methods #########################
@@ -87,6 +87,130 @@ def pearson_corr_sparse(mat_X, mat_Y, var_filter=False):
         return mat_corr, ~no_var
 
     return mat_corr
+
+
+def create_shared_sparse(mat):
+    """
+    Create shared memory blocks for scipy.sparse.csc_matrix 'mat'.
+    Returns shared_memory objects, shape, and dtypes.
+    """
+    assert sp.sparse.isspmatrix_csc(mat), "Only CSC sparse format supported"
+
+    shm_data = shared_memory.SharedMemory(create=True, size=mat.data.nbytes)
+    shm_indices = shared_memory.SharedMemory(create=True, size=mat.indices.nbytes)
+    shm_indptr = shared_memory.SharedMemory(create=True, size=mat.indptr.nbytes)
+
+    np.ndarray(mat.data.shape, dtype=mat.data.dtype, buffer=shm_data.buf)[:] = mat.data
+    np.ndarray(mat.indices.shape, dtype=mat.indices.dtype, buffer=shm_indices.buf)[:] = mat.indices
+    np.ndarray(mat.indptr.shape, dtype=mat.indptr.dtype, buffer=shm_indptr.buf)[:] = mat.indptr
+
+    return (shm_data, shm_indices, shm_indptr), mat.shape, mat.data.dtype, mat.indices.dtype, mat.indptr.dtype
+
+def attach_shared_sparse(shm_names, shape, dtype_data, dtype_indices, dtype_indptr):
+    """
+    Attach to shared memory blocks and reconstruct sparse matrix.
+    shm_names: tuple/list of 3 shared_memory names
+    """
+    shm_data = shared_memory.SharedMemory(name=shm_names[0])
+    shm_indices = shared_memory.SharedMemory(name=shm_names[1])
+    shm_indptr = shared_memory.SharedMemory(name=shm_names[2])
+
+    data = np.ndarray((shm_data.size // np.dtype(dtype_data).itemsize,), dtype=dtype_data, buffer=shm_data.buf)
+    indices = np.ndarray((shm_indices.size // np.dtype(dtype_indices).itemsize,), dtype=dtype_indices, buffer=shm_indices.buf)
+    indptr = np.ndarray((shm_indptr.size // np.dtype(dtype_indptr).itemsize,), dtype=dtype_indptr, buffer=shm_indptr.buf)
+
+    mat = sp.sparse.csc_matrix((data, indices, indptr), shape=shape)
+    return mat, (shm_data, shm_indices, shm_indptr)
+
+def process_ctrl_file_shared_sparse(args):
+    """
+    Worker: attach to shared sparse matrices, slice columns, run Poisson regression.
+    """
+    (ctrl_file_idx, ctrl_files, atac_shm_names, rna_shm_names,
+     atac_shape, rna_shape, atac_dtypes, rna_dtypes,
+     ctrl_path, BIN_CONFIG, n_ctrl, final_corr_path) = args
+
+    try:
+        # Attach to shared sparse matrices
+        atac_mat, atac_shms = attach_shared_sparse(atac_shm_names, atac_shape, *atac_dtypes)
+        rna_mat, rna_shms = attach_shared_sparse(rna_shm_names, rna_shape, *rna_dtypes)
+
+        ctrl_file = ctrl_files[ctrl_file_idx]
+        ctrl_links = np.load(os.path.join(ctrl_path, f'ctrl_links_{BIN_CONFIG}', ctrl_file))[:n_ctrl]
+
+        # Slice sparse matrices with ctrl_links indices
+        atac_data = atac_mat[:, ctrl_links[:, 0]]
+        rna_data = rna_mat[:, ctrl_links[:, 1]]
+
+        # Run your Poisson regression function (expects sparse matrices)
+        _, ctrl_poissonb, _ = vectorized_poisson_regression_safe_converged(atac_data, rna_data, tol=1e-3)
+
+        # Save output
+        output_path = os.path.join(final_corr_path, f'poissonb_{os.path.basename(ctrl_file)}')
+        np.save(output_path, ctrl_poissonb.flatten())
+
+        # Cleanup
+        for shm in atac_shms + rna_shms:
+            shm.close()
+
+        return f"# Completed {ctrl_file}"
+
+    except Exception as e:
+        return f"Error processing {ctrl_file}: {str(e)}"
+
+def parallel_poisson_shared_sparse(ctrl_path, BIN_CONFIG, start, end, n_ctrl, adata_atac, adata_rna, final_corr_path, n_jobs=-1):
+    """
+    Parallel Poisson regression using shared sparse memory to avoid dense conversion and copying.
+    """
+    ctrl_files_all = os.listdir(os.path.join(ctrl_path, f'ctrl_links_{BIN_CONFIG}'))
+    ctrl_files = ctrl_files_all[start:end]
+
+    # Extract sparse matrices in CSC format (convert if needed)
+    atac_sparse = adata_atac.layers['counts']
+    rna_sparse = adata_rna.layers['counts']
+
+    if not sp.sparse.isspmatrix_csc(atac_sparse):
+        atac_sparse = atac_sparse.tocsc()
+    if not sp.sparse.isspmatrix_csc(rna_sparse):
+        rna_sparse = rna_sparse.tocsc()
+
+    # If n_jobs not specified or invalid, default to number of CPU cores
+    if n_jobs is None or n_jobs <= 0:
+        n_jobs = os.cpu_count() or 1  # fallback to 1 if detection fails
+
+    # Create shared memory for sparse matrices
+    atac_shms, atac_shape, *atac_dtypes = create_shared_sparse(atac_sparse)
+    rna_shms, rna_shape, *rna_dtypes = create_shared_sparse(rna_sparse)
+
+    # Prepare args for workers
+    args_list = [
+        (
+            i, ctrl_files,
+            (atac_shms[0].name, atac_shms[1].name, atac_shms[2].name),
+            (rna_shms[0].name, rna_shms[1].name, rna_shms[2].name),
+            atac_shape, rna_shape,
+            (atac_dtypes[0], atac_dtypes[1], atac_dtypes[2]),
+            (rna_dtypes[0], rna_dtypes[1], rna_dtypes[2]),
+            ctrl_path, BIN_CONFIG, n_ctrl, final_corr_path
+        )
+        for i in range(len(ctrl_files))
+    ]
+
+    print(f"# Processing {len(ctrl_files)} files with shared sparse memory...")
+
+    try:
+        with ProcessPoolExecutor(max_workers=n_jobs if n_jobs > 0 else None) as executor:
+            results = list(executor.map(process_ctrl_file_shared_sparse, args_list))
+
+        print(f"# Successful: {len([r for r in results if 'Completed' in r])} / {len(results)}")
+
+    finally:
+        # Cleanup shared memory
+        for shm in atac_shms + rna_shms:
+            shm.close()
+            shm.unlink()
+
+    return results
 
 
 def vectorized_poisson_regression_safe_converged(mat_x, mat_y, max_iter=100, tol=1e-3, pct_converged=0.9, flag_float32=True):
@@ -222,7 +346,7 @@ def vectorized_poisson_regression_safe_converged(mat_x, mat_y, max_iter=100, tol
     return v_beta0_final, v_beta1_final, pct_converged_mask
 
 
-def vectorized_poisson_regression_fast(mat_x, mat_y, max_iter=100, tol=1e-6, flag_float32=True):
+def vectorized_poisson_regression_safe(mat_x, mat_y, max_iter=100, tol=1e-3, pct_converged=0.9, flag_float32=True):
     """ Fast poisson regression using IRLS, adapted from Alistair.
     Using sparsity and optionally low precision.
 
@@ -250,91 +374,15 @@ def vectorized_poisson_regression_fast(mat_x, mat_y, max_iter=100, tol=1e-6, fla
     """
 
     n_cell, n_pair = mat_x.shape
-    
-    if flag_float32 is True:
-        fct_dtype = np.float32
-    else: 
-        fct_dtype = float
-
-    
-    v_beta0 = np.zeros(n_pair, dtype=fct_dtype)
-    v_beta1 = np.zeros(n_pair, dtype=fct_dtype)
-
-    # change mat_y from (n_cell,) to (n_cell, n_pair) if single pair
-    if mat_y.shape[1] == 1:
-        # if we repeat the sparse array, it can greatly slow performance
-        # (concatenated sparse vectors are not optimized for sparsity)
-        if sp.sparse.issparse(mat_y) is True:
-            mat_y = np.repeat(mat_y.toarray(), n_pair, axis=1)
-        else:
-            mat_y = np.repeat(mat_y, n_pair, axis=1)
-    
-    if sp.sparse.issparse(mat_x) is False:
-        mat_x = sp.sparse.csc_matrix(mat_x) 
-    if sp.sparse.issparse(mat_y) is False:
-        mat_y = sp.sparse.csc_matrix(mat_y)
-
-    if mat_x.dtype != fct_dtype:
-        mat_x = mat_x.astype(fct_dtype)
-    if mat_y.dtype != fct_dtype:
-        mat_y = mat_y.astype(fct_dtype)
-
-    if mat_y.ndim == 1: 
-        mat_y = mat_y.reshape(-1,1)
-
-
-    for iteration in range(max_iter):
-
-        sum_xy = mat_x.multiply(v_beta1) + v_beta0 # (n_cell, n_pair)
-        sum_w = np.exp(sum_xy) # (n_cell, n_pair)
-
-        sum_xy = sum_xy + (mat_y - sum_w) / sum_w # (n_cell, n_pair)
-        sum_x = mat_x.multiply(sum_w) # (n_cell, n_pair)
-        denom = mat_x.multiply(sum_x) # (n_cell, n_pair)
-
-        sum_y = np.multiply(sum_w,sum_xy).sum(axis=0)
-        sum_xy = sum_x.multiply(sum_xy).sum(axis=0)
-        sum_w = sum_w.sum(axis=0)
-        sum_x = sum_x.sum(axis=0)
-
-        denom = denom.sum(axis=0) - (np.power(sum_x,2) / sum_w)
-        denom = np.maximum(denom, 1e-8)  # Avoid division by zero
-        
-        v_beta1_new = (sum_xy - np.multiply(sum_x,sum_y) / sum_w) / denom
-        v_beta0_new = (sum_y - np.multiply(v_beta1_new,sum_x)) / sum_w
-
-        if np.all(np.abs(v_beta1_new - v_beta1) < tol) and np.all(np.abs(v_beta0_new - v_beta0) < tol):
-            print(f"Converged after {iteration+1} iterations.")
-            break
-
-        if iteration == (max_iter - 1):
-            break
-
-        # Update beta0 and beta1
-        v_beta0, v_beta1 = v_beta0_new, v_beta1_new  # Simpler variable update
-
-    return np.asarray(v_beta0), np.asarray(v_beta1), np.abs(v_beta0_new - v_beta0), np.abs(v_beta1_new - v_beta1)
-
-
-def vectorized_poisson_regression_safe(mat_x, mat_y, max_iter=100, tol=1e-3, flag_float32=True):
-    """ Fast poisson regression using IRLS, adapted from Alistair.
-    Using sparsity and optionally low precision.
-    Safe version: clips values to prevent overflow.
-    Note that this is less precise due to clipping with float32.
-    """
-
-    n_cell, n_pair = mat_x.shape
     fct_dtype = np.float32 if flag_float32 else float
 
-    v_beta0 = np.matrix(np.zeros((1, n_pair), dtype=fct_dtype))
-    v_beta1 = np.matrix(np.zeros((1, n_pair), dtype=fct_dtype))
-    v_beta0_final = np.matrix(np.zeros((1, n_pair), dtype=fct_dtype))
-    v_beta1_final = np.matrix(np.zeros((1, n_pair), dtype=fct_dtype))
-
-    pct_converged_mask = np.full((n_pair,), False)
+    v_beta0 = np.zeros((1, n_pair), dtype=fct_dtype)
+    v_beta1 = np.zeros((1, n_pair), dtype=fct_dtype)
+    v_beta0_final = np.zeros((1, n_pair), dtype=fct_dtype)
+    v_beta1_final = np.zeros((1, n_pair), dtype=fct_dtype)
 
     if mat_y.shape[1] == 1:
-        if sp.sparse.issparse(mat_y):
+        if sp.sparse.issparse(mat_y) is True:
             mat_y = np.repeat(mat_y.toarray(), n_pair, axis=1)
         else:
             mat_y = np.repeat(mat_y, n_pair, axis=1)
@@ -352,57 +400,57 @@ def vectorized_poisson_regression_safe(mat_x, mat_y, max_iter=100, tol=1e-3, fla
     if mat_y.ndim == 1:
         mat_y = mat_y.reshape(-1, 1)
 
-    is_pct_unconverged = False
-    MAX_EXP = 80.0
-    MAX_VAL = 1e10
+    MAX_EXP = np.float32(80.0)
+    MAX_VAL = np.float32(1e10)
+    MIN_VAL = np.float32(1e-8)
 
     for iteration in range(max_iter):
-        sum_xy = mat_x.multiply(v_beta1) + v_beta0
+
+        sum_xy = (mat_x.multiply(v_beta1) + v_beta0).A # adding returns matrix
         sum_xy = sum_xy.clip(-MAX_EXP, MAX_EXP)
         sum_w = np.exp(sum_xy)
 
         sum_x = mat_x.multiply(sum_w)
         denom = mat_x.multiply(sum_x)
-        sum_w_safe = np.maximum(sum_w, 1e-8)
-        sum_xy = sum_xy + (mat_y - sum_w) / sum_w_safe
+        sum_w_safe = np.maximum(sum_w, MIN_VAL)
+        temp = (mat_y - sum_w).A 
+        temp /= sum_w_safe
+        sum_xy = sum_xy + temp
 
         sum_w_safe = np.clip(sum_w_safe, 0, MAX_VAL)
-        sum_y = np.multiply(sum_w_safe, sum_xy).sum(axis=0)
-        sum_xy = sum_x.multiply(sum_xy).sum(axis=0)
+        sum_y = (sum_w_safe * sum_xy)
+        sum_y = sum_y.sum(axis=0)
+        sum_xy = sum_x.tocsc().multiply(sum_xy).sum(axis=0).A # faster, mem eff
         sum_w = sum_w.sum(axis=0)
-        sum_x = sum_x.sum(axis=0)
+        sum_x = sum_x.sum(axis=0).A
         sum_x = sum_x.clip(-MAX_VAL, MAX_VAL)
-        sum_w = np.maximum(sum_w, 1e-8)
+        sum_w = np.maximum(sum_w, MIN_VAL)
 
-        denom = denom.sum(axis=0) - np.divide(np.power(sum_x, 2), sum_w, out=np.zeros_like(sum_x), where=sum_w != 0)
-        denom = np.maximum(denom, 1e-8)
+        denom = denom.sum(axis=0).A - (sum_x ** 2) / sum_w
+        denom = np.maximum(denom, MIN_VAL)
 
         sum_y_safe = sum_y.clip(-MAX_VAL, MAX_VAL)
         sum_x_safe = sum_x.clip(-MAX_VAL, MAX_VAL)
-        sum_w_safe_scalar = np.maximum(sum_w, 1e-8)
-        denom_safe = np.maximum(denom, 1e-8)
+        sum_w_safe = np.maximum(sum_w, MIN_VAL)
+        denom_safe = np.maximum(denom, MIN_VAL)
 
         # beta1
-        num1 = sum_xy - np.multiply(sum_x_safe, sum_y_safe) / sum_w_safe_scalar
-        num1 = num1.clip(-MAX_VAL, MAX_VAL)
-        v_beta1_new = num1 / denom_safe
+        v_beta1_new = sum_xy - (sum_x_safe * sum_y_safe) / sum_w_safe
+        v_beta1_new = v_beta1_new.clip(-MAX_VAL, MAX_VAL)
+        v_beta1_new /= denom_safe
 
         # beta0
-        num0 = sum_y_safe - np.multiply(v_beta1_new, sum_x_safe)
-        num0 = num0.clip(-MAX_VAL, MAX_VAL)
-        v_beta0_new = num0 / sum_w_safe_scalar
+        v_beta0_new = sum_y_safe - (v_beta1_new * sum_x_safe)
+        v_beta0_new = v_beta0_new.clip(-MAX_VAL, MAX_VAL)
+        v_beta0_new /= sum_w_safe
 
         if np.all(np.abs(v_beta1_new - v_beta1) < tol) and np.all(np.abs(v_beta0_new - v_beta0) < tol):
             print(f"Converged after {iteration+1} iterations.")
             break
 
-        if iteration == (max_iter - 1):
-            break
+        v_beta0, v_beta1 = v_beta0_new, v_beta1_new
 
-        # Update beta0 and beta1
-        v_beta0, v_beta1 = v_beta0_new, v_beta1_new  # Simpler variable update
-
-    return np.asarray(v_beta0), np.asarray(v_beta1), np.abs(v_beta0_new - v_beta0), np.abs(v_beta1_new - v_beta1)
+    return v_beta0_final, v_beta1_final
 
 
 ######################### generate null #########################
