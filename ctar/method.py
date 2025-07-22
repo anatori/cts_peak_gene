@@ -12,12 +12,10 @@ from Bio.SeqUtils import gc_fraction
 import anndata as ad
 import scanpy as sc
 import muon as mu
-import sklearn as sk
 import os
 import re
 
-from multiprocessing import shared_memory, cpu_count
-from concurrent.futures import ProcessPoolExecutor
+
 
 
 ######################### regression methods #########################
@@ -87,130 +85,6 @@ def pearson_corr_sparse(mat_X, mat_Y, var_filter=False):
         return mat_corr, ~no_var
 
     return mat_corr
-
-
-def create_shared_sparse(mat):
-    """
-    Create shared memory blocks for scipy.sparse.csc_matrix 'mat'.
-    Returns shared_memory objects, shape, and dtypes.
-    """
-    assert sp.sparse.isspmatrix_csc(mat), "Only CSC sparse format supported"
-
-    shm_data = shared_memory.SharedMemory(create=True, size=mat.data.nbytes)
-    shm_indices = shared_memory.SharedMemory(create=True, size=mat.indices.nbytes)
-    shm_indptr = shared_memory.SharedMemory(create=True, size=mat.indptr.nbytes)
-
-    np.ndarray(mat.data.shape, dtype=mat.data.dtype, buffer=shm_data.buf)[:] = mat.data
-    np.ndarray(mat.indices.shape, dtype=mat.indices.dtype, buffer=shm_indices.buf)[:] = mat.indices
-    np.ndarray(mat.indptr.shape, dtype=mat.indptr.dtype, buffer=shm_indptr.buf)[:] = mat.indptr
-
-    return (shm_data, shm_indices, shm_indptr), mat.shape, mat.data.dtype, mat.indices.dtype, mat.indptr.dtype
-
-def attach_shared_sparse(shm_names, shape, dtype_data, dtype_indices, dtype_indptr):
-    """
-    Attach to shared memory blocks and reconstruct sparse matrix.
-    shm_names: tuple/list of 3 shared_memory names
-    """
-    shm_data = shared_memory.SharedMemory(name=shm_names[0])
-    shm_indices = shared_memory.SharedMemory(name=shm_names[1])
-    shm_indptr = shared_memory.SharedMemory(name=shm_names[2])
-
-    data = np.ndarray((shm_data.size // np.dtype(dtype_data).itemsize,), dtype=dtype_data, buffer=shm_data.buf)
-    indices = np.ndarray((shm_indices.size // np.dtype(dtype_indices).itemsize,), dtype=dtype_indices, buffer=shm_indices.buf)
-    indptr = np.ndarray((shm_indptr.size // np.dtype(dtype_indptr).itemsize,), dtype=dtype_indptr, buffer=shm_indptr.buf)
-
-    mat = sp.sparse.csc_matrix((data, indices, indptr), shape=shape)
-    return mat, (shm_data, shm_indices, shm_indptr)
-
-def process_ctrl_file_shared_sparse(args):
-    """
-    Worker: attach to shared sparse matrices, slice columns, run Poisson regression.
-    """
-    (ctrl_file_idx, ctrl_files, atac_shm_names, rna_shm_names,
-     atac_shape, rna_shape, atac_dtypes, rna_dtypes,
-     ctrl_path, BIN_CONFIG, n_ctrl, final_corr_path) = args
-
-    try:
-        # Attach to shared sparse matrices
-        atac_mat, atac_shms = attach_shared_sparse(atac_shm_names, atac_shape, *atac_dtypes)
-        rna_mat, rna_shms = attach_shared_sparse(rna_shm_names, rna_shape, *rna_dtypes)
-
-        ctrl_file = ctrl_files[ctrl_file_idx]
-        ctrl_links = np.load(os.path.join(ctrl_path, f'ctrl_links_{BIN_CONFIG}', ctrl_file))[:n_ctrl]
-
-        # Slice sparse matrices with ctrl_links indices
-        atac_data = atac_mat[:, ctrl_links[:, 0]]
-        rna_data = rna_mat[:, ctrl_links[:, 1]]
-
-        # Run your Poisson regression function (expects sparse matrices)
-        _, ctrl_poissonb, _ = vectorized_poisson_regression_safe_converged(atac_data, rna_data, tol=1e-3)
-
-        # Save output
-        output_path = os.path.join(final_corr_path, f'poissonb_{os.path.basename(ctrl_file)}')
-        np.save(output_path, ctrl_poissonb.flatten())
-
-        # Cleanup
-        for shm in atac_shms + rna_shms:
-            shm.close()
-
-        return f"# Completed {ctrl_file}"
-
-    except Exception as e:
-        return f"Error processing {ctrl_file}: {str(e)}"
-
-def parallel_poisson_shared_sparse(ctrl_path, BIN_CONFIG, start, end, n_ctrl, adata_atac, adata_rna, final_corr_path, n_jobs=-1):
-    """
-    Parallel Poisson regression using shared sparse memory to avoid dense conversion and copying.
-    """
-    ctrl_files_all = os.listdir(os.path.join(ctrl_path, f'ctrl_links_{BIN_CONFIG}'))
-    ctrl_files = ctrl_files_all[start:end]
-
-    # Extract sparse matrices in CSC format (convert if needed)
-    atac_sparse = adata_atac.layers['counts']
-    rna_sparse = adata_rna.layers['counts']
-
-    if not sp.sparse.isspmatrix_csc(atac_sparse):
-        atac_sparse = atac_sparse.tocsc()
-    if not sp.sparse.isspmatrix_csc(rna_sparse):
-        rna_sparse = rna_sparse.tocsc()
-
-    # If n_jobs not specified or invalid, default to number of CPU cores
-    if n_jobs is None or n_jobs <= 0:
-        n_jobs = os.cpu_count() or 1  # fallback to 1 if detection fails
-
-    # Create shared memory for sparse matrices
-    atac_shms, atac_shape, *atac_dtypes = create_shared_sparse(atac_sparse)
-    rna_shms, rna_shape, *rna_dtypes = create_shared_sparse(rna_sparse)
-
-    # Prepare args for workers
-    args_list = [
-        (
-            i, ctrl_files,
-            (atac_shms[0].name, atac_shms[1].name, atac_shms[2].name),
-            (rna_shms[0].name, rna_shms[1].name, rna_shms[2].name),
-            atac_shape, rna_shape,
-            (atac_dtypes[0], atac_dtypes[1], atac_dtypes[2]),
-            (rna_dtypes[0], rna_dtypes[1], rna_dtypes[2]),
-            ctrl_path, BIN_CONFIG, n_ctrl, final_corr_path
-        )
-        for i in range(len(ctrl_files))
-    ]
-
-    print(f"# Processing {len(ctrl_files)} files with shared sparse memory...")
-
-    try:
-        with ProcessPoolExecutor(max_workers=n_jobs if n_jobs > 0 else None) as executor:
-            results = list(executor.map(process_ctrl_file_shared_sparse, args_list))
-
-        print(f"# Successful: {len([r for r in results if 'Completed' in r])} / {len(results)}")
-
-    finally:
-        # Cleanup shared memory
-        for shm in atac_shms + rna_shms:
-            shm.close()
-            shm.unlink()
-
-    return results
 
 
 def vectorized_poisson_regression_safe_converged(mat_x, mat_y, max_iter=100, tol=1e-3, pct_converged=0.9, flag_float32=True):
