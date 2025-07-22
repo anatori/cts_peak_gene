@@ -337,6 +337,48 @@ def check_missing_bins(ctrl_path, corr_path, prefix = 'pearsonr_'):
     return missing_bins
 
 
+def consolidate_individual_nulls(path,startswith = 'pearsonr_ctrl_',b=10000,remove_empty=True,print_missing=False):
+    '''Consolidate null arrays from batch job into single numpy array file.
+
+    Parameters
+    ----------
+    path : str
+        Path containing input files.
+    startswith : str
+        Prefix for all input files.
+    b : int
+        Max length along axis 1.
+    remove_empty : bool
+        Determines whether to remove empty arrays or not.
+    
+    Returns
+    ----------
+    null : np.array
+        Array with consolidated null values.
+
+    '''
+
+    null_arrs = [x for x in os.listdir(path) if x.startswith(startswith)]
+
+    # sort the filenames based on the extracted ranges
+    sorted_filenames = sorted(null_arrs, key=lambda s: int(''.join(c for c in s if c.isdigit())))
+    
+    if print_missing:
+        missing_intervals = [print(f'Missing set {i}') for i in range(b) if f'{startswith}{i}.npy' not in sorted_filenames]
+
+    consolidated_null = []
+    for x in sorted_filenames[0:b]:
+        arr = np.load(path + x)
+        if remove_empty:
+            if arr.size == 0:
+                continue
+        consolidated_null.append(arr)
+    consolidated_null = np.vstack(consolidated_null)
+    print('Array shape:',consolidated_null.shape)
+
+    return consolidated_null
+
+
 def consolidate_null(path,startswith = 'pearsonr_ctrl_',b=101,remove_empty=True,print_missing=False):
     '''Consolidate null arrays from batch job into single numpy array file.
 
