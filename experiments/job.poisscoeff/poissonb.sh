@@ -61,7 +61,7 @@ sbatch -p mzhang,pool1 -t 1-00:00:00 -x compute-1-1 --mem-per-cpu 32Gb --ntasks 
   -o /home/asprieto/logs/compute_pr_%A_%a.err -J "pr_$BIN_CONFIG" --wrap " \
   source ~/.bashrc && \
   conda activate ctar && \
-  python /projects/zhanglab/users/ana/cts_peak_gene/CLI_ctar.072125.py \
+  python /projects/zhanglab/users/ana/cts_peak_gene/CLI_ctar.py \
       --job compute_pr \
       --multiome_file $MULTIOME_FILE \
       --batch_size $BATCH_SIZE \
