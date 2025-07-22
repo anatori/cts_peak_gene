@@ -27,7 +27,7 @@ BATCH_SIZE=200
 #     --pybedtools_path $PYBEDTOOLS_PATH \
     # --method pr" 
 
-Count control link files
+# Count control link files
 TOTAL_NUM_BIN=$(find "$TARGET_PATH/ctrl_peaks/ctrl_links_$BIN_CONFIG" -type f | wc -l)
 
 # Check if control files < batch size or requires link-based chunks
