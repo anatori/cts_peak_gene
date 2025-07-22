@@ -83,7 +83,7 @@ def process_ctrl_links_shared_memory(args):
     """
     Worker for in-memory ctrl_links instead of file-based ones.
     """
-    (i, ctrl_links,
+    (ctrl_link_idx, ctrl_links_list,
      atac_shm_names, rna_shm_names,
      atac_shape, rna_shape,
      atac_dtypes, rna_dtypes,
@@ -93,30 +93,33 @@ def process_ctrl_links_shared_memory(args):
         atac_mat, atac_shms = attach_shared_sparse(atac_shm_names, atac_shape, *atac_dtypes)
         rna_mat, rna_shms = attach_shared_sparse(rna_shm_names, rna_shape, *rna_dtypes)
 
+        ctrl_links = ctrl_links_list[ctrl_link_idx]
+
         atac_data = atac_mat[:, ctrl_links[:, 0]]
         rna_data = rna_mat[:, ctrl_links[:, 1]]
 
         _, ctrl_poissonb, _ = vectorized_poisson_regression_safe_converged(atac_data, rna_data, tol=1e-3)
 
-        output_path = os.path.join(final_corr_path, f'poissonb_ctrl_{i}.npy')
+        output_path = os.path.join(final_corr_path, f'poissonb_ctrl_{ctrl_link_idx}.npy')
         np.save(output_path, ctrl_poissonb.flatten())
 
         for shm in atac_shms + rna_shms:
             shm.close()
 
-        return f"# Completed poissonb_ctrl_{i}.npy"
+        return f"# Completed poissonb_ctrl_{ctrl_link_idx}.npy"
 
     except Exception as e:
-        return f"Error in poissonb_ctrl_{i}: {str(e)}"
+        return f"Error in poissonb_ctrl_{ctrl_link_idx}: {str(e)}"
 
 
 def parallel_poisson_shared_sparse(
     ctrl_path, BIN_CONFIG, start, end, n_ctrl,
     adata_atac, adata_rna, final_corr_path,
-    n_jobs=-1, mode='file', ctrl_links_arr=None
+    n_jobs=-1, mode='file', links_arr=None
 ):
     """
     Parallel Poisson regression using shared sparse memory to avoid dense conversion and copying.
+    Note that slicing still creates copies, but avoiding copying anndata reduces memory usage. 
 
     Parameters
     ----------
@@ -140,10 +143,9 @@ def parallel_poisson_shared_sparse(
         Number of workers.
     mode : str, default='file'
         'file' for disk-based ctrl_links; 'memory' for in-memory ctrl_links.
-    ctrl_links_arr : np.ndarray, optional
-        Used only if mode='memory'. Should be shape (2, n_pairs), where links are columns.
+    links_arr : np.ndarray, optional
+        Used only if mode='memory'. Should be shape (n_pairs, 2), where links are rows.
     """
-    from concurrent.futures import ProcessPoolExecutor
 
     # Extract sparse matrices in CSC format
     atac_sparse = adata_atac.layers['counts']
@@ -165,6 +167,7 @@ def parallel_poisson_shared_sparse(
 
     try:
         if mode == 'file':
+
             ctrl_files_all = os.listdir(os.path.join(ctrl_path, f'ctrl_links_{BIN_CONFIG}'))
             ctrl_files = ctrl_files_all[start:end]
 
@@ -184,26 +187,30 @@ def parallel_poisson_shared_sparse(
             print(f"# Processing {len(ctrl_files)} control files with shared sparse memory...")
 
             with ProcessPoolExecutor(max_workers=n_jobs) as executor:
-                results = list(executor.map(process_ctrl_file_shared_sparse, args_list))
+                results = list(executor.map(process_ctrl_file_shared_files, args_list))
 
         elif mode == 'memory':
-            if ctrl_links_arr is None:
-                raise ValueError("ctrl_links_arr must be provided in 'memory' mode.")
+
+            if links_arr is None:
+                raise ValueError("links_arr must be provided in 'memory' mode.")
 
             ctrl_peaks = np.load(os.path.join(ctrl_path, f'ctrl_peaks_{BIN_CONFIG}.npy'))
             adata_atac.varm['ctrl_peaks'] = ctrl_peaks[:, :n_ctrl]
+            adata_rna.var['ind'] = range(len(adata_rna.var))
 
-            links = ctrl_links_arr[:, start:end]
+            links_arr = links_arr[:, start:end]
+            ctrl_peaks = adata_atac[:, links_arr[0]].varm['ctrl_peaks']
+            ctrl_genes = adata_rna[:, links_arr[1]].var['ind'].values
 
             # Build ctrl_links in-memory
             ctrl_links_list = [
-                np.stack([adata_atac.varm['ctrl_peaks'][:, i], np.full(n_ctrl, links[1, i])], axis=1)
+                np.vstack((ctrl_peaks[i], np.full(n_ctrl, ctrl_genes[i]))).T
                 for i in range(end - start)
             ]
 
             args_list = [
                 (
-                    i, ctrl_links_list[i],
+                    i, ctrl_links_list,
                     (atac_shms[0].name, atac_shms[1].name, atac_shms[2].name),
                     (rna_shms[0].name, rna_shms[1].name, rna_shms[2].name),
                     atac_shape, rna_shape,
