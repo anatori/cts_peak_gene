@@ -404,48 +404,72 @@ def main(args):
         if os.path.exists(final_corr_path) is False:
             os.makedirs(final_corr_path)
 
-        if f'{n_rna_mean}.{n_rna_var}' == 'inf.inf':
+        n_jobs = int(os.environ.get("SLURM_CPUS_PER_TASK", os.cpu_count() or 1))
 
+        use_in_memory = f'{n_rna_mean}.{n_rna_var}' == 'inf.inf'
+
+        if use_in_memory:
+
+            print("# Using in-memory ctrl_links (inf.inf)")
             ctrl_peaks = np.load(os.path.join(ctrl_path, f'ctrl_peaks_{BIN_CONFIG}.npy'))
             adata_atac.varm['ctrl_peaks'] = ctrl_peaks[:, :n_ctrl]
 
+            # Adjust end for last batch
             last_batch = eval_df.shape[0] // BATCH_SIZE
             if BATCH == last_batch: end = eval_df.shape[0]
 
             links = links_arr[:, start:end]
-            ctrl_peaks = adata_atac[:, links[0]].varm['ctrl_peaks']
-            rna_data = adata_rna[:, links[1]].layers['counts']
 
-            ctrl_poissonb = []
-            for i in range(end - start):
-                atac_i = adata_atac[:,ctrl_peaks[i]].layers['counts']
-                rna_i = rna_data[:,[i]]
-                beta0, beta1, _ = ctar.method.vectorized_poisson_regression_safe_converged(atac_i, rna_i, tol=1e-3)
-                ctrl_poissonb.append(beta1.flatten())
+            start_time = time.time()
+            ctar.multiprocess.parallel_poisson_shared_sparse(
+                ctrl_path=ctrl_path,
+                BIN_CONFIG=BIN_CONFIG,
+                start=start,
+                end=end,
+                n_ctrl=n_ctrl,
+                adata_atac=adata_atac,
+                adata_rna=adata_rna,
+                final_corr_path=final_corr_path,
+                n_jobs=n_jobs,
+                mode='memory',
+                ctrl_links_arr=links_arr
+            )
+            print('# Time taken = %0.2fs' % (time.time() - start_time))
 
-            if len(ctrl_poissonb) > 0:
-                print(f"# Saving poissonb_ctrl_{start}_{end}.npy to {final_corr_path}")
-                np.save(os.path.join(final_corr_path, f'poissonb_ctrl_{start}_{end}.npy'), ctrl_poissonb)
-
+            # Consolidation if all batches complete
             curr_n_files = len(os.listdir(final_corr_path))
             if curr_n_files == (last_batch + 1):
                 print(f"# All {curr_n_files} batches complete. Consolidating null")
-                full_ctrl_poissonb = ctar.data_loader.consolidate_null(final_corr_path + '/', startswith = 'poissonb_ctrl_', b=last_batch+1)
+                full_ctrl_poissonb = ctar.data_loader.consolidate_null(
+                    final_corr_path + '/',
+                    startswith='poissonb_ctrl_',
+                    b=last_batch + 1
+                )
                 np.save(os.path.join(corr_path, f'ctrl_poiss_{BIN_CONFIG}.npy'), full_ctrl_poissonb)
 
+
         else:
+            print("# Using file-based ctrl_links")
 
             ctrl_files = os.listdir(os.path.join(ctrl_path, f'ctrl_links_{BIN_CONFIG}'))
             n_ctrl_files = len(ctrl_files)
             if n_ctrl_files < end: end = n_ctrl_files
-            ctrl_files = ctrl_files[start:end]
 
             start_time = time.time()
-            # ctar.method.run_parallel_pr(ctrl_path, BIN_CONFIG, n_ctrl, adata_atac, adata_rna, final_corr_path, n_jobs=4)
-            ctar.method.parallel_poisson_shared_sparse(ctrl_path, BIN_CONFIG, start, end, n_ctrl, adata_atac, adata_rna, final_corr_path, n_jobs=4)
+            ctar.multiprocess.parallel_poisson_shared_sparse(
+                ctrl_path=ctrl_path,
+                BIN_CONFIG=BIN_CONFIG,
+                start=start,
+                end=end,
+                n_ctrl=n_ctrl,
+                adata_atac=adata_atac,
+                adata_rna=adata_rna,
+                final_corr_path=final_corr_path,
+                n_jobs=n_jobs
+            )
             print('# Time taken = %0.2fs' % (time.time() - start_time))
 
-            # check for missing files
+            # If last batch, check for missing files and process them
             if end == n_ctrl_files:
                 print('# Last array job...')
 
@@ -456,14 +480,20 @@ def main(args):
                     print(f"# Computing correlation for an additional {len(missing_bins)} ctrls.")
 
                 for ctrl_file in missing_bins:
-                    ctrl_links = np.load(os.path.join(ctrl_path, f'ctrl_links_{BIN_CONFIG}', ctrl_file))[:, :n_ctrl]
+                    ctrl_links = np.load(os.path.join(final_ctrl_path, ctrl_file))[:, :n_ctrl]
 
                     atac_data = adata_atac.layers['counts'][:, ctrl_links[:, 0]]
                     rna_data = adata_rna.layers['counts'][:, ctrl_links[:, 1]]
-                    _, ctrl_poissonb, _ = ctar.method.vectorized_poisson_regression_safe_converged(atac_data, rna_data, tol=1e-3)
-                    
+
+                    _, ctrl_poissonb, _ = ctar.method.vectorized_poisson_regression_safe_converged(
+                        atac_data, rna_data, tol=1e-3
+                    )
+
                     print(f"# Saving poissonb_{os.path.basename(ctrl_file)} to {final_corr_path}")
-                    np.save(os.path.join(final_corr_path, f'poissonb_{os.path.basename(ctrl_file)}'), ctrl_poissonb.flatten())
+                    np.save(
+                        os.path.join(final_corr_path, f'poissonb_{os.path.basename(ctrl_file)}'),
+                        ctrl_poissonb.flatten()
+                    )
 
     if JOB == "compute_cis_pairs":
         print("# Running --job compute_cis_pairs")
