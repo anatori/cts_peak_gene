@@ -2,9 +2,77 @@ import numpy as np
 import scipy as sp
 import os
 import re
+import dask
+
+from dask import delayed, compute
+from dask.distributed import Client, LocalCluster
 from multiprocessing import shared_memory, cpu_count
 from concurrent.futures import ProcessPoolExecutor
+
 from ctar.method import vectorized_poisson_regression_safe_converged
+
+
+
+@delayed
+def run_sparse_batch(atac_sparse, rna_sparse, atac_idx, rna_idx, tol=1e-3):
+    """
+    Run vectorized IRLS Poisson regression on a batch of column pairs.
+    atac_sparse, rna_sparse: full CSC matrices (per worker)
+    atac_idx, rna_idx: np.arrays (batch slice indices)
+    Returns flattened beta1 array of length len(atac_idx).
+    """
+    X = atac_sparse[:, atac_idx]
+    Y = rna_sparse[:, rna_idx]
+
+    _, beta1, _ = vectorized_poisson_regression_safe_converged(X, Y, tol=tol)
+    return beta1.flatten()
+
+
+def run_parallel_dask(
+    atac_sparse,
+    rna_sparse,
+    ctrl_links,
+    final_corr_path,
+    batch_size=5000,
+    tol=1e-3,
+    n_workers=None,
+    threads_per_worker=1
+):
+    """
+    Parallel Poisson regression using Dask.
+    - atac_sparse, rna_sparse: CSC sparse matrices
+    - ctrl_links: np.ndarray of shape (n_pairs, 2)
+    - Saves batch files to final_corr_path.
+    """
+    # Setup cluster
+    n_workers = n_workers or os.cpu_count()
+    cluster = LocalCluster(n_workers=n_workers, threads_per_worker=threads_per_worker)
+    client = Client(cluster)
+
+    tasks = []
+    n_pairs = ctrl_links.shape[0]
+
+    for start in range(0, n_pairs, batch_size):
+        end = min(start + batch_size, n_pairs)
+        batch = ctrl_links[start:end]
+        atac_idx = batch[:, 0]
+        rna_idx = batch[:, 1]
+
+        task = run_sparse_batch(atac_sparse, rna_sparse, atac_idx, rna_idx, tol)
+        tasks.append((start, end, task))
+
+    print(f"Launching {len(tasks)} Dask batch tasks for ~{n_pairs} models...")
+
+    results = [t[2] for t in tasks]
+    computed = compute(*results)
+
+    for (start, end, _), beta_flat in zip(tasks, computed):
+        fname = os.path.join(final_corr_path, f'poissonb_{start}_{end}.npy')
+        np.save(fname, beta_flat)
+
+    client.close()
+    cluster.close()
+    return True
 
 
 def create_shared_sparse(mat):
