@@ -406,31 +406,40 @@ def main(args):
 
         n_jobs = int(os.environ.get("SLURM_CPUS_PER_TASK", os.cpu_count() or 1))
 
-        use_in_memory = f'{n_rna_mean}.{n_rna_var}' == 'inf.inf'
+        atac_sparse = adata_atac.layers['counts']
+        rna_sparse = adata_rna.layers['counts']
 
-        if use_in_memory:
-
-            print("# Using in-memory ctrl_links (inf.inf)")
+        if f'{n_rna_mean}.{n_rna_var}' == 'inf.inf':
 
             # Adjust end for last batch
             last_batch = eval_df.shape[0] // BATCH_SIZE
             if BATCH == last_batch: end = eval_df.shape[0]
 
-            start_time = time.time()
-            ctar.multiprocess.parallel_poisson_shared_sparse(
-                ctrl_path=ctrl_path,
-                BIN_CONFIG=BIN_CONFIG,
-                start=start,
-                end=end,
-                n_ctrl=n_ctrl,
-                adata_atac=adata_atac,
-                adata_rna=adata_rna,
-                final_corr_path=final_corr_path,
-                n_jobs=n_jobs,
-                mode='memory',
-                links_arr=links_arr
-            )
+            ctrl_peaks = np.load(os.path.join(ctrl_path, f'ctrl_peaks_{BIN_CONFIG}.npy'))
+            adata_atac.varm['ctrl_peaks'] = ctrl_peaks[:, :n_ctrl]
+            adata_rna.var['ind'] = range(len(adata_rna.var))
 
+            links_arr = links_arr[:, start:end]
+            ctrl_peaks = adata_atac[:, links_arr[0]].varm['ctrl_peaks']
+            ctrl_genes = adata_rna[:, links_arr[1]].var['ind'].values
+
+            # Build ctrl_links in-memory
+            ctrl_links_full = [
+                np.vstack((ctrl_peaks[i], np.full(n_ctrl, ctrl_genes[i]))).T
+                for i in range(end - start)
+            ]
+
+            start_time = time.time()
+            ctar.parallel.run_parallel_dask(
+                atac_sparse,
+                rna_sparse,
+                ctrl_links_full,
+                final_corr_path,
+                batch_size=5000,
+                tol=1e-3,
+                n_workers=n_jobs,
+                local_directory=os.path.join(TARGET_PATH, 'dask_temp')
+            )
             print('# Time taken = %0.2fs' % (time.time() - start_time))
 
             # Consolidation if all batches complete
@@ -446,23 +455,28 @@ def main(args):
 
 
         else:
-            print("# Using file-based ctrl_links")
 
             ctrl_files = os.listdir(os.path.join(ctrl_path, f'ctrl_links_{BIN_CONFIG}'))
             n_ctrl_files = len(ctrl_files)
             if n_ctrl_files < end: end = n_ctrl_files
+            ctrl_files = ctrl_files[start:end]
+
+            ctrl_links_full = np.empty((0,2), int)
+
+            for ctrl_file in ctrl_files:
+                ctrl_links = np.load(os.path.join(ctrl_path, f'ctrl_links_{BIN_CONFIG}', ctrl_file))[:n_ctrl]
+                ctrl_links_full = np.vstack((ctrl_links_full,ctrl_links))
 
             start_time = time.time()
-            ctar.multiprocess.parallel_poisson_shared_sparse(
-                ctrl_path=ctrl_path,
-                BIN_CONFIG=BIN_CONFIG,
-                start=start,
-                end=end,
-                n_ctrl=n_ctrl,
-                adata_atac=adata_atac,
-                adata_rna=adata_rna,
-                final_corr_path=final_corr_path,
-                n_jobs=n_jobs
+            ctar.parallel.run_parallel_dask(
+                atac_sparse,
+                rna_sparse,
+                ctrl_links_full,
+                final_corr_path,
+                batch_size=5000,
+                tol=1e-3,
+                n_workers=n_jobs,
+                local_directory=os.path.join(TARGET_PATH, 'dask_temp')
             )
             print('# Time taken = %0.2fs' % (time.time() - start_time))
 
