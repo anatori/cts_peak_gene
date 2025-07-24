@@ -15,7 +15,9 @@ import muon as mu
 import os
 import re
 
-
+import dask.array as da
+import sparse
+from dask import delayed, compute
 
 
 ######################### regression methods #########################
@@ -85,6 +87,77 @@ def pearson_corr_sparse(mat_X, mat_Y, var_filter=False):
         return mat_corr, ~no_var
 
     return mat_corr
+
+
+def poisson_irls_delayed_loop(mat_x_full, mat_y_full, max_iter=100, tol=1e-3):
+    """
+    mat_x_full, mat_y_full: dask arrays with shape (n_cells, n_pairs)
+    Uses dask.delayed to run poisson_irls_single on each pair column
+    Returns: np.ndarray shape (n_pairs, 2)
+    """
+
+    n_pairs = mat_x_full.shape[1]
+    results_delayed = []
+
+    for i in range(n_pairs):
+        x_i = mat_x_full[:, i].toarray().ravel()
+        y_i = mat_y_full[:, i].toarray().ravel()
+
+        res = delayed(poisson_irls_single)(
+            x_i, y_i, max_iter=max_iter, tol=tol
+        )
+        results_delayed.append(res)
+
+    # trigger parallel execution
+    results_computed = compute(*results_delayed)
+
+    return np.vstack(results_computed)
+
+
+def poisson_irls_single(x, y, max_iter=100, tol=1e-3):
+    """
+    Run IRLS Poisson regression on a single feature pair (x, y), shape (n_cells,)
+    Returns: (2,) array of [beta0, beta1]
+    """
+    x = np.asarray(x, dtype=np.float32)
+    y = np.asarray(y, dtype=np.float32)
+    
+    beta0 = 0.0
+    beta1 = 0.0
+
+    MAX_EXP = np.float32(80.0)
+    MAX_VAL = np.float32(1e10)
+    MIN_VAL = np.float32(1e-8)
+
+    for _ in range(max_iter):
+        eta = beta0 + x * beta1
+        eta = np.clip(eta, -MAX_EXP, MAX_EXP)
+
+        w = np.exp(eta)
+        w = np.minimum(w, MAX_VAL)
+
+        sum_w = np.maximum(np.sum(w), MIN_VAL)
+
+        z = eta + (y - w) / np.maximum(w, MIN_VAL)
+
+        xw = x * w
+        xwz = x * w * z
+        xxw = x * x * w
+
+        sum_x = np.sum(xw)
+        sum_y = np.sum(w * z)
+
+        denom = np.maximum(np.sum(xxw) - (sum_x ** 2) / sum_w, MIN_VAL)
+
+        beta1_new = (np.sum(xwz) - sum_x * sum_y / sum_w) / denom
+        beta0_new = (sum_y - beta1_new * sum_x) / sum_w
+
+        if abs(beta1_new - beta1) < tol and abs(beta0_new - beta0) < tol:
+            break
+
+        beta0, beta1 = beta0_new, beta1_new
+
+    return np.array([beta0, beta1], dtype=np.float32)
 
 
 def vectorized_poisson_regression_safe_converged(mat_x, mat_y, max_iter=100, tol=1e-3, pct_converged=0.9, flag_float32=True):

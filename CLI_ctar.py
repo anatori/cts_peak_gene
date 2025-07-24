@@ -35,7 +35,7 @@ compute_pval : compute zscore pval, pooled pval, mc pval based on control pairs
     - Output : additional columns added to links_file pertaining to computed pvalues
 
 compute_cis_pairs : find cis pairs within 500kb of annotated peak and genes
-    - Input : --job | --target_path | --method
+    - Input : --job | --links_file | --method
     - Output : additional columns added to links_file pertaining to computed pvalues
     
 TODO
@@ -406,31 +406,40 @@ def main(args):
 
         n_jobs = int(os.environ.get("SLURM_CPUS_PER_TASK", os.cpu_count() or 1))
 
-        use_in_memory = f'{n_rna_mean}.{n_rna_var}' == 'inf.inf'
+        # Set up Dask cluster and client
+        cluster = LocalCluster(n_workers=n_jobs, threads_per_worker=1, local_directory=os.path.join(TARGET_PATH, 'dask_temp'))
+        client = Client(cluster)
 
-        if use_in_memory:
+        # Scatter shared sparse matrices to all workers once
+        shared_atac = client.scatter(adata_atac.layers['counts'], broadcast=True)
+        shared_rna = client.scatter(adata_rna.layers['counts'], broadcast=True)
 
-            print("# Using in-memory ctrl_links (inf.inf)")
+        delayed_tasks = []
+
+        if f'{n_rna_mean}.{n_rna_var}' == 'inf.inf':
 
             # Adjust end for last batch
             last_batch = eval_df.shape[0] // BATCH_SIZE
             if BATCH == last_batch: end = eval_df.shape[0]
 
-            start_time = time.time()
-            ctar.multiprocess.parallel_poisson_shared_sparse(
-                ctrl_path=ctrl_path,
-                BIN_CONFIG=BIN_CONFIG,
-                start=start,
-                end=end,
-                n_ctrl=n_ctrl,
-                adata_atac=adata_atac,
-                adata_rna=adata_rna,
-                final_corr_path=final_corr_path,
-                n_jobs=n_jobs,
-                mode='memory',
-                links_arr=links_arr
-            )
-            print('# Time taken = %0.2fs' % (time.time() - start_time))
+            ctrl_peaks = np.load(os.path.join(ctrl_path, f'ctrl_peaks_{BIN_CONFIG}.npy'))
+            adata_atac.varm['ctrl_peaks'] = ctrl_peaks[:, :n_ctrl]
+            adata_rna.var['ind'] = range(len(adata_rna.var))
+
+            links_arr = links_arr[:, start:end]
+            ctrl_peaks = adata_atac[:, links_arr[0]].varm['ctrl_peaks']
+            ctrl_genes = adata_rna[:, links_arr[1]].var['ind'].values
+
+
+            links_arr = links_arr[:, start:end]
+            for i in range(end - start):
+                ctrl_links = np.vstack((
+                    ctrl_peaks[i],
+                    np.full(n_ctrl, ctrl_genes[i])
+                )).T
+                delayed_tasks.append(delayed(process_bin)(
+                    i + start, ctrl_links, shared_atac, shared_rna, final_corr_path
+                ))
 
             # Consolidation if all batches complete
             curr_n_files = len(os.listdir(final_corr_path))
@@ -445,25 +454,17 @@ def main(args):
 
 
         else:
-            print("# Using file-based ctrl_links")
 
             ctrl_files = os.listdir(os.path.join(ctrl_path, f'ctrl_links_{BIN_CONFIG}'))
             n_ctrl_files = len(ctrl_files)
             if n_ctrl_files < end: end = n_ctrl_files
+            ctrl_files = ctrl_files[start:end]
 
-            start_time = time.time()
-            ctar.multiprocess.parallel_poisson_shared_sparse(
-                ctrl_path=ctrl_path,
-                BIN_CONFIG=BIN_CONFIG,
-                start=start,
-                end=end,
-                n_ctrl=n_ctrl,
-                adata_atac=adata_atac,
-                adata_rna=adata_rna,
-                final_corr_path=final_corr_path,
-                n_jobs=n_jobs
-            )
-            print('# Time taken = %0.2fs' % (time.time() - start_time))
+            for i, fname in enumerate(ctrl_files):
+                ctrl_links = np.load(os.path.join(ctrl_path, f'ctrl_links_{BIN_CONFIG}', fname))[:n_ctrl]
+                delayed_tasks.append(delayed(process_bin)(
+                    i, ctrl_links, shared_atac, shared_rna, final_corr_path
+                ))
 
             # If last batch, check for missing files and process them
             if end == n_ctrl_files:
@@ -490,6 +491,23 @@ def main(args):
                         os.path.join(final_corr_path, f'poissonb_{os.path.basename(ctrl_file)}'),
                         ctrl_poissonb.flatten()
                     )
+                    
+        print(f"# Launching {len(delayed_tasks)} tasks with Dask + scatter...")
+        start_time = time.time()
+        results = compute(*delayed_tasks)
+        print(f'# Time taken = {time.time() - start_time:.2f}s')
+
+        # Consolidation
+        curr_n_files = len(os.listdir(final_corr_path))
+        expected = eval_df.shape[0] if f'{n_rna_mean}.{n_rna_var}' == 'inf.inf' else len(ctrl_files)
+        if curr_n_files == expected:
+            print("# Consolidating results...")
+            full = ctar.data_loader.consolidate_individual_nulls(
+                final_corr_path + '/', startswith='poissonb_bin_', b=expected
+            )
+            np.save(os.path.join(corr_path, f'ctrl_poiss_{BIN_CONFIG}.npy'), full)
+
+        client.close()
 
     if JOB == "compute_cis_pairs":
         print("# Running --job compute_cis_pairs")

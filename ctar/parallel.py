@@ -5,74 +5,46 @@ import re
 import dask
 
 from dask import delayed, compute
-from dask.distributed import Client, LocalCluster
 from multiprocessing import shared_memory, cpu_count
 from concurrent.futures import ProcessPoolExecutor
 
-from ctar.method import vectorized_poisson_regression_safe_converged
+from ctar.method import vectorized_poisson_regression_safe_converged, poisson_irls_delayed_loop
 
 
 
-@delayed
-def run_sparse_batch(atac_sparse, rna_sparse, atac_idx, rna_idx, tol=1e-3):
-    """
-    Run vectorized IRLS Poisson regression on a batch of column pairs.
-    atac_sparse, rna_sparse: full CSC matrices (per worker)
-    atac_idx, rna_idx: np.arrays (batch slice indices)
-    Returns flattened beta1 array of length len(atac_idx).
-    """
-    X = atac_sparse[:, atac_idx]
-    Y = rna_sparse[:, rna_idx]
+def process_bin(bin_idx, bin_indices, X_sparse, Y_sparse, max_iter, tol, save_dir):
+    """Process one bin: slice sparse matrices, run IRLS, save numpy result."""
+    X_idx = ctrl_links[:, 0]
+    Y_idx = ctrl_links[:, 1]
+    X_bin = X_sparse[:, X_idx]
+    Y_bin = Y_sparse[:, Y_idx]
+    
+    # Run your poisson_irls_delayed_loop
+    result = poisson_irls_delayed_loop(X_bin, Y_bin, max_iter=max_iter, tol=tol)
+    
+    # Convert result (list of np arrays) to single numpy array
+    result_arr = np.vstack(result)
+    
+    # Save result to disk
+    fname = os.path.join(save_dir, f"bin_{bin_idx}_results.npy")
+    np.save(fname, result_arr)
+    
+    return fname
 
-    _, beta1, _ = vectorized_poisson_regression_safe_converged(X, Y, tol=tol)
-    return beta1.flatten()
 
+def run_all_bins_parallel(bins_data, X_sparse, Y_sparse, max_iter=100, tol=1e-3, save_dir="results", n_workers=4):
+    os.makedirs(save_dir)
 
-def run_parallel_dask(
-    atac_sparse,
-    rna_sparse,
-    ctrl_links,
-    final_corr_path,
-    batch_size=5000,
-    tol=1e-3,
-    n_workers=None,
-    threads_per_worker=1
-):
-    """
-    Parallel Poisson regression using Dask.
-    - atac_sparse, rna_sparse: CSC sparse matrices
-    - ctrl_links: np.ndarray of shape (n_pairs, 2)
-    - Saves batch files to final_corr_path.
-    """
-    # Setup cluster
-    n_workers = n_workers or os.cpu_count()
-    cluster = LocalCluster(n_workers=n_workers, threads_per_worker=threads_per_worker)
-    client = Client(cluster)
+    delayed_tasks = []
+    for bin_idx, bin_indices in enumerate(bins_data):
+        task = delayed(process_bin)(bin_idx, bin_indices, X_sparse, Y_sparse, max_iter, tol, save_dir)
+        delayed_tasks.append(task)
 
-    tasks = []
-    n_pairs = ctrl_links.shape[0]
-
-    for start in range(0, n_pairs, batch_size):
-        end = min(start + batch_size, n_pairs)
-        batch = ctrl_links[start:end]
-        atac_idx = batch[:, 0]
-        rna_idx = batch[:, 1]
-
-        task = run_sparse_batch(atac_sparse, rna_sparse, atac_idx, rna_idx, tol)
-        tasks.append((start, end, task))
-
-    print(f"Launching {len(tasks)} Dask batch tasks for ~{n_pairs} models...")
-
-    results = [t[2] for t in tasks]
-    computed = compute(*results)
-
-    for (start, end, _), beta_flat in zip(tasks, computed):
-        fname = os.path.join(final_corr_path, f'poissonb_{start}_{end}.npy')
-        np.save(fname, beta_flat)
-
-    client.close()
-    cluster.close()
-    return True
+    # Compute all bins in parallel using dask
+    results_paths = compute(*delayed_tasks, scheduler='threads', num_workers=n_workers)
+    
+    print(f"Finished processing {len(results_paths)} bins.")
+    return results_paths
 
 
 def create_shared_sparse(mat):
