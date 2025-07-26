@@ -11,6 +11,8 @@ import pybedtools
 import time
 import argparse
 
+from dask.distributed import Client, LocalCluster
+
 
 
 
@@ -400,19 +402,17 @@ def main(args):
 
         start, end = BATCH * BATCH_SIZE, (BATCH + 1) * BATCH_SIZE
         final_corr_path = os.path.join(corr_path, f'ctrl_poiss_{BIN_CONFIG}')
+        dask_tmp_path = os.path.join(TARGET_PATH, 'dask_temp')
 
         if os.path.exists(final_corr_path) is False:
             os.makedirs(final_corr_path)
+        if os.path.exists(dask_tmp_path) is False:
+            os.makedirs(dask_tmp_path)
 
         n_jobs = int(os.environ.get("SLURM_CPUS_PER_TASK", os.cpu_count() or 1))
 
-        # Set up Dask cluster and client
-        cluster = LocalCluster(n_workers=n_jobs, threads_per_worker=1, local_directory=os.path.join(TARGET_PATH, 'dask_temp'))
-        client = Client(cluster)
-
-        # Scatter shared sparse matrices to all workers once
-        shared_atac = client.scatter(adata_atac.layers['counts'], broadcast=True)
-        shared_rna = client.scatter(adata_rna.layers['counts'], broadcast=True)
+        atac_sparse = adata_atac.layers['counts']
+        rna_sparse = adata_rna.layers['counts']
 
         delayed_tasks = []
 
@@ -430,28 +430,39 @@ def main(args):
             ctrl_peaks = adata_atac[:, links_arr[0]].varm['ctrl_peaks']
             ctrl_genes = adata_rna[:, links_arr[1]].var['ind'].values
 
+            ctrl_links_ls = []
+            ctrl_labels_ls = []
 
-            links_arr = links_arr[:, start:end]
             for i in range(end - start):
                 ctrl_links = np.vstack((
                     ctrl_peaks[i],
                     np.full(n_ctrl, ctrl_genes[i])
                 )).T
-                delayed_tasks.append(delayed(process_bin)(
-                    i + start, ctrl_links, shared_atac, shared_rna, final_corr_path
-                ))
 
-            # Consolidation if all batches complete
+                ctrl_links_ls.append(ctrl_links)
+                ctrl_labels_ls.append('ctrl_' + str(start + i) + '.npy')
+
+            start_time = time.time()
+
+            ctar.parallel.parallel_poisson_bins_dask_sequential(
+                ctrl_links_ls=ctrl_links_ls,
+                ctrl_labels_ls=ctrl_labels_ls,
+                atac_sparse=atac_sparse,
+                rna_sparse=rna_sparse,
+                out_path=final_corr_path,
+                max_iter=100,
+                tol=1e-3,
+                n_workers=n_jobs,
+                local_directory=dask_tmp_path,
+            )
+
+            print('# Sequential regression_time = %0.2fs' % (time.time() - start_time))
+
             curr_n_files = len(os.listdir(final_corr_path))
-            if curr_n_files == (eval_df.shape[0] + 1):
+            if curr_n_files == (last_batch + 1):
                 print(f"# All {curr_n_files} batches complete. Consolidating null")
-                full_ctrl_poissonb = ctar.data_loader.consolidate_individual_nulls(
-                    final_corr_path + '/',
-                    startswith='poissonb_ctrl_',
-                    b=(eval_df.shape[0] + 1)
-                )
+                full_ctrl_poissonb = ctar.data_loader.consolidate_null(final_corr_path + '/', startswith = 'poissonb_ctrl_', b=last_batch+1)
                 np.save(os.path.join(corr_path, f'ctrl_poiss_{BIN_CONFIG}.npy'), full_ctrl_poissonb)
-
 
         else:
 
@@ -460,11 +471,29 @@ def main(args):
             if n_ctrl_files < end: end = n_ctrl_files
             ctrl_files = ctrl_files[start:end]
 
-            for i, fname in enumerate(ctrl_files):
-                ctrl_links = np.load(os.path.join(ctrl_path, f'ctrl_links_{BIN_CONFIG}', fname))[:n_ctrl]
-                delayed_tasks.append(delayed(process_bin)(
-                    i, ctrl_links, shared_atac, shared_rna, final_corr_path
-                ))
+            ctrl_links_ls = []
+            file_name_ls = []
+
+            for ctrl_file in ctrl_files:
+                ctrl_links = np.load(os.path.join(ctrl_path, f'ctrl_links_{BIN_CONFIG}', ctrl_file))[:n_ctrl]
+                ctrl_links_ls.append(ctrl_links)
+                file_name_ls.append(os.path.basename(ctrl_file))
+
+            start_time = time.time()
+
+            ctar.parallel.parallel_poisson_bins_dask_sequential(
+                ctrl_links_ls=ctrl_links_ls,
+                ctrl_labels_ls=file_name_ls,
+                atac_sparse=atac_sparse,
+                rna_sparse=rna_sparse,
+                out_path=final_corr_path,
+                max_iter=100,
+                tol=1e-3,
+                n_workers=n_jobs,
+                local_directory=dask_tmp_path,
+            )
+
+            print('# Sequential regression_time = %0.2fs' % (time.time() - start_time))
 
             # If last batch, check for missing files and process them
             if end == n_ctrl_files:
@@ -482,32 +511,16 @@ def main(args):
                     atac_data = adata_atac.layers['counts'][:, ctrl_links[:, 0]]
                     rna_data = adata_rna.layers['counts'][:, ctrl_links[:, 1]]
 
-                    _, ctrl_poissonb, _ = ctar.method.vectorized_poisson_regression_safe_converged(
+                    ctrl_poissonb = ctar.method.poisson_irls_delayed_loop(
                         atac_data, rna_data, tol=1e-3
                     )
 
                     print(f"# Saving poissonb_{os.path.basename(ctrl_file)} to {final_corr_path}")
                     np.save(
                         os.path.join(final_corr_path, f'poissonb_{os.path.basename(ctrl_file)}'),
-                        ctrl_poissonb.flatten()
+                        ctrl_poissonb[:,1]
                     )
-                    
-        print(f"# Launching {len(delayed_tasks)} tasks with Dask + scatter...")
-        start_time = time.time()
-        results = compute(*delayed_tasks)
-        print(f'# Time taken = {time.time() - start_time:.2f}s')
 
-        # Consolidation
-        curr_n_files = len(os.listdir(final_corr_path))
-        expected = eval_df.shape[0] if f'{n_rna_mean}.{n_rna_var}' == 'inf.inf' else len(ctrl_files)
-        if curr_n_files == expected:
-            print("# Consolidating results...")
-            full = ctar.data_loader.consolidate_individual_nulls(
-                final_corr_path + '/', startswith='poissonb_bin_', b=expected
-            )
-            np.save(os.path.join(corr_path, f'ctrl_poiss_{BIN_CONFIG}.npy'), full)
-
-        client.close()
 
     if JOB == "compute_cis_pairs":
         print("# Running --job compute_cis_pairs")
@@ -534,8 +547,8 @@ def main(args):
                 pearsonr = ctar.method.pearson_corr_sparse(atac_subset,rna_subset)[0]
                 corr.append(pearsonr)
             if METHOD == 'poiss':
-                _, poissonb, _ = ctar.method.vectorized_poisson_regression_safe_converged(atac_subset,rna_subset)
-                corr.append(poissonb)
+                poissonb = ctar.method.poisson_irls_delayed_loop(atac_subset,rna_subset)
+                corr.append(poissonb[:,1])
             else:
                 raise ValueError("Must choose correlation method (currently implemented: corr, poiss)")
 

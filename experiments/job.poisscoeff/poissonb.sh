@@ -27,8 +27,8 @@ BATCH_SIZE=200
 #     --pybedtools_path $PYBEDTOOLS_PATH \
     # --method pr" 
 
-# # Count control link files
-# TOTAL_NUM_BIN=$(find "$TARGET_PATH/ctrl_peaks/ctrl_links_$BIN_CONFIG" -type f | wc -l)
+# Count control link files
+TOTAL_NUM_BIN=$(find "$TARGET_PATH/ctrl_peaks/ctrl_links_$BIN_CONFIG" -type f | wc -l)
 
 # Check if control files < batch size or requires link-based chunks
 if [[ $BIN_CONFIG =~ "inf" ]]; then 
@@ -57,7 +57,7 @@ echo "Found $TOTAL_NUM_BIN control files. Submitting $TOTAL_NUM_BATCHES batch jo
 
 echo "Submitting $BIN_CONFIG compute_pr job..."
 # Submit compute_corr job
-sbatch -p mzhang,pool1 -t 1-00:00:00 -x compute-1-1 --mem-per-cpu 32Gb -n 1 -c 4 $ARRAY_OPT --mail-type=END --mail-user=asprieto@andrew.cmu.edu \
+sbatch -p mzhang,pool1 -t 1-00:00:00 -x compute-1-1 --mem-per-cpu 8Gb -n 1 -c 4 $ARRAY_OPT --mail-type=END --mail-user=asprieto@andrew.cmu.edu \
   -o /home/asprieto/logs/compute_pr_%A_%a.err -J "pr_$BIN_CONFIG" --wrap " \
   source ~/.bashrc && \
   conda activate ctar && \
