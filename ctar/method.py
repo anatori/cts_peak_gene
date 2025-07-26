@@ -15,9 +15,8 @@ import muon as mu
 import os
 import re
 
-import dask.array as da
-import sparse
 from dask import delayed, compute
+from numba import njit, prange
 
 
 ######################### regression methods #########################
@@ -89,19 +88,38 @@ def pearson_corr_sparse(mat_X, mat_Y, var_filter=False):
     return mat_corr
 
 
-def poisson_irls_delayed_loop(mat_x_full, mat_y_full, max_iter=100, tol=1e-3):
-    """
-    mat_x_full, mat_y_full: dask arrays with shape (n_cells, n_pairs)
-    Uses dask.delayed to run poisson_irls_single on each pair column
-    Returns: np.ndarray shape (n_pairs, 2)
+def poisson_irls_delayed_loop(mat_x_full, mat_y_full, links=None, max_iter=100, tol=1e-3):
+    """ Uses dask.delayed to run poisson_irls_single on each pair column
+
+    Parameters
+    ----------
+    mat_x_full: sp.sparse.csc
+        Full sparse ATAC matrix (cells x features)
+    mat_y_full: sp.sparse.csc
+        Full sparse RNA matrix (cells x features)
+    links: np.array
+        Array of shape (n_links, 2), where each row is (x_idx, y_idx)
+
+    Returns
+    -------
+    Returns: np.ndarray
+        Array of shape (n_pairs), computing 
     """
 
-    n_pairs = mat_x_full.shape[1]
+    n = mat_x_full.shape[1]
+    if links is None: 
+        links = np.stack([np.arange(n)] * 2, axis=1)
+
+    if mat_x_full.dtype != np.float32:
+        mat_x_full = mat_x_full.astype(np.float32)
+    if mat_y_full.dtype != np.float32:
+        mat_y_full = mat_y_full.astype(np.float32)
+
     results_delayed = []
 
-    for i in range(n_pairs):
-        x_i = mat_x_full[:, i].toarray().ravel()
-        y_i = mat_y_full[:, i].toarray().ravel()
+    for x_idx, y_idx in links:
+        x_i = mat_x_full[:, x_idx].toarray().ravel()
+        y_i = mat_y_full[:, y_idx].toarray().ravel()
 
         res = delayed(poisson_irls_single)(
             x_i, y_i, max_iter=max_iter, tol=tol
@@ -109,9 +127,44 @@ def poisson_irls_delayed_loop(mat_x_full, mat_y_full, max_iter=100, tol=1e-3):
         results_delayed.append(res)
 
     # trigger parallel execution
-    results_computed = compute(*results_delayed)
+    results = compute(*results_delayed)
+    return np.vstack(results)
 
-    return np.vstack(results_computed)
+
+def poisson_irls_sequential_loop(mat_x_full, mat_y_full, links=None, max_iter=100, tol=1e-3):
+    """
+    Run poisson_irls_single over all link pairs sequentially on worker.
+    mat_x_full, mat_y_full: sparse matrices (cells x features)
+    links: np.ndarray shape (n_links, 2)
+    Returns: np.ndarray shape (n_links, 2)
+    """
+    n = mat_x_full.shape[1]
+    if links is None: 
+        links = np.stack([np.arange(n)] * 2, axis=1)
+
+    n_links = links.shape[0]
+    results = np.zeros((n_links, 2), dtype=np.float32)
+
+    # Convert to float32 if needed once
+    if mat_x_full.dtype != np.float32:
+        mat_x_full = mat_x_full.astype(np.float32)
+    if mat_y_full.dtype != np.float32:
+        mat_y_full = mat_y_full.astype(np.float32)
+
+    for i, (x_idx, y_idx) in enumerate(links):
+        x_i = mat_x_full[:, x_idx].toarray().ravel()
+        y_i = mat_y_full[:, y_idx].toarray().ravel()
+
+        results[i, :] = poisson_irls_single(x_i, y_i, max_iter=max_iter, tol=tol)
+    
+    return results
+
+
+def poisson_irls_wrapper(x_idx, y_idx, atac_sparse, rna_sparse, max_iter=100, tol=1e-3):
+    """Run Poisson IRLS on one link pair given index."""
+    x = atac_sparse[:, x_idx].toarray().ravel().astype(np.float32)
+    y = rna_sparse[:, y_idx].toarray().ravel().astype(np.float32)
+    return poisson_irls_single(x, y, max_iter=max_iter, tol=tol)
 
 
 def poisson_irls_single(x, y, max_iter=100, tol=1e-3):
@@ -119,11 +172,9 @@ def poisson_irls_single(x, y, max_iter=100, tol=1e-3):
     Run IRLS Poisson regression on a single feature pair (x, y), shape (n_cells,)
     Returns: (2,) array of [beta0, beta1]
     """
-    x = np.asarray(x, dtype=np.float32)
-    y = np.asarray(y, dtype=np.float32)
     
-    beta0 = 0.0
-    beta1 = 0.0
+    beta0 = np.float32(0.0)
+    beta1 = np.float32(0.0)
 
     MAX_EXP = np.float32(80.0)
     MAX_VAL = np.float32(1e10)

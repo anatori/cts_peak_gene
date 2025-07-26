@@ -5,46 +5,226 @@ import re
 import dask
 
 from dask import delayed, compute
+from dask.distributed import Client, LocalCluster, get_client
 from multiprocessing import shared_memory, cpu_count
 from concurrent.futures import ProcessPoolExecutor
 
-from ctar.method import vectorized_poisson_regression_safe_converged, poisson_irls_delayed_loop
+from ctar.method import vectorized_poisson_regression_safe_converged, poisson_irls_delayed_loop, poisson_irls_sequential_loop, poisson_irls_single, poisson_irls_wrapper
 
 
 
-def process_bin(bin_idx, bin_indices, X_sparse, Y_sparse, max_iter, tol, save_dir):
-    """Process one bin: slice sparse matrices, run IRLS, save numpy result."""
-    X_idx = ctrl_links[:, 0]
-    Y_idx = ctrl_links[:, 1]
-    X_bin = X_sparse[:, X_idx]
-    Y_bin = Y_sparse[:, Y_idx]
-    
-    # Run your poisson_irls_delayed_loop
-    result = poisson_irls_delayed_loop(X_bin, Y_bin, max_iter=max_iter, tol=tol)
-    
-    # Convert result (list of np arrays) to single numpy array
-    result_arr = np.vstack(result)
-    
+
+def process_bin_sequential(bin_links, atac_sparse, rna_sparse, out_path, bin_name, max_iter=100, tol=1e-3):
+    """
+    Worker task to process one bin of links, run poisson IRLS batch, and save output.
+    """
+    result = poisson_irls_sequential_loop(
+        atac_sparse, rna_sparse, bin_links,
+        max_iter=max_iter, tol=tol
+    )
+    os.makedirs(out_path, exist_ok=True)
+    np.save(os.path.join(out_path, f'poissonb_{bin_name}'), result[:, 1])
+    return bin_name
+
+
+def parallel_poisson_bins_dask_sequential(
+    ctrl_links_ls,
+    ctrl_labels_ls,
+    atac_sparse,
+    rna_sparse,
+    out_path,
+    max_iter=100,
+    tol=1e-3,
+    n_workers=4,
+    local_directory="./dask_temp",
+):
+    """
+    Run Poisson IRLS regression across bins using Dask futures with efficient data scattering.
+    ctrl_links_ls: list of np.ndarray, each bin's links
+    ctrl_labels_ls: list of str, unique filenames per bin
+    """
+    if not os.path.exists(out_path):
+        os.makedirs(out_path)
+
+    cluster = LocalCluster(
+        n_workers=n_workers,
+        threads_per_worker=1,
+        local_directory=local_directory,
+    )
+    client = Client(cluster)
+
+    print(f"# Dask dashboard available at: {client.dashboard_link}", flush=True)
+    print(f"# Dask scheduler address: {client.scheduler.address}", flush=True)
+
+    # Scatter large shared data once
+    atac_future = client.scatter(atac_sparse, broadcast=True)
+    rna_future = client.scatter(rna_sparse, broadcast=True)
+
+    futures = []
+    for bin_links, bin_name in zip(ctrl_links_ls, ctrl_labels_ls):
+        # Scatter bin_links separately for each bin
+        bin_links_future = client.scatter(bin_links, broadcast=True)
+
+        fut = client.submit(
+            process_bin_sequential,
+            bin_links_future,
+            atac_future,
+            rna_future,
+            out_path,
+            bin_name,
+            max_iter=max_iter,
+            tol=tol,
+        )
+        futures.append(fut)
+
+    # Wait for all to complete and gather results
+    results = client.gather(futures)
+
+    client.close()
+    cluster.close()
+
+    return results
+
+
+def map_poisson_irls_wrapper(link, atac_sparse, rna_sparse, max_iter, tol):
+    x_idx, y_idx = link
+    return poisson_irls_wrapper(x_idx, y_idx, atac_sparse, rna_sparse, max_iter, tol)
+
+
+def process_bin_nested_parallel(bin_links, atac_sparse, rna_sparse, out_path, bin_name, max_iter=100, tol=1e-3):
+    client = get_client()
+
+    # Map tasks
+    link_futures = client.map(
+        map_poisson_irls_wrapper,
+        bin_links,
+        atac_sparse=atac_sparse,
+        rna_sparse=rna_sparse,
+        max_iter=max_iter,
+        tol=tol,
+    )
+
+    results = client.gather(link_futures)
+
+    results = np.vstack(results)
+    np.save(os.path.join(out_path, f'poissonb_{bin_name}'), results[:, 1])
+    return bin_name
+
+
+def parallel_poisson_bins_nested(
+    ctrl_links_ls,
+    ctrl_labels_ls,
+    atac_sparse,
+    rna_sparse,
+    out_path,
+    max_iter=100,
+    tol=1e-3,
+    n_workers=4,
+    threads_per_worker=1,
+    local_directory="./dask_temp",
+):
+    cluster = LocalCluster(
+        n_workers=n_workers,
+        threads_per_worker=threads_per_worker,
+        local_directory=local_directory,
+    )
+    client = Client(cluster)
+
+    print(f"# Dashboard: {client.dashboard_link}")
+
+    # Scatter shared arrays once
+    atac_future = client.scatter(atac_sparse, broadcast=True)
+    rna_future = client.scatter(rna_sparse, broadcast=True)
+
+    futures = []
+    for bin_links, bin_name in zip(ctrl_links_ls, ctrl_labels_ls):
+        # Scatter bin_links separately
+        bin_links_future = client.scatter(bin_links, broadcast=False)
+        fut = client.submit(
+            process_bin_nested_parallel,
+            bin_links_future,
+            atac_future,
+            rna_future,
+            out_path,
+            bin_name,
+            max_iter,
+            tol
+        )
+        futures.append(fut)
+
+    results = client.gather(futures)
+    client.close()
+    cluster.close()
+    return results
+
+
+@delayed
+def process_bin(bin_links, atac_sparse, rna_sparse, out_path, bin_name, max_iter=100, tol=1e-3):
+    """Process one bin: slice sparse matrices, run IRLS, save numpy result.""" 
+
+    result = poisson_irls_delayed_loop(
+        atac_sparse, rna_sparse, links=bin_links,
+        max_iter=max_iter, tol=tol
+    )
+
     # Save result to disk
-    fname = os.path.join(save_dir, f"bin_{bin_idx}_results.npy")
-    np.save(fname, result_arr)
+    np.save(os.path.join(out_path, f'poissonb_{bin_name}'), result[:,1])
+
+    return bin_name
+
+
+def parallel_poisson_bins_dask(
+    ctrl_links_ls,
+    ctrl_labels_ls,
+    atac_sparse,
+    rna_sparse,
+    out_path,
+    max_iter=100,
+    tol=1e-3,
+    n_workers=4,
+    local_directory="./dask_temp",
+):
+    """
+    Runs Poisson IRLS regression across bins using nested Dask parallelism.
+    ctrl_links_ls: list of np.ndarray (n_links, 2) per bin
+    """
+
+    if not os.path.exists(out_path):
+        os.makedirs(out_path)
+
+    cluster = LocalCluster(
+        n_workers=n_workers,
+        threads_per_worker=1,
+        local_directory=local_directory,
+    )
+    client = Client(cluster)
+
+    print(f"# Dask dashboard available at: {client.dashboard_link}")
+    print(f"# Dask scheduler address: {client.scheduler.address}")
+
+    # Scatter shared sparse matrices to all workers once
+    atac_future = client.scatter(atac_sparse, broadcast=True)
+    rna_future = client.scatter(rna_sparse, broadcast=True)
+
+    tasks = []
+    for i, bin_links in enumerate(ctrl_links_ls):
+        bin_links_future = client.scatter(bin_links)
+        task = process_bin(
+            bin_links=bin_links_future,
+            atac_sparse=atac_future,
+            rna_sparse=rna_future,
+            out_path=out_path,
+            bin_name=ctrl_labels_ls[i],
+            max_iter=max_iter,
+            tol=tol
+        )
+        tasks.append(task)
+
+    completed_bins = compute(*tasks)
     
-    return fname
-
-
-def run_all_bins_parallel(bins_data, X_sparse, Y_sparse, max_iter=100, tol=1e-3, save_dir="results", n_workers=4):
-    os.makedirs(save_dir)
-
-    delayed_tasks = []
-    for bin_idx, bin_indices in enumerate(bins_data):
-        task = delayed(process_bin)(bin_idx, bin_indices, X_sparse, Y_sparse, max_iter, tol, save_dir)
-        delayed_tasks.append(task)
-
-    # Compute all bins in parallel using dask
-    results_paths = compute(*delayed_tasks, scheduler='threads', num_workers=n_workers)
-    
-    print(f"Finished processing {len(results_paths)} bins.")
-    return results_paths
+    client.close()
+    cluster.close()
+    return completed_bins
 
 
 def create_shared_sparse(mat):
