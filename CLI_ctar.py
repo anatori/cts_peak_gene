@@ -7,6 +7,7 @@ import os
 import pandas as pd
 from tqdm import tqdm
 import pybedtools
+import psutil
 
 import time
 import argparse
@@ -422,25 +423,32 @@ def main(args):
             last_batch = eval_df.shape[0] // BATCH_SIZE
             if BATCH == last_batch: end = eval_df.shape[0]
 
-            ctrl_peaks = np.load(os.path.join(ctrl_path, f'ctrl_peaks_{BIN_CONFIG}.npy'))
-            adata_atac.varm['ctrl_peaks'] = ctrl_peaks[:, :n_ctrl]
-            adata_rna.var['ind'] = range(len(adata_rna.var))
-
-            links_arr = links_arr[:, start:end]
-            ctrl_peaks = adata_atac[:, links_arr[0]].varm['ctrl_peaks']
-            ctrl_genes = adata_rna[:, links_arr[1]].var['ind'].values
+            ctrl_peaks = np.load(os.path.join(ctrl_path, f'ctrl_peaks_{BIN_CONFIG}.npy'), mmap_mode='r')
 
             ctrl_links_ls = []
             ctrl_labels_ls = []
 
-            for i in range(end - start):
+            for i in range(start, end):
+                # single peak index
+                peak_i = adata_atac.var.index.get_loc(links_arr[0][i - start])
+                gene_i = adata_rna.var.index.get_loc(links_arr[1][i - start])
+
+                # only get row i from the ctrl_peaks matrix
+                ctrl_peak_i = ctrl_peaks[peak_i, :n_ctrl]
+
                 ctrl_links = np.vstack((
-                    ctrl_peaks[i],
-                    np.full(n_ctrl, ctrl_genes[i])
+                    ctrl_peak_i,
+                    np.full(n_ctrl, gene_i)
                 )).T
 
+                ctrl_links = np.ascontiguousarray(ctrl_links)
+
                 ctrl_links_ls.append(ctrl_links)
-                ctrl_labels_ls.append('ctrl_' + str(start + i) + '.npy')
+                ctrl_labels_ls.append(f'ctrl_{i}.npy')
+
+            proc = psutil.Process()
+            print(f"# [MEM BEFORE DASK] RSS: {proc.memory_info().rss / 1024**2:.2f} MB")
+            print(f"# Total ctrl_links size: {sum(arr.nbytes for arr in ctrl_links_ls) / 1024**2:.2f} MB")
 
             start_time = time.time()
 
@@ -461,7 +469,7 @@ def main(args):
             curr_n_files = len(os.listdir(final_corr_path))
             if curr_n_files == (last_batch + 1):
                 print(f"# All {curr_n_files} batches complete. Consolidating null")
-                full_ctrl_poissonb = ctar.data_loader.consolidate_null(final_corr_path + '/', startswith = 'poissonb_ctrl_', b=last_batch+1)
+                full_ctrl_poissonb = ctar.data_loader.consolidate_individual_nulls(final_corr_path + '/', startswith = 'poissonb_ctrl_', b=last_batch+1)
                 np.save(os.path.join(corr_path, f'ctrl_poiss_{BIN_CONFIG}.npy'), full_ctrl_poissonb)
 
         else:
@@ -478,6 +486,10 @@ def main(args):
                 ctrl_links = np.load(os.path.join(ctrl_path, f'ctrl_links_{BIN_CONFIG}', ctrl_file))[:n_ctrl]
                 ctrl_links_ls.append(ctrl_links)
                 file_name_ls.append(os.path.basename(ctrl_file))
+
+            proc = psutil.Process()
+            print(f"[MEM BEFORE DASK] RSS: {proc.memory_info().rss / 1024**2:.2f} MB")
+            print(f"# Total ctrl_links size: {sum(arr.nbytes for arr in ctrl_links_ls) / 1024**2:.2f} MB")
 
             start_time = time.time()
 

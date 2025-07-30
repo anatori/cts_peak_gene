@@ -4,12 +4,12 @@
 
 MULTIOME_FILE=/projects/zhanglab/users/ana/multiome/processed/neurips_bmmc/bmmc.h5mu
 LINKS_FILE=/projects/zhanglab/users/ana/multiome/simulations/bin_analysis/eqtl_full_eval_df_deduplicated_clean.csv
-TARGET_PATH=/projects/zhanglab/users/ana/multiome/simulations/bin_analysis/
+TARGET_PATH=/projects/zhanglab/users/ana/multiome/simulations/bin_analysis
 GENOME_FILE=/projects/zhanglab/users/ana/bedtools2/ana_bedfiles/ref/GRCh38.p14.genome.fa.bgz
 BIN_CONFIG=$1
 BIN_TYPE='mean_var'
 PYBEDTOOLS_PATH=/projects/zhanglab/users/ana/bedtools2/bin
-BATCH_SIZE=200
+BATCH_SIZE=500
 
 # echo "Beginning $BIN_CONFIG create_ctrl job..."
 # # Submit create_ctrl job
@@ -25,7 +25,7 @@ BATCH_SIZE=200
 #     --binning_config $BIN_CONFIG \
 #     --binning_type $BIN_TYPE \
 #     --pybedtools_path $PYBEDTOOLS_PATH \
-    # --method pr" 
+#     --method pr" 
 
 # Count control link files
 TOTAL_NUM_BIN=$(find "$TARGET_PATH/ctrl_peaks/ctrl_links_$BIN_CONFIG" -type f | wc -l)
@@ -57,7 +57,7 @@ echo "Found $TOTAL_NUM_BIN control files. Submitting $TOTAL_NUM_BATCHES batch jo
 
 echo "Submitting $BIN_CONFIG compute_pr job..."
 # Submit compute_corr job
-sbatch -p mzhang,pool1 -t 1-00:00:00 -x compute-1-1 --mem-per-cpu 8Gb -n 1 -c 4 $ARRAY_OPT --mail-type=END --mail-user=asprieto@andrew.cmu.edu \
+sbatch -p mzhang,pool1 -t 1-00:00:00 -x compute-1-1 --mem-per-cpu 8Gb -n 1 -c 4 --array 1 --mail-type=END --mail-user=asprieto@andrew.cmu.edu \
   -o /home/asprieto/logs/compute_pr_%A_%a.err -J "pr_$BIN_CONFIG" --wrap " \
   source ~/.bashrc && \
   conda activate ctar && \
