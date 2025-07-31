@@ -411,11 +411,13 @@ def main(args):
             os.makedirs(dask_tmp_path)
 
         n_jobs = int(os.environ.get("SLURM_CPUS_PER_TASK", os.cpu_count() or 1))
+        print(f'# Number of workers: {n_jobs}')
+
+        memory_limit = f"{round(0.9 * (4 * 1024))}MB" # 90% of total mem
+        print(f'# Memory limit: {memory_limit}')
 
         atac_sparse = adata_atac.layers['counts']
         rna_sparse = adata_rna.layers['counts']
-
-        delayed_tasks = []
 
         if f'{n_rna_mean}.{n_rna_var}' == 'inf.inf':
 
@@ -461,6 +463,7 @@ def main(args):
                 max_iter=100,
                 tol=1e-3,
                 n_workers=n_jobs,
+                memory_limit=memory_limit,
                 local_directory=dask_tmp_path,
             )
 
@@ -487,13 +490,14 @@ def main(args):
                 ctrl_links_ls.append(ctrl_links)
                 file_name_ls.append(os.path.basename(ctrl_file))
 
+
             proc = psutil.Process()
-            print(f"[MEM BEFORE DASK] RSS: {proc.memory_info().rss / 1024**2:.2f} MB")
+            print(f"# [MEM BEFORE DASK] RSS: {proc.memory_info().rss / 1024**2:.2f} MB")
             print(f"# Total ctrl_links size: {sum(arr.nbytes for arr in ctrl_links_ls) / 1024**2:.2f} MB")
 
             start_time = time.time()
 
-            ctar.parallel.parallel_poisson_bins_dask_sequential(
+            ctar.parallel.parallel_poisson_bins_dask_sequential_limit_scatter(
                 ctrl_links_ls=ctrl_links_ls,
                 ctrl_labels_ls=file_name_ls,
                 atac_sparse=atac_sparse,
@@ -505,7 +509,7 @@ def main(args):
                 local_directory=dask_tmp_path,
             )
 
-            print('# Sequential regression_time = %0.2fs' % (time.time() - start_time))
+            print('# Sequential numba regression_time = %0.2fs' % (time.time() - start_time))
 
             # If last batch, check for missing files and process them
             if end == n_ctrl_files:

@@ -9,7 +9,7 @@ GENOME_FILE=/projects/zhanglab/users/ana/bedtools2/ana_bedfiles/ref/GRCh38.p14.g
 BIN_CONFIG=$1
 BIN_TYPE='mean_var'
 PYBEDTOOLS_PATH=/projects/zhanglab/users/ana/bedtools2/bin
-BATCH_SIZE=500
+BATCH_SIZE=200
 
 # echo "Beginning $BIN_CONFIG create_ctrl job..."
 # # Submit create_ctrl job
@@ -27,37 +27,37 @@ BATCH_SIZE=500
 #     --pybedtools_path $PYBEDTOOLS_PATH \
 #     --method pr" 
 
-# Count control link files
-TOTAL_NUM_BIN=$(find "$TARGET_PATH/ctrl_peaks/ctrl_links_$BIN_CONFIG" -type f | wc -l)
+# # Count control link files
+# TOTAL_NUM_BIN=$(find "$TARGET_PATH/ctrl_peaks/ctrl_links_$BIN_CONFIG" -type f | wc -l)
 
-# Check if control files < batch size or requires link-based chunks
-if [[ $BIN_CONFIG =~ "inf" ]]; then 
-  NUM_LINKS=$(wc -l < "$LINKS_FILE")
-  TOTAL_NUM_BATCHES=$(( (NUM_LINKS + BATCH_SIZE - 1) / BATCH_SIZE ))
-  if [ "$TOTAL_NUM_BATCHES" -eq 0 ]; then
-    ARRAY_OPT="--array=0"
-  else
-    ARRAY_OPT="--array=0-$((TOTAL_NUM_BATCHES - 1))%10"
-  fi
-else
-  if [ "$TOTAL_NUM_BIN" -lt "$BATCH_SIZE" ]; then
-    TOTAL_NUM_BATCHES=1
-    ARRAY_OPT="--array=0"
-  else
-    TOTAL_NUM_BATCHES=$(( (TOTAL_NUM_BIN + BATCH_SIZE - 1) / BATCH_SIZE ))
-    if [ "$TOTAL_NUM_BATCHES" -eq 0 ]; then
-      ARRAY_OPT="--array=0"
-    else
-      ARRAY_OPT="--array=0-$((TOTAL_NUM_BATCHES - 1))%10"
-    fi
-  fi
-fi
+# # Check if control files < batch size or requires link-based chunks
+# if [[ $BIN_CONFIG =~ "inf" ]]; then 
+#   NUM_LINKS=$(wc -l < "$LINKS_FILE")
+#   TOTAL_NUM_BATCHES=$(( (NUM_LINKS + BATCH_SIZE - 1) / BATCH_SIZE ))
+#   if [ "$TOTAL_NUM_BATCHES" -eq 0 ]; then
+#     ARRAY_OPT="--array=0"
+#   else
+#     ARRAY_OPT="--array=0-$((TOTAL_NUM_BATCHES - 1))%10"
+#   fi
+# else
+#   if [ "$TOTAL_NUM_BIN" -lt "$BATCH_SIZE" ]; then
+#     TOTAL_NUM_BATCHES=1
+#     ARRAY_OPT="--array=0"
+#   else
+#     TOTAL_NUM_BATCHES=$(( (TOTAL_NUM_BIN + BATCH_SIZE - 1) / BATCH_SIZE ))
+#     if [ "$TOTAL_NUM_BATCHES" -eq 0 ]; then
+#       ARRAY_OPT="--array=0"
+#     else
+#       ARRAY_OPT="--array=0-$((TOTAL_NUM_BATCHES - 1))%10"
+#     fi
+#   fi
+# fi
 
 echo "Found $TOTAL_NUM_BIN control files. Submitting $TOTAL_NUM_BATCHES batch job(s)."
 
 echo "Submitting $BIN_CONFIG compute_pr job..."
 # Submit compute_corr job
-sbatch -p mzhang,pool1 -t 1-00:00:00 -x compute-1-1 --mem-per-cpu 8Gb -n 1 -c 4 --array 1 --mail-type=END --mail-user=asprieto@andrew.cmu.edu \
+sbatch -p mzhang,pool1 -t 1-00:00:00 -x compute-1-1 --mem-per-cpu 4Gb -n 1 -c 16 --array 0 --mail-type=END --mail-user=asprieto@andrew.cmu.edu \
   -o /home/asprieto/logs/compute_pr_%A_%a.err -J "pr_$BIN_CONFIG" --wrap " \
   source ~/.bashrc && \
   conda activate ctar && \

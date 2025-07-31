@@ -20,7 +20,7 @@ def process_bin_sequential(bin_links, atac_sparse, rna_sparse, out_path, bin_nam
     """
     result = poisson_irls_sequential_loop(
         atac_sparse, rna_sparse, bin_links,
-        max_iter=max_iter, tol=tol
+        max_iter=max_iter, tol=tol,
     )
     os.makedirs(out_path, exist_ok=True)
     np.save(os.path.join(out_path, f'poissonb_{bin_name}'), result[:, 1])
@@ -36,6 +36,7 @@ def parallel_poisson_bins_dask_sequential(
     max_iter=100,
     tol=1e-3,
     n_workers=4,
+    memory_limit="3.5GB",
     local_directory="./dask_temp",
 ):
     """
@@ -49,6 +50,7 @@ def parallel_poisson_bins_dask_sequential(
     cluster = LocalCluster(
         n_workers=n_workers,
         threads_per_worker=1,
+        memory_limit=memory_limit,
         local_directory=local_directory,
     )
     client = Client(cluster)
@@ -63,13 +65,88 @@ def parallel_poisson_bins_dask_sequential(
     futures = []
     for bin_links, bin_name in zip(ctrl_links_ls, ctrl_labels_ls):
         # Scatter bin_links separately for each bin
-        bin_links_future = client.scatter(bin_links, broadcast=True)
+        bin_links_future = client.scatter(bin_links, broadcast=False)
 
         fut = client.submit(
             process_bin_sequential,
             bin_links_future,
             atac_future,
             rna_future,
+            out_path,
+            bin_name,
+            max_iter=max_iter,
+            tol=tol,
+        )
+        futures.append(fut)
+
+    # Wait for all to complete and gather results
+    results = client.gather(futures)
+
+    client.close()
+    cluster.close()
+
+    return results
+
+
+def parallel_poisson_bins_dask_sequential_limit_scatter(
+    ctrl_links_ls,
+    ctrl_labels_ls,
+    atac_sparse,
+    rna_sparse,
+    out_path,
+    max_iter=100,
+    tol=1e-3,
+    n_workers=4,
+    memory_limit="3.5GB",
+    local_directory="./dask_temp",
+):
+    """
+    Run Poisson IRLS regression across bins using Dask futures with efficient data scattering.
+    ctrl_links_ls: list of np.ndarray, each bin's links
+    ctrl_labels_ls: list of str, unique filenames per bin
+    """
+    if not os.path.exists(out_path):
+        os.makedirs(out_path)
+
+    cluster = LocalCluster(
+        n_workers=n_workers,
+        threads_per_worker=1,
+        memory_limit=memory_limit,
+        local_directory=local_directory,
+    )
+    client = Client(cluster)
+
+    print(f"# Dask dashboard available at: {client.dashboard_link}", flush=True)
+    print(f"# Dask scheduler address: {client.scheduler.address}", flush=True)
+
+    futures = []
+
+    for bin_links, bin_name in zip(ctrl_links_ls, ctrl_labels_ls):
+        needed_cols_x = np.unique(bin_links[:, 0])
+        needed_cols_y = np.unique(bin_links[:, 1])
+        atac_sub = atac_sparse[:, needed_cols_x]
+        rna_sub = rna_sparse[:, needed_cols_y]
+
+        x_map_array = np.full(needed_cols_x.max() + 1, -1, dtype=int)
+        x_map_array[needed_cols_x] = np.arange(len(needed_cols_x))
+
+        y_map_array = np.full(needed_cols_y.max() + 1, -1, dtype=int)
+        y_map_array[needed_cols_y] = np.arange(len(needed_cols_y))
+
+        bin_links_reindexed = np.column_stack((
+            x_map_array[bin_links[:, 0]],
+            y_map_array[bin_links[:, 1]],
+        ))
+
+        atac_sub_future = client.scatter(atac_sub, broadcast=False)
+        rna_sub_future = client.scatter(rna_sub, broadcast=False)
+        bin_links_future = client.scatter(bin_links_reindexed, broadcast=False)
+
+        fut = client.submit(
+            process_bin_sequential,
+            bin_links_future,
+            atac_sub_future,
+            rna_sub_future,
             out_path,
             bin_name,
             max_iter=max_iter,

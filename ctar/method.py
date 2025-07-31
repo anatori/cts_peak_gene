@@ -160,13 +160,6 @@ def poisson_irls_sequential_loop(mat_x_full, mat_y_full, links=None, max_iter=10
     return results
 
 
-def poisson_irls_wrapper(x_idx, y_idx, atac_sparse, rna_sparse, max_iter=100, tol=1e-3):
-    """Run Poisson IRLS on one link pair given index."""
-    x = atac_sparse[:, x_idx].toarray().ravel().astype(np.float32)
-    y = rna_sparse[:, y_idx].toarray().ravel().astype(np.float32)
-    return poisson_irls_single(x, y, max_iter=max_iter, tol=tol)
-
-
 def poisson_irls_single(x, y, max_iter=100, tol=1e-3):
     """
     Run IRLS Poisson regression on a single feature pair (x, y), shape (n_cells,)
@@ -209,6 +202,13 @@ def poisson_irls_single(x, y, max_iter=100, tol=1e-3):
         beta0, beta1 = beta0_new, beta1_new
 
     return np.array([beta0, beta1], dtype=np.float32)
+
+
+def poisson_irls_wrapper(x_idx, y_idx, atac_sparse, rna_sparse, max_iter=100, tol=1e-3):
+    """Run Poisson IRLS on one link pair given index."""
+    x = atac_sparse[:, x_idx].toarray().ravel().astype(np.float32)
+    y = rna_sparse[:, y_idx].toarray().ravel().astype(np.float32)
+    return poisson_irls_single(x, y, max_iter=max_iter, tol=tol)
 
 
 def vectorized_poisson_regression_safe_converged(mat_x, mat_y, max_iter=100, tol=1e-3, pct_converged=0.9, flag_float32=True):
