@@ -460,7 +460,7 @@ def main(args):
 
             start_time = time.time()
 
-            ctar.parallel.parallel_poisson_bins_batched_submit(
+            ctar.parallel.multiprocess_poisson_irls_batched(
                 ctrl_links=ctrl_links_ls,
                 ctrl_labels_ls=ctrl_labels_ls,
                 atac_sparse=atac_sparse,
@@ -508,7 +508,7 @@ def main(args):
 
             start_time = time.time()
 
-            ctar.parallel.parallel_poisson_bins_batched_submit(
+            ctar.parallel.multiprocess_poisson_irls_batched(
                 ctrl_links=ctrl_links_ls,
                 ctrl_labels_ls=file_name_ls,
                 atac_sparse=atac_sparse,
@@ -541,7 +541,7 @@ def main(args):
                         ctrl_labels_ls.append(ctrl_links)
                         file_name_ls.append(os.path.basename(ctrl_file))
 
-                    ctar.parallel.parallel_poisson_bins_batched_submit(
+                    ctar.parallel.multiprocess_poisson_irls_batched(
                         ctrl_links=ctrl_labels_ls,
                         ctrl_labels_ls=file_name_ls,
                         atac_sparse=atac_sparse,
@@ -585,7 +585,7 @@ def main(args):
         if METHOD == 'poiss': # untested
 
             links_arr = np.column_stack((cis_peak_inds, cis_gene_inds))
-            corr = ctar.method.parallel_poisson_bins_batched_submit(ctrl_links=links_arr, 
+            corr = ctar.parallel.multiprocess_poisson_irls_batched(ctrl_links=links_arr, 
                 atac_sparse=atac_data, 
                 rna_sparse=rna_data,
                 local_directory='/projects/zhanglab/users/ana/multiome/simulations/bin_analysis/dask_temp', # hardcoded
