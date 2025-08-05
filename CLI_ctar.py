@@ -13,6 +13,7 @@ import time
 import argparse
 
 from dask.distributed import Client, LocalCluster
+import dask.array as da
 
 
 
@@ -38,7 +39,7 @@ compute_pval : compute zscore pval, pooled pval, mc pval based on control pairs
     - Output : additional columns added to links_file pertaining to computed pvalues
 
 compute_cis_pairs : find cis pairs within 500kb of annotated peak and genes
-    - Input : --job | --links_file | --method
+    - Input : --job | --multiome_file | --links_file | --method
     - Output : additional columns added to links_file pertaining to computed pvalues
     
 TODO
@@ -204,9 +205,14 @@ def main(args):
             atac_bins = [n_atac_mean, n_atac_gc]
         rna_type = 'mean_var'
 
-    if JOB in ["create_ctrl"]:
+    if JOB in [
+        "create_ctrl",
+        "compute_cis_pairs",
+    ]:
         print("# Setting --pybedtools_path")
         pybedtools.helpers.set_bedtools_path(PYBEDTOOLS_PATH)
+
+    if JOB in ["create_ctrl"]:
 
         if METHOD == 'corr':
             final_path_prefix = 'ctrl_corr_'
@@ -413,7 +419,8 @@ def main(args):
         n_jobs = int(os.environ.get("SLURM_CPUS_PER_TASK", os.cpu_count() or 1))
         print(f'# Number of workers: {n_jobs}')
 
-        memory_limit = f"{round(0.9 * (4 * 1024))}MB" # 90% of total mem
+        mem = int(os.environ.get("SLURM_MEM_PER_CPU"))
+        memory_limit = f"{round(0.9 * mem)}MB" # 90% of total mem
         print(f'# Memory limit: {memory_limit}')
 
         atac_sparse = adata_atac.layers['counts']
@@ -450,12 +457,11 @@ def main(args):
 
             proc = psutil.Process()
             print(f"# [MEM BEFORE DASK] RSS: {proc.memory_info().rss / 1024**2:.2f} MB")
-            print(f"# Total ctrl_links size: {sum(arr.nbytes for arr in ctrl_links_ls) / 1024**2:.2f} MB")
 
             start_time = time.time()
 
-            ctar.parallel.parallel_poisson_bins_dask_sequential(
-                ctrl_links_ls=ctrl_links_ls,
+            ctar.parallel.parallel_poisson_bins_batched_submit(
+                ctrl_links=ctrl_links_ls,
                 ctrl_labels_ls=ctrl_labels_ls,
                 atac_sparse=atac_sparse,
                 rna_sparse=rna_sparse,
@@ -465,14 +471,21 @@ def main(args):
                 n_workers=n_jobs,
                 memory_limit=memory_limit,
                 local_directory=dask_tmp_path,
+                save_files=True,
             )
 
-            print('# Sequential regression_time = %0.2fs' % (time.time() - start_time))
+            print('# Regression_time = %0.2fs' % (time.time() - start_time))
 
             curr_n_files = len(os.listdir(final_corr_path))
             if curr_n_files == (last_batch + 1):
+                
                 print(f"# All {curr_n_files} batches complete. Consolidating null")
-                full_ctrl_poissonb = ctar.data_loader.consolidate_individual_nulls(final_corr_path + '/', startswith = 'poissonb_ctrl_', b=last_batch+1)
+                
+                full_ctrl_poissonb = ctar.data_loader.consolidate_individual_nulls(
+                    final_corr_path + '/', 
+                    startswith = 'poissonb_ctrl_', 
+                    b=last_batch+1
+                )
                 np.save(os.path.join(corr_path, f'ctrl_poiss_{BIN_CONFIG}.npy'), full_ctrl_poissonb)
 
         else:
@@ -490,15 +503,13 @@ def main(args):
                 ctrl_links_ls.append(ctrl_links)
                 file_name_ls.append(os.path.basename(ctrl_file))
 
-
             proc = psutil.Process()
             print(f"# [MEM BEFORE DASK] RSS: {proc.memory_info().rss / 1024**2:.2f} MB")
-            print(f"# Total ctrl_links size: {sum(arr.nbytes for arr in ctrl_links_ls) / 1024**2:.2f} MB")
 
             start_time = time.time()
 
-            ctar.parallel.parallel_poisson_bins_dask_sequential_limit_scatter(
-                ctrl_links_ls=ctrl_links_ls,
+            ctar.parallel.parallel_poisson_bins_batched_submit(
+                ctrl_links=ctrl_links_ls,
                 ctrl_labels_ls=file_name_ls,
                 atac_sparse=atac_sparse,
                 rna_sparse=rna_sparse,
@@ -507,9 +518,11 @@ def main(args):
                 tol=1e-3,
                 n_workers=n_jobs,
                 local_directory=dask_tmp_path,
+                batch_size=50,
+                save_files=True,
             )
 
-            print('# Sequential numba regression_time = %0.2fs' % (time.time() - start_time))
+            print('# BATCH TEST Regression_time = %0.2fs' % (time.time() - start_time))
 
             # If last batch, check for missing files and process them
             if end == n_ctrl_files:
@@ -520,21 +533,25 @@ def main(args):
 
                 if len(missing_bins) > 0:
                     print(f"# Computing correlation for an additional {len(missing_bins)} ctrls.")
+                    ctrl_links_ls = []
 
-                for ctrl_file in missing_bins:
-                    ctrl_links = np.load(os.path.join(final_ctrl_path, ctrl_file))[:, :n_ctrl]
+                    for ctrl_file in missing_bins:
 
-                    atac_data = adata_atac.layers['counts'][:, ctrl_links[:, 0]]
-                    rna_data = adata_rna.layers['counts'][:, ctrl_links[:, 1]]
+                        ctrl_links = np.load(os.path.join(ctrl_path, f'ctrl_links_{BIN_CONFIG}', ctrl_file))[:n_ctrl]
+                        ctrl_labels_ls.append(ctrl_links)
+                        file_name_ls.append(os.path.basename(ctrl_file))
 
-                    ctrl_poissonb = ctar.method.poisson_irls_delayed_loop(
-                        atac_data, rna_data, tol=1e-3
-                    )
-
-                    print(f"# Saving poissonb_{os.path.basename(ctrl_file)} to {final_corr_path}")
-                    np.save(
-                        os.path.join(final_corr_path, f'poissonb_{os.path.basename(ctrl_file)}'),
-                        ctrl_poissonb[:,1]
+                    ctar.parallel.parallel_poisson_bins_batched_submit(
+                        ctrl_links=ctrl_labels_ls,
+                        ctrl_labels_ls=file_name_ls,
+                        atac_sparse=atac_sparse,
+                        rna_sparse=rna_sparse,
+                        out_path=final_corr_path,
+                        max_iter=100,
+                        tol=1e-3,
+                        n_workers=n_jobs,
+                        local_directory=dask_tmp_path,
+                        save_files=True,
                     )
 
 
@@ -553,24 +570,32 @@ def main(args):
         atac_data = adata_atac.layers['counts']
         rna_data = adata_rna.layers['counts']
 
-        corr = []
-        for i in tqdm(range((len(eval_df) // BATCH_SIZE) + 1)):
+        if METHOD == 'corr':
+            corr = []
+            for i in tqdm(range((len(eval_df) // BATCH_SIZE) + 1)):
 
-            atac_subset = atac_data[:,cis_peak_inds[i*BATCH_SIZE:(i+1)*BATCH_SIZE]]
-            rna_subset = rna_data[:,cis_gene_inds[i*BATCH_SIZE:(i+1)*BATCH_SIZE]]
-
-            if METHOD == 'corr':
+                atac_subset = atac_data[:,cis_peak_inds[i*BATCH_SIZE:(i+1)*BATCH_SIZE]]
+                rna_subset = rna_data[:,cis_gene_inds[i*BATCH_SIZE:(i+1)*BATCH_SIZE]]
+                
                 pearsonr = ctar.method.pearson_corr_sparse(atac_subset,rna_subset)[0]
                 corr.append(pearsonr)
-            if METHOD == 'poiss':
-                poissonb = ctar.method.poisson_irls_delayed_loop(atac_subset,rna_subset)
-                corr.append(poissonb[:,1])
-            else:
-                raise ValueError("Must choose correlation method (currently implemented: corr, poiss)")
 
-        corr = np.concatenate(corr,axis=None)
-        eval_df[f'{METHOD}'] = corr
+            corr = np.concatenate(corr,axis=None)
 
+        if METHOD == 'poiss': # untested
+
+            links_arr = np.column_stack((cis_peak_inds, cis_gene_inds))
+            corr = ctar.method.parallel_poisson_bins_batched_submit(ctrl_links=links_arr, 
+                atac_sparse=atac_data, 
+                rna_sparse=rna_data,
+                local_directory='/projects/zhanglab/users/ana/multiome/simulations/bin_analysis/dask_temp', # hardcoded
+                save_files=False,
+                mini_batch_size=1000,
+                batch_size=BATCH_SIZE)
+
+            corr = corr.flatten()
+
+        cis_pairs_df[f'{METHOD}'] = corr
         cis_pairs_df.to_csv('/projects/zhanglab/users/ana/multiome/simulations/bin_analysis/cis_pairs_df.csv')
 
     if JOB == "compute_pval":
@@ -578,7 +603,7 @@ def main(args):
 
         if f'{n_rna_mean}.{n_rna_var}' == 'inf.inf':
 
-            ctrl_corr = np.load(os.path.join(corr_path, f'{file_prefix}{BIN_CONFIG}.npy'))
+            ctrl_corr = np.load(os.path.join(corr_path, f'{file_prefix}{BIN_CONFIG}.npy'))[:,n_ctrl]
             eval_df[f'{BIN_CONFIG}_mcpval'] = ctar.method.initial_mcpval(ctrl_corr,corr)
             eval_df[f'{BIN_CONFIG}_ppval'] = ctar.method.pooled_mcpval(ctrl_corr,corr)
             eval_df[f'{BIN_CONFIG}_zpval'] = ctar.method.zscore_pval(ctrl_corr,corr)[0]
@@ -645,7 +670,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--binning_config",
         type=str,
-        required=True,
+        required=False,
         default=None,
         help="{# ATAC mean bins}.{# ATAC GC bins}.{# RNA mean bins}.{# RNA var bins}.{# Sampled controls per bin}",
     )
