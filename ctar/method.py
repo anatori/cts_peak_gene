@@ -205,8 +205,12 @@ def gc_content(adata, col='gene_ids', genome_file='GRCh38.p13.genome.fa.bgz'):
     '''
 
     adata_copy = adata.copy()
+
     # muon get_sequences requires peaks to be index name
     # expected to be named as chrX:NNN-NNN
+    assert adata_copy.var[col].apply(lambda x: bool(re.match(r'^[\w\W]+:[\d]+-[\d]+$', str(x).strip()))).all(), (
+        f'Not all entries in {col} match the chrN:N-N format.'
+        )
     adata_copy.var.index = adata_copy.var[col]
 
     # Get sequences
@@ -244,7 +248,7 @@ def get_bins(adata, num_bins=5, type='mean', col='gene_ids', layer='atac_raw', g
     num_bins : int or list of int
         Number of desired bins. If list, first is for mean, second for sub-binning.
     type : str
-        Binning type. Options: ['mean', 'mean_var', 'mean_gc', 'cholesky'].
+        Binning type. Options: ['mean', 'mean_var', 'mean_gc', 'chol_logsum_gc'].
     col : str
         Column name in adata.var indicating peak ID.
     layer : str
@@ -257,6 +261,15 @@ def get_bins(adata, num_bins=5, type='mean', col='gene_ids', layer='atac_raw', g
     pd.DataFrame
         DataFrame with peak binning information.
     '''
+
+    if type == 'mean_gc':
+        assert genome_file is not None, (
+            'Must provide reference genome.'
+            )
+    if isinstance(num_bins, list):
+        assert len(num_bins) <= 2, (
+            'Maximum of 2 types of bins supported.'
+            )
 
     bins = pd.DataFrame()
     unique = ~adata.var.duplicated(subset=col)
@@ -406,7 +419,7 @@ def create_ctrl_peaks(adata,num_bins=5,b=1000,type='mean',peak_col='gene_ids',la
 def create_ctrl_pairs(
     adata_atac,
     adata_rna,
-    atac_bins = 5,
+    atac_bins = [5, 5],
     rna_bins = [20,20],
     atac_type = 'mean',
     rna_type = 'mean_var',
@@ -419,9 +432,55 @@ def create_ctrl_pairs(
     return_bins_df = True
 ):
 
-    ''' Control pairs.
+    ''' Obtain b control pairs for each permutation of bin features.
+
+    Parameters
+    ----------
+    adata_atac : ad.AnnData
+        AnnData object of shape (#cells,#peaks).
+    adata_rna : ad.AnnData
+        AnnData object of shape (#cells,#genes).
+    atac_bins : int or list (int)
+        Number of desired atac bins for groupings. If 'mean_gc' order is [# mean bins, # gc bins].
+    rna_bins : int or list (int)
+        Number of desired rna bins for groupings. If 'mean_var' order is [# mean bins, # var bins].
+    atac_type : str
+        Metric to base atac binning on. Options are ['mean','mean_gc', 'chol_logsum_gc'].
+    rna_type : str
+        Metric to base rna binning on. Options are ['mean','mean_var'].
+    genome_file : str
+        Path to file containing reference genome in fa.bgz format.
+    atac_layer : str
+        Layer in adata_atac.layers corresponding to the matrix to base bins on.
+    rna_layer : str
+        Layer in adata_rna.layers corresponding to the matrix to base bins on.
+    b : int
+        Number of desired random peaks per focal peak-gene pair.
+    peak_col : str
+        Label for column containing peak IDs in adata_atac.var.
+    gene_col : str
+        Label for column containing gene IDs in adata_rna.var.
+    return_bins_df : bool
+        If true, return atac and rna dataframes with their respective bins.
+    
+    Returns
+    ----------
+    ctrl_dic : dict
+        Dictionary where keys are all permutations of rna_bins and atac_bins. Values are b random
+        pairs selected from each bin.
+    atac_bins_df : pd.DataFrame (optional)
+        Copy of adata_atac.var containing atac_type information and bin labels.
+    rna_bins_df : pd.DataFrame (optional)
+        Copy of adata_rna.var containing rna_type information and bin labels.
     
     '''
+
+    assert atac_type in ['mean', 'mean_gc', 'chol_logsum_gc'], (
+        'atac_type must be mean, mean_gc, or chol_logsum_gc.'
+        )
+    assert rna_type in ['mean', 'mean_var'], (
+        'rna_type must be mean or mean_var.'
+        )
     
     atac_bins_df = get_bins(adata_atac,num_bins=atac_bins,type=atac_type,col=peak_col,layer=atac_layer,genome_file=genome_file)
     rna_bins_df = get_bins(adata_rna,num_bins=rna_bins,type=rna_type,col=gene_col,layer=rna_layer)
@@ -452,7 +511,8 @@ def create_ctrl_pairs(
         ctrl_dic[str(pair[0]) + '_' + str(pair[1])] = ctrl_links
 
     if return_bins_df:
-        return ctrl_dic,atac_bins_df,rna_bins_df
+
+        return ctrl_dic, atac_bins_df, rna_bins_df
 
     return ctrl_dic
 
@@ -644,6 +704,38 @@ def cauchy_combination(p_values1, p_values2):
 
 
 def binned_mcpval(
+    cis_pairs_dic, 
+    ctrl_pairs_dic
+):
+    '''
+    Compute p-values for binned evaluation data using Monte Carlo method.
+
+    Parameters
+    ----------
+    cis_pairs_dic : dict
+        Dictionary of numpy arrays where keys are bins and values are PR coefficients
+        for cis-peak-gene pairs.
+    ctrl_pairs_dic : dict
+        Dictionary of numpy arrays where keys are bins and values are PR coefficients
+        for control peak-gene pairs.
+
+    Returns
+    ----------
+    mcpval_dic : dict
+        Dictionary of numpy arrays where keys are bins and values are mc-pvalues.
+    '''
+
+    mcpval_dic = {}
+
+    for bin_key, coeffs in cis_pairs_dic.items():
+
+        ctrl_coeffs = ctrl_pairs_dic[bin_key].flatten()
+        mcpval_dic[bin_key] = basic_mcpval(ctrl_coeffs, coeffs)
+
+    return mcpval_dic
+
+
+def binned_mcpval_from_disk(
     path, 
     eval_df, 
     coeffs, 
@@ -756,296 +848,6 @@ def get_moments(adata, col, get_max=True):
 #####################################################################################
 
 
-def add_corr(mdata):
-
-    '''Adds pearson corr for putative links to existing mdata.
-
-    Parameters
-    ----------
-    mdata : mu.MuData
-        MuData object of shape (#cells,#peaks). Contains DataFrame under mdata.uns.peak_gene_pairs
-        containing columns ['index_x','index_y'] that correspond to peak and gene indices in atac.X
-        and rna.X respectively, as well as mdata.uns.control_peaks containing randomly generated peaks.
-        If mdata.uns.control_peaks doesn't exist yet, will create it.
-    
-    Returns
-    ----------
-    mdata : mu.MuData
-        Updates mdata input with mdata.uns.corr, an np.ndarray of shape (#peak-gene pairs).
-    
-    '''
-
-    try:
-        mdata.uns['peak_gene_pairs']
-    except KeyError:
-        print('Attempting to add peak-gene pairs.')
-        find_peak_gene_pairs(mdata)
-
-    # Extract peak-gene pairs and their respective atac and rna exp values
-    peaks_df = mdata.uns['peak_gene_pairs']
-    atac_Xs = mdata['atac'].X[:,peaks_df.index_x.values]
-    rna_Xs = mdata['rna'].X[:,peaks_df.index_y.values]
-
-    # Calculate corr
-    corr = pearson_corr_sparse(atac_Xs,rna_Xs,var_filter=True)
-
-    # Store in mdata.uns
-    mdata.uns['peak_gene_corr'] = corr
-    
-    return mdata
-    
-
-def get_corrs(adata):
-
-    '''Adds pearson corr for putative links to a links AnnData.
-
-    Parameters
-    ----------
-    adata : ad.AnnData
-        AnnData of shape (#cells, #peak-gene pairs) containing rna and atac layers.
-        See build_adata.
-    
-    Returns
-    ----------
-    adata : ad.AnnData
-        Updates given AnnData with correlation between peak-gene pairs of shape
-        (#cells, #peak-gene pairs with variance > 1e-6).
-    
-    '''
-
-    assert type(adata) == type(ad.AnnData()), 'Must be AnnData.'
-
-    # Calculate corr
-    corr = pearson_corr_sparse(adata.layers['rna'],adata.layers['atac'],var_filter=True)
-
-    # Remove pairs that have fail var_filter from adata obj
-    adata = adata[:,corr[1]].copy()
-    adata.var['corr'] = corr[0].flatten()
-    
-    return adata
-
-
-def control_corr(adata, b=1000, update=True, ct=False):
-
-    '''Calculates pearson corr for controls.
-
-    Parameters
-    ----------
-    adata : ad.AnnData
-        AnnData object of shape (#cells,#peaks). Contains DataFrame under mdata.uns.peak_gene_pairs
-        containing columns ['index_x','index_y'] that correspond to peak and gene indices in atac.X
-        and rna.X respectively, as well as mdata.uns.control_peaks containing randomly generated peaks.
-        If mdata.uns.control_peaks does not exist, will create it.
-    b : int
-        Number of desired random peaks per focal peak-gene pair. Should match
-        mdata.uns['control_peaks'].shape[1].
-    update : bool
-        If True, updates original AnnData with adata.varm['control_corr']
-    ct : bool
-        If True, identifies using original atac.X information, as control pairs are not limited to pairs
-        highly expressed within CT.
-
-    
-    Returns
-    ----------
-    ctrl_corr : np.ndarray
-        Array of shape (N,B).
-    
-    '''
-
-    try:
-        adata.varm['control_peaks']
-    except KeyError:
-        print('Adding control_peaks.')
-        create_ctrl_peaks(adata,b=b)
-
-    ctrl_peaks = adata.varm['control_peaks']
-
-    if ct:
-        atac_Xs = adata.uns['original_atac']
-    else:
-        atac_Xs = adata.layers['atac']
-    rna_Xs = adata.layers['rna']
-    
-    ctrl_corr = np.empty([adata.shape[1], b])
-    for row in tqdm(range(adata.shape[1])):
-        ctrl_corr[row,:] = pearson_corr_sparse(atac_Xs[:,ctrl_peaks[row]],rna_Xs[:,[row]])
-
-    if update:
-        adata.varm['control_corr'] = ctrl_corr
-    
-    return ctrl_corr
-
-
-def get_pvals(adata, control_metric='control_corr', metric='corr', alpha=0.05):
-
-    ''' Adds mc_pval and mc_qval to AnnData.
-
-    Parameters
-    ----------
-    adata : ad.AnnData
-        AnnData object of shape (#cells,#peaks). Should contain metric under adata.var,
-        and control_metric under adata.varm.
-    control_metric : str
-        Column name in adata.varm (pd.DataFrame of length #peaks) pertaining to 
-        control metric, e.g. 'control_corr' or 'delta_control_corr'.
-    metric : str
-        Column name in adata.varm (pd.DataFrame of length #peaks) pertaining to 
-        putative metric, e.g. 'corr' or 'delta_corr'.
-    alpha : int
-        Alpha threshold for BH FDR correction.
-    
-    Returns
-    ----------
-    adata : ad.AnnData
-        AnnData of shape (#cells,#peaks) updated with mc_pval and mc_qval.
-
-    '''
-    
-    # Adds mc_pval to AnnData
-    adata.var['mc_pval'] = mc_pval(adata.varm[control_metric], adata.var[metric].values)
-    
-    # Adds BH FDR qvals to AnnData
-    adata.var['mc_qval'] = stats.multitest.multipletests(adata.var['mc_pval'].values, alpha=alpha, method='fdr_bh')[1]
-    
-    return adata
-
-
-def filter_lowexp(atac, rna, min_pct=0.05, min_mean=0):
-    
-    ''' Filter out cells with few expressing cells or lower absolute mean expression.
-
-    Parameters
-    ----------
-    atac : sp.sparse_array
-        Sparse array of shape (#cells,#peaks) containing raw ATAC data.
-    atac : sp.sparse_array
-        Sparse array of shape (#cells,#peaks) containing raw RNA data.
-    min_pct : float
-        Value between [0,1] of the minimum number of nonzero ATAC and RNA
-        values for a given link.
-    min_pct : float
-        Minimum absolute mean for ATAC and RNA expression.
-    
-    Returns
-    ----------
-    lowexp_mask : np.array (dtype: bool)
-        Boolean array of shape (#peaks) dictating which peaks were filtered out.
-
-    '''
-
-    mean_atac, mean_rna = np.abs(atac.mean(axis=0)), np.abs(rna.mean(axis=0))
-    nnz_atac, nnz_rna = atac.getnnz(axis=0) / atac.shape[0], rna.getnnz(axis=0) / atac.shape[0]
-    lowexp_mask = (((nnz_atac > min_pct) & (nnz_rna > min_pct)) & ((mean_atac > min_mean) & (mean_rna > min_mean))).A1
-    
-    return lowexp_mask
-
-
-
-def filter_vars(adata, min_pct=0.05, min_mean=0.1):
-    
-    ''' Returns var filtered adata and its bool mask.
-
-    Parameters
-    ----------
-    adata : ad.AnnData
-        AnnData object of shape (#cells,#peaks), typically for a certain celltype.
-    min_pct : float
-        Value between [0,1] of the minimum number of nonzero ATAC and RNA
-        values for a given link.
-    min_pct : float
-        Minimum absolute mean for ATAC and RNA expression.
-    
-    Returns
-    ----------
-    ct_adata : ad.AnnData
-        AnnData of shape (#cells,#peaks-peaks failing filter).
-    lowexp_mask : np.array (dtype: bool)
-        Boolean array of shape (#peaks) dictating which peaks were filtered out.
-
-    '''
-
-    # Check if at least min_pct of cells are nonzero and above min_mean for ATAC and RNA values
-    lowexp_mask = filter_lowexp(adata.layers['atac_raw'], adata.layers['rna_raw'])
-
-    # Filter out lowly expressed
-    ct_adata = adata[:,lowexp_mask]
-    
-    return ct_adata, lowexp_mask
-
-
-def filter_ct(adata, ct_key):
-    
-    ''' Returns CT-specific adata.
-    
-    Parameters
-    ----------
-    adata : ad.AnnData
-        AnnData object of shape (#cells,#peaks).
-    ct_key : int or str
-        The key in the adata.uns['ct_labels'] dictionary for the desired celltype.
-    
-    Returns
-    ----------
-    ct_adata : ad.AnnData
-        AnnData of shape (#cells within ct,#peaks) containing only cells of a given celltype. 
-
-    '''
-    
-    # Get CT label
-    ct = adata.uns['ct_labels'][ct_key]
-
-    # Filter for CT
-    ct_adata = adata[adata.obs['celltype'] == ct].copy()
-
-    # Remove general corrs if they exist
-    try: 
-        ct_adata.var.drop(columns=['corr','mc_pval'],inplace=True)
-        del ct_adata.varm['control_corr']
-    except KeyError as e: pass
-
-    # Keep only specific label
-    ct_adata.uns['ct_labels'].clear()
-    ct_adata.uns['ct_labels'] = dict(ct_key=ct)
-    
-    return ct_adata
-
-
-def build_ct_adata(adata, ct_key, min_pct=0.05, min_mean=0.1):
-
-    ''' Returns CT-specific adata.
-    
-    Parameters
-    ----------
-    adata : ad.AnnData
-        AnnData object of shape (#cells,#peaks).
-    ct_key : int or str
-        The key in the adata.uns['ct_labels'] dictionary for the desired celltype.
-    
-    Returns
-    ----------
-    ct_adata : ad.AnnData
-        AnnData of shape (#cells within ct,#peaks) containing only cells of a given celltype,
-        with lowly expressed links also filtered out. 
-
-    '''
-    
-    ct_adata = filter_ct(adata,ct_key)
-    ct_adata,ct_le_mask = filter_vars(ct_adata,min_pct,min_mean)
-
-    # ct label
-    ct = ct_adata.uns['ct_labels']['ct_key']
-    
-    # Add mask to original adata object for future reference
-    adata.varm['lowexp_ct_mask'][ct] = ct_le_mask
-
-    # we store original atac_X in uns for calculating the control corr 
-    # as original control corr still includes peaks removed by lowexp masks
-    ct_adata.uns['original_atac'] = adata.layers['atac'][(adata.obs['celltype'] == ct),:]
-
-    return ct_adata
-
-
 def fit_poisson(x,y,return_both=False):
 
     # Simple log(E[y]) ~ x equation
@@ -1072,192 +874,4 @@ def fit_negbinom(x,y,return_both=False):
         return result.params[1]
 
     return result.params[0], result.params[1]
-
-
-def get_poiss_coeff(adata,layer='raw',binarize=False,label='poiss_coeff'):
-
-    # If binarizing, convert to bool then int
-    # so that statsmodel can handle it
-    if binarize:
-        x = adata.layers['atac_'+layer].astype(bool).astype(int)
-    else:
-        x = adata.layers['atac_'+layer]
-    if sp.sparse.issparse(x):
-        x = x.A
-    y = adata.layers['rna_'+layer]
-    if sp.sparse.issparse(y):
-        y = y.A
-
-    coeffs = []
-    failed = []
-
-    # Calculate poisson coefficient for each peak gene pair
-    for i in tqdm(np.arange(adata.shape[1])):
-        coeff_ = fit_poisson(x[:,i],y[:, i])
-        if not coeff_.any(): failed.append(i)
-        else: coeffs.append(coeff_)
-
-    # Remove pairs that have fail poisson
-    idx = np.arange(adata.shape[1])
-    idx = np.delete(idx,failed)
-    adata = adata[:,idx].copy()
-    # Save ATAC term coefficient in adata.var
-    adata.var[label] = np.array(coeffs)
-
-    return adata
-
-
-def build_other_adata(adata,ct_key):
-    ''' Returns adata with everything except CT in ct_key.
-    '''
-    ct = adata.uns['ct_labels'][ct_key]
-    
-    other_adata = adata[~(adata.obs['celltype'] == ct),:]
-    other_adata = other_adata[:,adata.varm['lowexp_ct_mask'][ct].values].copy()
-    
-    other_adata.var.drop(columns=['corr','mc_pval'],inplace=True)
-    del other_adata.varm['control_corr']
-    
-    other_adata.uns['ct_labels'].clear()
-    other_adata.uns['ct_labels'] = dict(ct_key=ct)
-
-    # for other_adata, we store original atac_X in uns for calculating the control corr 
-    # as original control corr still includes peaks removed by lowexp masks
-    other_adata.uns['original_atac'] = adata.layers['atac'][~(adata.obs['celltype'] == ct),:]
-
-    return other_adata
-
-def get_deltas(ct_adata,other_adata):
-    deltas = ct_adata.var['corr'].values - other_adata.var['corr'].values
-    ct_adata.var['delta_corr'] = deltas
-    return deltas
-
-def get_control_deltas(ct_adata,other_adata):
-    deltas = ct_adata.varm['control_corr'] - other_adata.varm['control_corr']
-    ct_adata.varm['delta_control_corr'] = deltas
-    return deltas
-
-
-def stratified_adata(adata,neighbors='leiden'):
-    ''' Stratify ATAC and RNA information within neighborhood groupings by
-    descending count.
-    
-    Parameters
-    ----------
-    adata : AnnData
-        AnnData peak-gene linked object with layers ['atac_raw'] and ['rna_raw'].
-    neighbors : str
-        The column name in adata.obs containing neighborhood groupings.
-
-    Returns
-    -------
-    adata : AnnData
-        adata object with new layers ['atac_strat'] and ['rna_strat']. The vars axis
-        will remain the same, while the obs axis will be sorted independently within
-        neighborhood groupings in descending peak acc. and gene exp. order.
-    
-    '''
-    
-    # get the sizes of each neighborhood group
-    neighborhood_sizes = adata.obs[neighbors].value_counts(sort=False)
-    
-    # sort adata by neighborhood grouping
-    stratified_order = adata.obs[neighbors].sort_values().index
-    sorted_adata = adata[stratified_order,:]
-    atac = sorted_adata.layers['atac_raw'].A
-    rna = sorted_adata.layers['rna_raw'].A
-
-    stratified_atac, stratified_rna = build_strat_layers(atac, rna, neighborhood_sizes)
-
-    adata.layers['atac_strat'] = stratified_atac
-    adata.layers['rna_strat'] = stratified_rna
-
-    return adata
-
-
-def build_strat_layers(atac,rna,neighborhood_sizes):
-    
-    stratified_atac = []
-    stratified_rna = []
-    
-    for i in neighborhood_sizes.values:
-        
-        # get first group of neighbors
-        # sort in descending order
-        atac_i = -np.sort(-atac[:i,:],axis=0)
-        
-        # remove the first group of neighbors
-        atac = atac[i:,:]
-
-        # append to list
-        stratified_atac.append(atac_i)
-
-
-        if rna is not None:
-
-            rna_i = -np.sort(-rna[:i,:],axis=0)
-            rna = rna[i:,:]
-            stratified_rna.append(rna_i)
-
-    # turn into arrays
-    stratified_atac = np.vstack(stratified_atac)
-    
-    if rna is not None:
-        stratified_rna = np.vstack(stratified_rna)
-        return stratified_atac,stratified_rna
-
-    return stratified_atac
-
-
-def shuffled_poiss_coeff(adata,neighbors='leiden',b=200):
-
-    ''' Shuffle peaks row-wise, then compute the poisson coefficient, b times.
-    
-    Parameters
-    ----------
-    adata : AnnData
-        AnnData peak-gene linked object with layers ['atac_strat'] and ['rna_strat'].
-    neighbors : str
-        The column name in adata.obs containing neighborhood groupings.
-    b : int
-        The number of repetitions/times to shuffle.
-
-    Returns
-    -------
-    coeffs : np.array
-        Array of shape (#links,b), containing poisson coefficient for shuffled,
-        stratified peak-gene pairs.
-    
-    '''
-
-    # mantain neighborhood sizes from original adata.obs
-    neighborhood_sizes = adata.obs[neighbors].value_counts(sort=False)
-
-    coeffs = []
-    
-    for j in np.arange(b):
-        
-        atac = adata.layers['atac_strat']
-        rna = adata.layers['rna_strat']
-        
-        # shuffle peaks only
-        inds = np.arange(len(atac))
-        np.random.shuffle(inds)
-        atac = atac[inds]
-
-        # arange shuffled rows into descending order within a strata
-        atac = build_strat_layers(atac, None, neighborhood_sizes)
-    
-        coeffs_i = []
-        for i in np.arange(adata.shape[1]):
-            # obtain poisson coeff for all peak-gene pairs for shuffled cells 
-            coeff_ = fit_poisson(atac[:,i],rna[:, i])
-            coeffs_i.append(coeff_)
-        coeffs_i = np.array(coeffs_i)
-        coeffs.append(coeffs_i)
-        
-    coeffs = np.vstack(coeffs)
-
-    return coeffs.T
-
 
