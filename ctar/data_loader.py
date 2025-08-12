@@ -20,37 +20,29 @@ def peak_to_gene(peaks_df,genes_df,clean=True,split_peaks=True,distance=500000,c
     -------
     peaks_df : pd.DataFrame
         DataFrame of length (#peaks) containing peak_col describing unique peak names.
-
     genes_df : pd.DataFrame
         DataFrame of length (#genes) containing gene_col describing unique gene names.
-
     clean : bool
         If true, will remove peaks labelled with NA, remove non-standard chromosomes,
         and change start and end locations to integer types.
-        
     split_peaks : bool
         If true, peaks must be in format chr[:-]start-end and will be extracted from this
         string format into a bed-suitable format (split into chr,start,end columns).
         Start and end locations will also be changed into integer types.
-
     distance : int
         Distance away from gene body to assess for peak overlap.
-
     col_names : list
     	List with column names describing the chromosome, bp start position, and
     	bp end position in bed-suitable format (strictly in this order). These should
     	correspond to chromosome position columns in each of the peaks_df and 
     	genes_df dataframes.
-
     gene_col : str
     	The label of the column containing unique gene names.
 
 	peak_col : str
 		The label of the column containing unique peak names.
-
 	genome : str
 		The genome to use for creating distance windows around the gene body.
-
     sep : str
         Separator for peak and gene in index.
 
@@ -105,7 +97,6 @@ def peak_to_gene(peaks_df,genes_df,clean=True,split_peaks=True,distance=500000,c
     return peak_gene_links
 
 
-
 def add_gene_positions(row,dictionary,gene_col='gene'):
 
     ''' Add pre-loaded gene positions to desired dataframe.
@@ -114,10 +105,8 @@ def add_gene_positions(row,dictionary,gene_col='gene'):
     -------
     row : pd.DataFrame row
         Row of dataframe fed in with df.apply.
-        
     dictionary : dict
         Dictionary with keys containing the gene IDs in 'gene'.
-        
     gene_id : str
         The name of the DataFrame column containing the gene IDs from which you
         will be converting.
@@ -144,7 +133,6 @@ def add_gene_positions(row,dictionary,gene_col='gene'):
     return [chrom,start,end]
 
 
-
 def get_gene_coords(gene_df,gene_id_type='ensembl_gene_id',dataset='hsapiens_gene_ensembl',
                     attributes=['chromosome_name','start_position','end_position'],
                     col_names=['chr','start','end'],gene_col='gene'):
@@ -155,22 +143,17 @@ def get_gene_coords(gene_df,gene_id_type='ensembl_gene_id',dataset='hsapiens_gen
     -------
     gene_df : pd.DataFrame
         DataFrame containing gene_col that you want to add coordinates to.
-
     gene_id_type : str
         The attribute that matches your existing gene_col IDs. Should exist in
         BiomartSever.dataset.show_attributes().
-        
     dataset : str
         The dataset you wish to pull Biomart info from. Should exist in 
         BiomartSeve.show_datasets().
-        
     attributes : list (str)
         The attributes you want to add to gene_df. Should exist in 
         BiomartSever.dataset.show_attributes().
-
     col_names : list (str)
         Name of columns you will be adding. Length must match length of attributes.
-
     gene_col : str
         The column in gene_df containing the gene_id_type IDs.
 
@@ -208,6 +191,128 @@ def get_gene_coords(gene_df,gene_id_type='ensembl_gene_id',dataset='hsapiens_gen
                                               args=(gene_positions,gene_col))
     
     return gene_df
+
+
+def map_bin_col(links_df, bin_df, links_ref_col='peak', bin_col='mean_gc_bin', prefix='atac_', suffix='_5.5'):
+    ''' Add binning columns.
+    '''
+    bins_dic = bin_df[bin_col].to_dict()
+    links_df[f'{prefix}{bin_col}{suffix}'] = links_df[links_ref_col].map(bins_dic)
+    return links_df
+
+
+def combine_peak_gene_bins(
+    links_df, 
+    atac_bins_df, 
+    rna_bins_df, 
+    peak_col='peak', 
+    gene_col='gene', 
+    atac_type='mean_gc', 
+    rna_type='mean_var', 
+    atac_bins=[5,5], 
+    rna_bins=[10,10]
+):
+    ''' Adds combined_bin column to links_df containing the binning information for each peak-gene pair.
+
+    Parameters
+    -------
+    links_df : pd.DataFrame
+        DataFrame of length (# peak-gene pairs) containing both peak_col and gene_col.
+    atac_bins_df : pd.DataFrame
+        Dataframe of length (# peaks) containing peak_col and atac_type bin labels.
+    rna_bins_df : pd.DataFrame
+        Dataframe of length (# genes) containing gene_col and rna_type bin labels.
+    peak_col : str
+        Label for column containing peak IDs in atac_bins_df.
+    gene_col : str
+        Label for column containing gene IDs in rna_bins_df.
+    atac_type : str
+        Metric atac binning was based on.
+    rna_type : str
+        Metric rna binning was based on on.
+    atac_bins : int or list (int)
+        Number of desired atac bins for groupings.
+    rna_bins : int or list (int)
+        Number of desired rna bins for groupings.
+
+    Returns
+    -------
+    links_df : pd.DataFrame
+        Returns the original df with added combined_bin column.
+    '''
+    for num_bins in [atac_bins, rna_bins]:
+        if isinstance(num_bins, list):
+            assert len(num_bins) <= 2, (
+                'Maximum of 2 types of bins supported.'
+                )
+    if isinstance(atac_bins, int):
+        atac_suffix = f'{atac_bins}'
+    else:
+        atac_suffix = f'{atac_bins[0]}.{atac_bins[1]}'
+    rna_suffix = f'{rna_bins[0]}.{rna_bins[1]}'
+
+    atac_bins_df.index = atac_bins_df[peak_col]
+    rna_bins_df.index = rna_bins_df[gene_col]
+
+    links_df = map_bin_col(
+        links_df, 
+        atac_bins_df, 
+        links_ref_col=peak_col, 
+        bin_col=f'{atac_type}_bin', 
+        prefix='atac_', 
+        suffix=f'_{atac_suffix}'
+    )
+    links_df = map_bin_col(
+        links_df, 
+        rna_bins_df, 
+        links_ref_col=gene_col, 
+        bin_col=f'{rna_type}_bin', 
+        prefix='rna_', 
+        suffix=f'_{rna_suffix}'
+    )
+
+    links_df[f'combined_bin_{atac_suffix}.{rna_suffix}'] = links_df[f'atac_{atac_type}_bin_{atac_suffix}'].astype(str) + \
+        '_' + links_df[f'rna_{rna_type}_bin_{rna_suffix}'].astype(str)
+
+    return links_df
+
+
+def groupby_combined_bins(links_df, combined_bin_col='combined_bin_5.5.5.5', return_dic=False):
+    ''' Group peak-gene pairs by a binning column. Add 'links_tuple' columns with an Nx2 array of pairs within each bin,
+    and 'index_xy' column with original links_df indices for each pair. 
+    '''
+    links_df['links_tuple'] = np.array(zip(links_df.index_x.values, links_df.index_y.values))
+    links_df['index_xy'] = range(len(links_df))
+    links_groupby_df = links_df.groupby(combined_bin_col).agg({
+        'index_xy': lambda x: list(x),
+        'links_tuple': lambda x: np.stack(x),
+    })
+    if return_dic:
+        return (links_groupby_df['links_tuple'].to_dict(),
+            links_groupby_df['index_xy'].to_dict()
+        )
+
+    return links_groupby_df
+
+
+def map_dic_to_df(links_df, idx_dic, results_dic, col_name='poissonb'):
+    ''' Use an index dictionary to map results to a dataframe. Assumes order is preserved in all operations.
+    Length of results_dic and idx_dic values with matching keys MUST be the same length.
+    '''
+    links_df[col_name] = np.nan
+    col_idx = links_df.columns.get_loc(col_name)
+
+    for bin_key, arr in results_dic.items():
+        bin_idx = idx_dic[bin_key]
+        links_df.iloc[bin_idx, col_idx] = arr
+
+    return links_df
+
+
+def map_df_to_dic(links_df, keys_col='combined_bin', values_col='poissonb'):
+    ''' Return dictionary with groupby column as keys and col_name column as values.
+    '''
+    return links_df.groupby(keys_col)[values_col].agg(list).apply(np.array).to_dict()
 
 
 def read_to_frag(x):
@@ -419,143 +524,3 @@ def consolidate_null(path,startswith = 'pearsonr_ctrl_',b=101,remove_empty=True,
     print('Array shape:',consolidated_null.shape)
 
     return consolidated_null
-
-
-######## archived #############
-
-def build_adata(mdata,gene_col='gene_name',peak_col='gene_ids',raw=False):
-    
-    '''Creates a new AnnData object for peak-gene links.
-
-    Parameters
-    ----------
-    mdata : mu.MuData
-        MuData object of shape (#cells,#peaks). Contains DataFrame under mdata.uns.peak_gene_pairs
-        and adds columns ['index_x','index_y'] that correspond to peak and gene indices in atac.X
-        and rna.X respectively. 'gene_col' should be the index of mdata['rna'].var, and 'peak_col'
-        should be the index of mdata['atac'].var.
-        If mdata.uns.control_peaks DNE, will create it.
-    gene_col : str
-        Label for gene ID column.
-    peak_col : str
-        Label for peak ID column.
-    raw : bool
-        If raw files are under mdata[modality].X, set to True. If False, will take values from 
-        mdata[modality].X as anadata.layers[modality] and set mdata[modality].layers['counts'] as 
-        anadata.layers[modality+'_raw'].
-    
-    Returns
-    ----------
-    anadata : an.AnnData
-        New AnnData object of shape (#cells with same ct between layers,#peak-gene pairs) and layers atac, rna.
-        Obs are labelled by cell_id. Var are labelled by peak-gene links.
-    
-    '''
-
-    try:
-        mdata.uns['peak_gene_pairs']
-    except KeyError:
-        print('Attempting to add peak-gene pairs.')
-        find_peak_gene_pairs(mdata)
-
-    # Add indices
-    mdata['atac'].var['index_x'] = range(len(mdata['atac'].var))
-    mdata['rna'].var['index_y'] = range(len(mdata['rna'].var))
-
-    # Only take cells which match assigned celltypes between assays
-    ct_mask = (mdata['rna'].obs['celltype'] == mdata['atac'].obs['celltype']).values
-
-    # Initialize empty AnnData
-    n = mdata[ct_mask,:].shape[0]
-    m = len(mdata.uns['peak_gene_pairs'])
-    anadata = ad.AnnData(np.zeros((n,m)))
-
-    genes = mdata.uns['peak_gene_pairs'][gene_col].values
-    peaks = mdata.uns['peak_gene_pairs'][peak_col].values
-
-    if not raw:
-        # Add aligned atac and rna layers. Should be CSC format.
-        anadata.layers['atac'] = mdata['atac'][:,peaks].X[ct_mask,:]
-        anadata.layers['rna'] = mdata['rna'][:,genes].X[ct_mask,:]
-
-        # Add raw
-        anadata.layers['atac_raw'] = mdata['atac'][:,peaks].layers['counts'][ct_mask,:]
-        anadata.layers['rna_raw'] = mdata['rna'][:,genes].layers['counts'][ct_mask,:]
-
-    else:
-        anadata.layers['atac_raw'] = mdata['atac'][:,peaks].X[ct_mask,:]
-        anadata.layers['rna_raw'] = mdata['rna'][:,genes].X[ct_mask,:]
-
-    # Add peak-gene pair descriptions
-    mdata.uns['peak_gene_pairs']['id'] = list(mdata.uns['peak_gene_pairs'][peak_col] + ',' + mdata.uns['peak_gene_pairs'][gene_col])
-    anadata.var = mdata.uns['peak_gene_pairs'].set_index('id')
-
-    # Add celltypes, which should be the same between layers
-    anadata.obs = mdata[ct_mask,:]['atac'].obs
-
-    return anadata
-
-
-
-def cellranger_peak_gene_pairs(mdata):
-    
-    '''Adds dataframe containing peak-gene pairs from CellRanger.
-
-    Parameters
-    ----------
-    mdata : mu.MuData
-        MuData object of shape (#cells,#peaks). Must contain atac.var with peaks listed under 'gene_ids'.
-        Must also contain atac.uns['atac']['peak_annotation'] with peaks listed under 'peak' and genes
-        listed under 'gene_name'. See mu.initialise_default_files.
-    
-    Returns
-    ----------
-    mdata : mu.MuData
-        Updates mdata input with mdata.uns['peak_gene_pairs'], a pd.DataFrame of len (#peak-gene pairs)
-        containing columns ['index_x','index_y'] that correspond to peak and gene indices in atac.X
-        and rna.X respectively.
-    
-    '''
-    
-    rna = mdata.mod['rna']
-    atac = mdata.mod['atac']
-
-    try:
-        atac.uns['atac']['peak_annotation']
-    except KeyError:
-        print('Must provide atac.uns[atac][peak_annotation].')
-        raise
-
-    try:
-        atac.uns['atac']['peak_annotation']['gene_name']
-    except KeyError:
-        atac.uns['atac']['peak_annotation'] = atac.uns['atac']['peak_annotation'].reset_index(names='gene_name')
-        print('Using peak_annotation index as gene_name column.')
-
-    try:
-        atac.uns['atac']['peak_annotation']['gene_ids']
-    except KeyError:
-        atac.uns['atac']['peak_annotation'].rename(columns={'peak':'gene_ids'},inplace=True)
-        print('Using peak as gene_ids column.')
-
-    # Merge the peak annotations. Reset index to maintain original atac.X index for reference
-    mdata['atac'].var['index'] = range(len(atac.var))
-    peak_gene_labels = pd.merge(atac.var[['gene_ids','index']], \
-                            atac.uns['atac']['peak_annotation'], \
-                            how='left',on='gene_ids')
-
-    try:
-        rna.var['gene_name']
-    except KeyError:
-        rna.var = rna.var.reset_index(names='gene_name')
-        print('Using rna.var index as gene_name column.')
-    
-    # Duplicates for multiple peaks per gene, but drops ones not observed in RNA
-    # Reset index to maintain original rna.X index for reference
-    mdata['rna'].var['index'] = range(len(rna.var))
-    peak_gene_pairs = pd.merge(peak_gene_labels,rna.var[['gene_name','index']], \
-                           how='left',on='gene_name').dropna()
-
-    mdata.uns['peak_gene_pairs'] = peak_gene_pairs
-
-    return mdata
