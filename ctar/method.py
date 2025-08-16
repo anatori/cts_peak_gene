@@ -705,7 +705,8 @@ def cauchy_combination(p_values1, p_values2):
 
 def binned_mcpval(
     cis_pairs_dic, 
-    ctrl_pairs_dic
+    ctrl_pairs_dic,
+    b=None,
 ):
     '''
     Compute p-values for binned evaluation data using Monte Carlo method.
@@ -723,16 +724,44 @@ def binned_mcpval(
     ----------
     mcpval_dic : dict
         Dictionary of numpy arrays where keys are bins and values are mc-pvalues.
+    ppval_dic : dict
+        Dictionary of numpy arrays where keys are bins and values are pooled-pvalues.
     '''
+    bin_keys = sorted(cis_pairs_dic.keys())
+
+    # set b, arbitrarily using the first key
+    if b == None:
+        b = len(ctrl_pairs_dic[bin_keys[0]])
+        print(f'Setting n_ctrl to {b}.')
 
     mcpval_dic = {}
+    centered_ctrl_ls = []
+    centered_cis_ls = []
 
-    for bin_key, coeffs in cis_pairs_dic.items():
+    for bin_key in bin_keys:
 
-        ctrl_coeffs = ctrl_pairs_dic[bin_key].flatten()
+        coeffs = cis_pairs_dic[bin_key]
+        ctrl_coeffs = ctrl_pairs_dic[bin_key].ravel()[:b]
+
         mcpval_dic[bin_key] = basic_mcpval(ctrl_coeffs, coeffs)
 
-    return mcpval_dic
+        centered_ctrls, centered_cis = center_ctrls(ctrl_coeffs,coeffs,axis=0)
+        centered_ctrl_ls.append(centered_ctrls)
+        centered_cis_ls.append(centered_cis)
+
+    centered_ctrl_ls = np.concatenate(centered_ctrl_ls)
+    centered_cis_ls = np.concatenate(centered_cis_ls)
+    pooled_pvals = basic_mcpval(centered_ctrl_ls, centered_cis_ls)
+
+    ppval_dic = {}
+    start = 0
+
+    for bin_key in bin_keys:
+        bin_size = len(cis_pairs_dic[bin_key])
+        ppval_dic[bin_key] = pooled_pvals[start:start+bin_size]
+        start += bin_size
+
+    return mcpval_dic, ppval_dic
 
 
 def binned_mcpval_from_disk(

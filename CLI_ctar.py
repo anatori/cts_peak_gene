@@ -205,9 +205,10 @@ def main(args):
         )
         print('# Control links IRLS time = %0.2fs' % (time.time() - start_time))
 
-        mcpval_dic = ctar.method.binned_mcpval(cis_coeff_dic, ctrl_coeff_dic)
+        mcpval_dic, ppval_dic = ctar.method.binned_mcpval(cis_coeff_dic, ctrl_coeff_dic)
 
         cis_links_df = ctar.data_loader.map_dic_to_df(cis_links_df, cis_idx_dic, mcpval_dic, col_name=f'{BIN_CONFIG}_mcpval')
+        cis_links_df = ctar.data_loader.map_dic_to_df(cis_links_df, cis_idx_dic, mcpval_dic, col_name=f'{BIN_CONFIG}_ppval')
         cis_links_df = ctar.data_loader.map_dic_to_df(cis_links_df, cis_idx_dic, cis_coeff_dic, col_name='poissonb')
 
         results_folder = f'{TARGET_PATH}/{JOB_ID}_results/'
@@ -311,16 +312,16 @@ def main(args):
             batch_size=BATCH_SIZE,
             scheduler="threads",
         )
-        print('# Control links [batched] IRLS time = %0.2fs' % (time.time() - start_time))
+        print('# Control links [chunked] IRLS time = %0.2fs' % (time.time() - start_time))
 
         cis_coeff_dic = ctar.data_loader.map_df_to_dic(cis_links_df, 
             keys_col=f'combined_bin_{BIN_CONFIG.rsplit('.',1)[0]}',
             values_col='poissonb')
 
-        mcpval_dic = ctar.method.binned_mcpval(cis_coeff_dic, ctrl_coeff_dic)
+        mcpval_dic, ppval_dic = ctar.method.binned_mcpval(cis_coeff_dic, ctrl_coeff_dic)
 
         cis_links_df = ctar.data_loader.map_dic_to_df(cis_links_df, cis_idx_dic, mcpval_dic, col_name=f'{BIN_CONFIG}_mcpval')
-        cis_links_df = ctar.data_loader.map_dic_to_df(cis_links_df, cis_idx_dic, cis_coeff_dic, col_name='poissonb')
+        cis_links_df = ctar.data_loader.map_dic_to_df(cis_links_df, cis_idx_dic, ppval_dic, col_name=f'{BIN_CONFIG}_ppval')
 
         results_folder = f'{TARGET_PATH}/{JOB_ID}_results/'
         print(f'# Saving files to {results_folder}')

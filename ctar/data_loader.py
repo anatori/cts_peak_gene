@@ -55,6 +55,10 @@ def peak_to_gene(peaks_df,genes_df,clean=True,split_peaks=True,distance=500000,c
     
     '''
 
+    # add indices
+    genes_df['index_y'] = range(len(genes_df))
+    peaks_df['index_x'] = range(len(peaks_df))
+
     if clean:
         genes_clean = genes_df[~genes_df[col_names[0]].isna()] # assumes first item in col_names is chr label
         genes_clean = genes_clean[genes_clean.chr.str.startswith('chr')] # removes non chr mapped genes
@@ -66,10 +70,6 @@ def peak_to_gene(peaks_df,genes_df,clean=True,split_peaks=True,distance=500000,c
         peaks_clean[col_names] = peaks_clean[peak_col].str.extract(r'(\w+)[-:](\d+)-(\d+)')
         peaks_clean[col_names[1:]] = peaks_clean[col_names[1:]].astype(int)
     else: peaks_clean = peaks_df
-
-    # add indices
-    genes_clean['index_y'] = range(len(genes_clean))
-    peaks_clean['index_x'] = range(len(peaks_clean))
 
     # creates temp bedtool files
     peaks_bed = BedTool.from_dataframe(peaks_clean[col_names+[peak_col]]).sort()

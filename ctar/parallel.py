@@ -38,8 +38,8 @@ def preprocess_batch(subatch_links, atac_sparse, rna_sparse):
     needed_cols_x = np.unique(subatch_links[:, 0])
     needed_cols_y = np.unique(subatch_links[:, 1])
 
-    atac_sub = atac_sparse[:, needed_cols_x]
-    rna_sub = rna_sparse[:, needed_cols_y]
+    atac_sub = atac_sparse[:, needed_cols_x].copy()
+    rna_sub = rna_sparse[:, needed_cols_y].copy()
 
     # Map old indices to new submatrix-local indices
     x_map_array = np.full(needed_cols_x.max() + 1, -1, dtype=int)
@@ -319,17 +319,6 @@ def multiprocess_poisson_irls(
 
 
 def chunked_iterable(iterable, size):
-    """Yield successive chunks from iterable array of length 'size'."""
-    it = iter(iterable)
-    while True:
-        chunk = list(islice(it, size))
-        if not chunk:
-            break
-        chunk = np.vstack(chunk)
-        yield chunk
-
-
-def list_chunked_iterable(iterable, size):
     """Yield successive chunks from iterable list of length 'size'."""
     it = iter(iterable)
     while True:
@@ -396,7 +385,7 @@ def multiprocess_poisson_irls_chunked(
 
     with ProgressBar():
 
-        for chunk in list_chunked_iterable(links_dict.items(), batch_size):
+        for chunk in chunked_iterable(links_dict.items(), batch_size): # chunk_size
             tasks = []
             keys_for_chunk = []
 
@@ -418,8 +407,8 @@ def multiprocess_poisson_irls_chunked(
                 tasks.append(task)
                 keys_for_chunk.append(bin_key)
 
-                del atac_sub, rna_sub, links_reindexed
-                gc.collect()
+                del atac_sub, rna_sub, links_reindexed # might not be necessary
+                gc.collect() # might not be necessary
 
             results = compute(*tasks, num_workers=n_workers, **compute_kwargs)
 
@@ -429,108 +418,5 @@ def multiprocess_poisson_irls_chunked(
 
             del tasks, results
             gc.collect()
-
-    return results_dict
-
-
-def _process_chunk(links, atac_sparse, rna_sparse, **process_sub_batch_kwargs):
-    ''' Worker pipeline.
-    '''
-    links_reindexed, atac_sub, rna_sub = preprocess_batch(
-        links, atac_sparse, rna_sparse
-    )
-
-    task = process_sub_batch(
-        links_reindexed,
-        atac_sub,
-        rna_sub,
-        **process_sub_batch_kwargs
-    )
-
-    return task
-
-
-def multiprocess_poisson_irls_batched(
-    links_dict: Dict[str, np.ndarray],
-    atac_sparse,
-    rna_sparse,
-    save_files: bool = False,
-    out_path: Optional[str] = None,
-    batch_size: int = 50,  # number of dict entries to process in parallel
-    max_iter: int = 100,
-    tol: float = 1e-3,
-    **compute_kwargs,
-):
-
-    """
-    Runs Poisson IRLS regression across batch sizes using Dask.
-
-    Parameters:
-    ----------
-    links_dict : dict
-        Dictionary mapping bin names to link arrays (n_links, 2).
-    atac_sparse : scipy.sparse matrix
-        ATAC-seq sparse matrix (cells x peaks).
-    rna_sparse : scipy.sparse matrix
-        RNA-seq sparse matrix (cells x genes).
-    save_files : bool, optional
-        Whether to save output files.
-    out_path : str, optional
-        Directory to save files (required if save_files is True).
-    max_iter : int
-        Maximum iterations for IRLS.
-    tol : float
-        Tolerance for IRLS convergence.
-    compute_kwargs : dict, optional
-        Additional keyword arguments passed to dask.compute.
-
-    Returns:
-    -------
-    dict[str, np.ndarray] or None
-        Returns a dict of results if save_files is False. Otherwise, returns None.
-    """
-
-    if save_files:
-        assert out_path is not None, (
-            "Must provide out_path when save_files=True.")
-
-    if out_path is not None and not os.path.exists(out_path):
-        os.makedirs(out_path)
-
-    bin_keys = list(links_dict.keys())
-    bin_sizes = [links_dict[k].shape[0] for k in bin_keys]
-    all_links = np.vstack(list(links_dict.values()))
-
-    with ProgressBar():
-
-        tasks = []
-
-        for chunk_links in chunked_iterable(all_links, batch_size):
-
-            task = delayed(_process_chunk)(
-                chunk_links,
-                atac_sparse,
-                rna_sparse,
-                bin_name=None,
-                out_path=out_path,
-                save_files=save_files,
-                max_iter=max_iter,
-                tol=tol,
-            )
-            
-            tasks.append(task)
-
-        results = compute(*tasks, **compute_kwargs)
-
-    if save_files:
-        return None
-    
-    flat_results = np.concatenate(results, axis=0)
-
-    results_dict = {}
-    idx = 0
-    for key, size in zip(bin_keys, bin_sizes):
-        results_dict[key] = flat_results[idx : idx + size]
-        idx += size
 
     return results_dict
