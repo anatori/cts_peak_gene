@@ -15,6 +15,7 @@ import muon as mu
 import os
 import re
 
+from numba import njit, prange
 
 ######################### regression methods #########################
 
@@ -85,7 +86,7 @@ def pearson_corr_sparse(mat_X, mat_Y, var_filter=False):
     return mat_corr
 
 
-def poisson_irls_loop(mat_x_full, mat_y_full, links=None, max_iter=100, tol=1e-3):
+def poisson_irls_loop(mat_x_full, mat_y_full, links=None, max_iter=100, tol=1e-3, ridge=False):
     """ Run poisson_irls_single over all link pairs sequentially on worker.
 
     Parameters
@@ -120,7 +121,10 @@ def poisson_irls_loop(mat_x_full, mat_y_full, links=None, max_iter=100, tol=1e-3
         x_i = mat_x_full[:, x_idx].toarray().ravel()
         y_i = mat_y_full[:, y_idx].toarray().ravel()
 
-        results[i, :] = poisson_irls_single(x_i, y_i, max_iter=max_iter, tol=tol)
+        if ridge:
+            results[i, :] = poisson_irls_single_ridge(x_i, y_i, max_iter=max_iter, tol=tol)
+        else:
+            results[i, :] = poisson_irls_single(x_i, y_i, max_iter=max_iter, tol=tol)
     
     return results
 
@@ -178,6 +182,239 @@ def poisson_irls_single(x, y, max_iter=100, tol=1e-3):
         beta0, beta1 = beta0_new, beta1_new
 
     return np.array([beta0, beta1], dtype=np.float32)
+
+
+def poisson_irls_single_ridge(x, y, max_iter=100, tol=1e-3, lambda_reg=1.0):
+    """
+    Run IRLS Poisson regression with Ridge regularization on a single feature pair.
+
+    Parameters
+    ----------
+    x : np.array
+        Single paired ATAC feature with shape (n_cells,)
+    y : np.array
+        Single paired RNA feature with shape (n_cells,)
+    lambda_reg : float
+        Regularization parameter for Ridge (L2) regularization. Larger values lead to stronger regularization.
+
+    Returns
+    -------
+    Returns : np.ndarray
+        Array of shape (2,) [beta0, beta1] 
+    """
+    
+    beta0 = np.float32(0.0)
+    beta1 = np.float32(0.0)
+
+    MAX_EXP = np.float32(80.0)
+    MAX_VAL = np.float32(1e10)
+    MIN_VAL = np.float32(1e-8)
+
+    for _ in range(max_iter):
+        eta = beta0 + x * beta1
+        eta = np.clip(eta, -MAX_EXP, MAX_EXP)
+
+        w = np.exp(eta)
+        w = np.minimum(w, MAX_VAL)
+
+        sum_w = np.maximum(np.sum(w), MIN_VAL)
+
+        z = eta + (y - w) / np.maximum(w, MIN_VAL)
+
+        xw = x * w
+        xwz = x * w * z
+        xxw = x * x * w
+
+        sum_x = np.sum(xw)
+        sum_y = np.sum(w * z)
+
+        denom = np.maximum(np.sum(xxw) - (sum_x ** 2) / sum_w + lambda_reg, MIN_VAL)
+
+        # update with regularization term
+        beta1_new = (np.sum(xwz) - sum_x * sum_y / sum_w) / denom
+        beta0_new = (sum_y - beta1_new * sum_x) / sum_w
+
+        # convergence check
+        if abs(beta1_new - beta1) < tol and abs(beta0_new - beta0) < tol:
+            break
+
+        beta0, beta1 = beta0_new, beta1_new
+
+    return np.array([beta0, beta1], dtype=np.float32)
+
+
+def poisson_irls_loop_multi(mat_x_full, mat_y_full, X_multi, links=None, max_iter=100, tol=1e-3, ridge=False):
+    """
+    Run Poisson IRLS (multi-covariate) over all link pairs sequentially on worker.
+
+    Parameters
+    ----------
+    mat_x_full : sp.sparse.csc
+        Full sparse ATAC matrix (cells x features)
+    mat_y_full : sp.sparse.csc
+        Full sparse RNA matrix (cells x features)
+    X_multi : np.array, shape (n_cells, n_covariates)
+        Additional covariates to include for every link.
+    links : np.array
+        Array of shape (n_links, 2), where each row is (x_idx, y_idx)
+    ridge : bool
+        Whether to use Ridge regularization.
+
+    Returns
+    -------
+    results : np.ndarray
+        Array of shape (n_links, n_covariates + 1), with intercept in column 0
+    """
+
+    n = mat_x_full.shape[1]
+    if links is None:
+        links = np.stack([np.arange(n)] * 2, axis=1)
+
+    n_links = links.shape[0]
+    n_cov = X_multi.shape[1]
+    results = np.zeros(n_links, dtype=np.float32)
+
+    if mat_x_full.dtype != np.float32:
+        mat_x_full = mat_x_full.astype(np.float32)
+    if mat_y_full.dtype != np.float32:
+        mat_y_full = mat_y_full.astype(np.float32)
+    if X_multi.dtype != np.float32:
+        X_multi = X_multi.astype(np.float32)
+
+    for i, (x_idx, y_idx) in enumerate(links):
+        y_i = mat_y_full[:, y_idx].toarray().ravel()
+
+        # adding covariates
+        x_i = mat_x_full[:, x_idx].toarray().ravel()[:, None]
+        X_i = np.hstack([x_i, X_multi])
+
+        if ridge:
+            beta0, betas = poisson_irls_multi_ridge(X_i, y_i, max_iter=max_iter, tol=tol, lambda_reg=1.0)
+        else:
+            beta0, betas = poisson_irls_multi(X_i, y_i, max_iter=max_iter, tol=tol)
+
+        results[i] = betas[0]
+
+    return results
+
+
+def poisson_irls_multi(X, y, max_iter=100, tol=1e-3):
+    """
+    Run IRLS Poisson regression (multi-covariate, no regularization).
+
+    Parameters
+    ----------
+    X : np.array, shape (n_cells, n_covariates)
+        Covariate/features matrix
+    y : np.array, shape (n_cells,)
+        Poisson counts
+
+    Returns
+    -------
+    beta0 : float
+        Intercept
+    betas : np.array, shape (n_covariates,)
+        Coefficients
+    """
+    n, p = X.shape
+    beta0 = 0.0
+    betas = np.zeros(p, dtype=np.float32)
+
+    MAX_EXP, MAX_VAL, MIN_VAL = 80.0, 1e10, 1e-8
+
+    for _ in range(max_iter):
+
+        eta = beta0 + X @ betas
+        eta = np.clip(eta, -MAX_EXP, MAX_EXP)
+
+        mu = np.exp(eta)
+        mu = np.minimum(mu, MAX_VAL)
+
+        W = mu  # diag(mu)
+        z = eta + (y - mu) / np.maximum(mu, MIN_VAL)
+
+        # weighted least squares update
+        WX = X * W[:, None]
+        XtWX = WX.T @ X
+        XtWz = WX.T @ z
+
+        # center to handle intercept
+        sum_w = np.sum(W)
+        sum_y = np.sum(W * z)
+        sum_x = WX.sum(axis=0)
+
+        XtWX_adj = XtWX - np.outer(sum_x, sum_x) / max(sum_w, MIN_VAL)
+        XtWz_adj = XtWz - sum_x * sum_y / max(sum_w, MIN_VAL)
+
+        betas_new = np.linalg.solve(XtWX_adj + MIN_VAL*np.eye(p), XtWz_adj)
+        beta0_new = (sum_y - betas_new @ sum_x) / max(sum_w, MIN_VAL)
+
+        if np.allclose(betas_new, betas, atol=tol) and abs(beta0_new - beta0) < tol:
+            break
+
+        betas, beta0 = betas_new, beta0_new
+
+    return beta0, betas
+
+
+def poisson_irls_multi_ridge(X, y, max_iter=100, tol=1e-3, lambda_reg=1.0):
+    """
+    Run IRLS Poisson regression (multi-covariate, Ridge regularization).
+
+    Parameters
+    ----------
+    X : np.array, shape (n_cells, n_covariates)
+        Covariate/features matrix
+    y : np.array, shape (n_cells,)
+        Poisson counts
+    lambda_reg : float
+        Ridge penalty strength (applies to betas only, not intercept)
+
+    Returns
+    -------
+    beta0 : float
+        Intercept
+    betas : np.array, shape (n_covariates,)
+        Coefficients
+    """
+    n, p = X.shape
+    X_full = np.hstack([np.ones((n, 1)), X])
+    beta = np.zeros(p + 1, dtype=np.float64)
+
+    ridge_vec = np.concatenate([[0.0], np.full(p, lambda_reg)])
+
+    MAX_EXP, MAX_VAL, MIN_VAL = 80.0, 1e10, 1e-8
+
+    for _ in range(max_iter):
+
+        eta = X_full @ beta
+        eta = np.clip(eta, -MAX_EXP, MAX_EXP)
+
+        mu = np.exp(eta)
+        mu = np.minimum(mu, MAX_VAL)
+
+        W = mu
+        z = eta + (y - mu) / np.maximum(mu, MIN_VAL)
+
+        WX = X_full * W[:, None]
+        XtWX = WX.T @ X_full
+        XtWz = WX.T @ z
+
+        # add ridge only to slopes
+        XtWX += np.diag(ridge_vec)
+
+        beta_new = np.linalg.solve(XtWX, XtWz)
+
+        if np.allclose(beta_new, beta, atol=tol):
+            beta = beta_new
+            break
+ 
+        beta = beta_new
+
+    beta0 = beta[0]
+    betas = beta[1:]
+
+    return beta0, betas
 
 
 ######################### generate null #########################
