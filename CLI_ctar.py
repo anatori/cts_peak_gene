@@ -46,6 +46,7 @@ def main(args):
     BIN_CONFIG = args.binning_config
     BIN_TYPE = args.binning_type
     PYBEDTOOLS_PATH = args.pybedtools_path
+    COVAR_FILE = args.covar_file
 
     # Parse and check arguments
     LEGAL_JOB_LIST = [
@@ -87,6 +88,7 @@ def main(args):
     header += "--binning_config %s\\\n" % BIN_CONFIG
     header += "--binning_type %s\\\n" % BIN_TYPE
     header += "--pybedtools_path %s\\\n" % PYBEDTOOLS_PATH
+    header += "--covar_file %s\\\n" % COVAR_FILE
     print(header)
 
     ###########################################################################################
@@ -140,6 +142,10 @@ def main(args):
 
         print("# Setting --pybedtools_path")
         pybedtools.helpers.set_bedtools_path(PYBEDTOOLS_PATH)
+
+        if COVAR_FILE:
+            print("# Loading --covar_file")
+            covar_mat = np.load(COVAR_FILE)
 
     if JOB in ["compute_ctrl_only"]:
 
@@ -256,13 +262,25 @@ def main(args):
         print('# Starting cis-links IRLS...')
         start_time = time.time()
 
-        cis_coeff_dic = ctar.parallel.multiprocess_poisson_irls_chunked(
-                links_dict=cis_links_dic,
-                atac_sparse=atac_sparse,
-                rna_sparse=rna_sparse,
-                batch_size=BATCH_SIZE,
-                scheduler="threads",
-            )
+        if COVAR_FILE:
+            cis_coeff_dic = ctar.parallel.multiprocess_poisson_irls_multivar(
+                    links_dict=cis_links_dic,
+                    atac_sparse=atac_sparse,
+                    rna_sparse=rna_sparse,
+                    covar_mat=covar_mat,
+                    batch_size=BATCH_SIZE,
+                    scheduler="threads",
+                    numba=True,
+                )
+        else:
+            cis_coeff_dic = ctar.parallel.multiprocess_poisson_irls(
+                    links_dict=cis_links_dic,
+                    atac_sparse=atac_sparse,
+                    rna_sparse=rna_sparse,
+                    batch_size=BATCH_SIZE,
+                    scheduler="threads",
+                    numba=True,
+                )
         print('# Cis-links IRLS time = %0.2fs' % (time.time() - start_time))
 
         cis_links_df = ctar.data_loader.map_dic_to_df(cis_links_df, cis_idx_dic, cis_coeff_dic, col_name='poissonb')
@@ -305,14 +323,26 @@ def main(args):
         print('# Starting control links IRLS...')
         start_time = time.time()
 
-        ctrl_coeff_dic = ctar.parallel.multiprocess_poisson_irls_chunked(
-            links_dict=ctrl_links_dic,
-            atac_sparse=atac_sparse,
-            rna_sparse=rna_sparse,
-            batch_size=BATCH_SIZE,
-            scheduler="threads",
-        )
-        print('# Control links [chunked] IRLS time = %0.2fs' % (time.time() - start_time))
+        if COVAR_FILE:
+            ctrl_coeff_dic = ctar.parallel.multiprocess_poisson_irls_multivar(
+                    links_dict=ctrl_links_dic,
+                    atac_sparse=atac_sparse,
+                    rna_sparse=rna_sparse,
+                    covar_mat=covar_mat,
+                    batch_size=BATCH_SIZE,
+                    scheduler="threads",
+                    numba=True,
+                )
+        else:
+            ctrl_coeff_dic = ctar.parallel.multiprocess_poisson_irls(
+                    links_dict=ctrl_links_dic,
+                    atac_sparse=atac_sparse,
+                    rna_sparse=rna_sparse,
+                    batch_size=BATCH_SIZE,
+                    scheduler="threads",
+                    numba=True,
+                )
+        print('# Control links IRLS time = %0.2fs' % (time.time() - start_time))
 
         cis_coeff_dic = ctar.data_loader.map_df_to_dic(cis_links_df, 
             keys_col=f'combined_bin_{BIN_CONFIG.rsplit('.',1)[0]}',
@@ -351,6 +381,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--genome_file", type=str, required=False, default=None, help="GRCh38.p14.genome.fa.bgz reference"
     )
+    parser.add_argument("--covar_file", type=str, required=False, default=None)
     parser.add_argument(
         "--binning_config",
         type=str,
