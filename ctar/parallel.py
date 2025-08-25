@@ -11,18 +11,20 @@ from dask.distributed import Client, LocalCluster, wait, as_completed
 from multiprocessing import cpu_count
 from typing import Union, Optional, List, Dict
 from itertools import islice
+from numba import set_num_threads
 
-from ctar.method import poisson_irls_loop
+from ctar.numba import poisson_irls_loop_multi_numba
+from ctar.method import poisson_irls_loop, poisson_irls_loop_multi
 
 
 
-def process_sub_batch(subatch_links, atac_sparse, rna_sparse, bin_name=None, out_path=None, save_files=False, max_iter=100, tol=1e-3):
+def process_sub_batch(subatch_links, atac_sparse, rna_sparse, bin_name=None, out_path=None, save_files=False, max_iter=100, tol=1e-3, ridge=False):
     """
     Worker task to process one sub-batch of links, run poisson IRLS, and save output if save_files.
     """
     result = poisson_irls_loop(
         atac_sparse, rna_sparse, subatch_links,
-        max_iter=max_iter, tol=tol,
+        max_iter=max_iter, tol=tol, ridge=ridge,
     )
     if save_files: 
         np.save(os.path.join(out_path, f"poissonb_{bin_name}"), result[:, 1])
@@ -221,103 +223,6 @@ def multiprocess_poisson_irls_client(
     return None if save_files else np.concatenate(total_results)
 
 
-def process_sub_batch_tuple(subatch_links, atac_sparse, rna_sparse, bin_name=None, out_path=None, save_files=False, max_iter=100, tol=1e-3):
-    """
-    Worker task to process one sub-batch of links, run poisson IRLS, and save output if save_files.
-    """
-    result = poisson_irls_loop(
-        atac_sparse, rna_sparse, subatch_links,
-        max_iter=max_iter, tol=tol,
-    )
-    if save_files: 
-        np.save(os.path.join(out_path, f"poissonb_{bin_name}"), result[:, 1])
-
-    return (bin_name, result[:, 1])
-
-
-def multiprocess_poisson_irls(
-    links_dict: Dict[str, np.ndarray],
-    atac_sparse,
-    rna_sparse,
-    save_files: bool = False,
-    out_path: Optional[str] = None,
-    max_iter: int = 100,
-    tol: float = 1e-3,
-    n_workers: Optional[int] = None,
-    **compute_kwargs,
-):
-    """
-    Runs Poisson IRLS regression in parallel across bins using Dask.
-
-    Parameters:
-    ----------
-    links_dict : dict
-        Dictionary mapping bin names to link arrays (n_links, 2).
-    atac_sparse : scipy.sparse matrix
-        ATAC-seq sparse matrix (cells x peaks).
-    rna_sparse : scipy.sparse matrix
-        RNA-seq sparse matrix (cells x genes).
-    save_files : bool, optional
-        Whether to save output files.
-    out_path : str, optional
-        Directory to save files (required if save_files is True).
-    max_iter : int
-        Maximum iterations for IRLS.
-    tol : float
-        Tolerance for IRLS convergence.
-    n_workers : int, optional
-        Number of workers.
-    compute_kwargs : dict, optional
-        Additional keyword arguments passed to dask.distributed.LocalCluster.
-
-    Returns:
-    -------
-    dict[str, np.ndarray] or None
-        Returns a dict of results if save_files is False. Otherwise, returns None.
-    """
-    if save_files:
-        assert out_path is not None, (
-            "Must provide out_path when save_files=True.")
-
-    if out_path is not None and not os.path.exists(out_path):
-        os.makedirs(out_path)
-
-    if n_workers is None:
-        n_workers = max(cpu_count() - 1, 1)
-
-    n_batches = len(links_dict)
-    results = []
-
-    for bin_key, link_array in links_dict.items():
-
-        # Reindex + extract local submatrix
-        links_reindexed, atac_sub, rna_sub = preprocess_batch(link_array, atac_sparse, rna_sparse)
-
-        task = delayed(process_sub_batch_tuple)(
-            links_reindexed,
-            atac_sub,
-            rna_sub,
-            bin_name=bin_key,
-            out_path=out_path,
-            save_files=save_files,
-            max_iter=max_iter,
-            tol=tol,
-        )
-        results.append(task)
-
-        del atac_sub, rna_sub, links_reindexed
-        gc.collect()
-
-    with ProgressBar():
-        results = compute(*results, num_workers=n_workers, **compute_kwargs)
-
-    if save_files:
-        return None
-
-    results_dict = {bin_key: result for bin_key, result in results}
-    return results_dict
-
-
 def chunked_iterable(iterable, size):
     """Yield successive chunks from iterable list of length 'size'."""
     it = iter(iterable)
@@ -328,7 +233,7 @@ def chunked_iterable(iterable, size):
         yield chunk
 
 
-def multiprocess_poisson_irls_chunked(
+def multiprocess_poisson_irls(
     links_dict: Dict[str, np.ndarray],
     atac_sparse,
     rna_sparse,
@@ -338,6 +243,7 @@ def multiprocess_poisson_irls_chunked(
     max_iter: int = 100,
     tol: float = 1e-3,
     n_workers: Optional[int] = None,
+    ridge: bool = False,
     **compute_kwargs,
 ):
 
@@ -403,6 +309,7 @@ def multiprocess_poisson_irls_chunked(
                     save_files=save_files,
                     max_iter=max_iter,
                     tol=tol,
+                    ridge=ridge,
                 )
                 tasks.append(task)
                 keys_for_chunk.append(bin_key)
@@ -410,6 +317,146 @@ def multiprocess_poisson_irls_chunked(
                 del atac_sub, rna_sub, links_reindexed # might not be necessary
                 gc.collect() # might not be necessary
 
+            results = compute(*tasks, num_workers=n_workers, **compute_kwargs)
+
+            if not save_files:
+                for key, res in zip(keys_for_chunk, results):
+                    results_dict[key] = res
+
+            del tasks, results
+            gc.collect()
+
+    return results_dict
+
+
+def set_adaptive_numba_threads(n_workers=None):
+    """
+    Set Numba threads adaptively.
+    n_workers: if using Dask/joblib outside, set this to 1 to avoid oversubscription.
+    """
+    import multiprocessing
+    total_cores = multiprocessing.cpu_count()
+    if n_workers is None:  # default: leave 1 core free
+        threads = max(1, total_cores - 1)
+    else:
+        threads = max(1, total_cores // n_workers)
+
+    set_num_threads(threads)
+    return threads
+
+
+def process_sub_batch_multi(subatch_links, atac_sparse, rna_sparse, covar_mat, bin_name=None, out_path=None, save_files=False, max_iter=100, tol=1e-3, ridge=False, numba=False):
+    """
+    Worker task to process one sub-batch of links, run poisson IRLS, and save output if save_files.
+    """
+    if numba:
+        result = poisson_irls_loop_multi_numba(
+            atac_sparse, rna_sparse, covar_mat, subatch_links,
+            max_iter=max_iter, tol=tol, ridge=ridge,
+        )
+    else:
+        result = poisson_irls_loop_multi(
+            atac_sparse, rna_sparse, covar_mat, subatch_links,
+            max_iter=max_iter, tol=tol, ridge=ridge,
+        )
+    if save_files:
+        np.save(os.path.join(out_path, f"poissonb_{bin_name}"), result)
+    return result
+
+
+def multiprocess_poisson_irls_multivar(
+    links_dict: Dict[str, np.ndarray],
+    atac_sparse,
+    rna_sparse,
+    covar_mat: np.ndarray,
+    save_files: bool = False,
+    out_path: Optional[str] = None,
+    batch_size: int = 50,
+    max_iter: int = 100,
+    tol: float = 1e-3,
+    n_workers: Optional[int] = None,
+    ridge: bool = False,
+    numba: bool = False,
+    lambda_reg: float = 1.0,
+    **compute_kwargs,
+):
+    """
+    Multiprocess Poisson IRLS regression for multi-covariates.
+
+    Parameters
+    ----------
+    links_dict : dict
+        Dictionary mapping bin names to link arrays (n_links, 2)
+    atac_sparse : scipy.sparse matrix
+        ATAC-seq sparse matrix (cells x peaks)
+    rna_sparse : scipy.sparse matrix
+        RNA-seq sparse matrix (cells x genes)
+    covar_mat : np.array, shape (n_cells, n_covariates)
+        Covariates shared for all links
+    ridge : bool
+        Whether to include Ridge penalty
+    lambda_reg : float
+        Ridge regularization strength
+    save_files : bool
+        Whether to save each bin result
+    out_path : str
+        Directory to save files
+    batch_size : int
+        Number of bins per Dask batch
+    max_iter, tol : IRLS parameters
+    n_workers : int
+        Number of workers
+    compute_kwargs : dict
+        Additional arguments passed to dask.compute
+
+    Returns
+    -------
+    dict[str, np.ndarray] or None
+        Mapping bin -> IRLS results (n_links x n_covariates+1)
+    """
+
+    if save_files:
+        assert out_path is not None, "Must provide out_path when save_files=True."
+        os.makedirs(out_path, exist_ok=True)
+
+    if n_workers is None:
+        n_workers = max(cpu_count() - 1, 1)
+
+    if numba:
+        threads = set_adaptive_numba_threads(n_workers=n_workers)
+        print(f"Using {threads} Numba threads per worker")
+
+    results_dict = {} if not save_files else None
+
+    with ProgressBar():
+        for chunk in chunked_iterable(links_dict.items(), batch_size):
+            tasks = []
+            keys_for_chunk = []
+
+            for bin_key, link_array in chunk:
+                links_reindexed, atac_sub, rna_sub = preprocess_batch(link_array, atac_sparse, rna_sparse)
+
+                task = delayed(process_sub_batch_multi)(
+                    links_reindexed,
+                    atac_sub,
+                    rna_sub,
+                    covar_mat,
+                    bin_name=bin_key,
+                    out_path=out_path,
+                    save_files=save_files,
+                    max_iter=max_iter,
+                    tol=tol,
+                    ridge=ridge,
+                    numba=numba,
+                )
+                tasks.append(task)
+                keys_for_chunk.append(bin_key)
+
+                # free memory
+                del atac_sub, rna_sub, links_reindexed
+                gc.collect()
+
+            # compute in parallel
             results = compute(*tasks, num_workers=n_workers, **compute_kwargs)
 
             if not save_files:
