@@ -11,9 +11,7 @@ from dask.distributed import Client, LocalCluster, wait, as_completed
 from multiprocessing import cpu_count
 from typing import Union, Optional, List, Dict
 from itertools import islice
-from numba import set_num_threads
 
-from ctar.numba import poisson_irls_loop_multi_numba
 from ctar.method import poisson_irls_loop, poisson_irls_loop_multi
 
 
@@ -223,14 +221,14 @@ def multiprocess_poisson_irls_client(
     return None if save_files else np.concatenate(total_results)
 
 
-def chunked_iterable(iterable, size):
-    """Yield successive chunks from iterable list of length 'size'."""
+def batched_iterable(iterable, size):
+    """Yield successive batches from iterable list of length 'size'."""
     it = iter(iterable)
     while True:
-        chunk = list(islice(it, size))
-        if not chunk:
+        batch = list(islice(it, size))
+        if not batch:
             break
-        yield chunk
+        yield batch
 
 
 def multiprocess_poisson_irls(
@@ -288,14 +286,17 @@ def multiprocess_poisson_irls(
         n_workers = max(cpu_count() - 1, 1)
 
     results_dict = {} if not save_files else None
+    n_total = math.ceil(len(links_dict) / batch_size)
 
     with ProgressBar():
 
-        for chunk in chunked_iterable(links_dict.items(), batch_size): # chunk_size
+        for batch_idx, batch in enumerate(batched_iterable(links_dict.items(), batch_size), start=1):
+            
+            print(f"# Processing batch {batch_idx} / {n_total}", flush=True)
             tasks = []
-            keys_for_chunk = []
+            keys_for_batch = []
 
-            for bin_key, link_array in chunk:
+            for bin_key, link_array in batch:
                 links_reindexed, atac_sub, rna_sub = preprocess_batch(
                     link_array, atac_sparse, rna_sparse
                 )
@@ -312,15 +313,16 @@ def multiprocess_poisson_irls(
                     ridge=ridge,
                 )
                 tasks.append(task)
-                keys_for_chunk.append(bin_key)
+                keys_for_batch.append(bin_key)
 
-                del atac_sub, rna_sub, links_reindexed # might not be necessary
-                gc.collect() # might not be necessary
+                del atac_sub, rna_sub, links_reindexed
+                gc.collect()
 
+            # compute in parallel
             results = compute(*tasks, num_workers=n_workers, **compute_kwargs)
 
             if not save_files:
-                for key, res in zip(keys_for_chunk, results):
+                for key, res in zip(keys_for_batch, results):
                     results_dict[key] = res
 
             del tasks, results
@@ -329,36 +331,14 @@ def multiprocess_poisson_irls(
     return results_dict
 
 
-def set_adaptive_numba_threads(n_workers=None):
-    """
-    Set Numba threads adaptively.
-    n_workers: if using Dask/joblib outside, set this to 1 to avoid oversubscription.
-    """
-    import multiprocessing
-    total_cores = multiprocessing.cpu_count()
-    if n_workers is None:  # default: leave 1 core free
-        threads = max(1, total_cores - 1)
-    else:
-        threads = max(1, total_cores // n_workers)
-
-    set_num_threads(threads)
-    return threads
-
-
-def process_sub_batch_multi(subatch_links, atac_sparse, rna_sparse, covar_mat, bin_name=None, out_path=None, save_files=False, max_iter=100, tol=1e-3, ridge=False, numba=False):
+def process_sub_batch_multi(subatch_links, atac_sparse, rna_sparse, covar_mat, bin_name=None, out_path=None, save_files=False, max_iter=100, tol=1e-3, ridge=False, lambda_reg=0.0):
     """
     Worker task to process one sub-batch of links, run poisson IRLS, and save output if save_files.
     """
-    if numba:
-        result = poisson_irls_loop_multi_numba(
-            atac_sparse, rna_sparse, covar_mat, subatch_links,
-            max_iter=max_iter, tol=tol, ridge=ridge,
-        )
-    else:
-        result = poisson_irls_loop_multi(
-            atac_sparse, rna_sparse, covar_mat, subatch_links,
-            max_iter=max_iter, tol=tol, ridge=ridge,
-        )
+    result = poisson_irls_loop_multi(
+        atac_sparse, rna_sparse, covar_mat, subatch_links,
+        max_iter=max_iter, tol=tol, ridge=ridge, lambda_reg=lambda_reg,
+    )
     if save_files:
         np.save(os.path.join(out_path, f"poissonb_{bin_name}"), result)
     return result
@@ -376,7 +356,6 @@ def multiprocess_poisson_irls_multivar(
     tol: float = 1e-3,
     n_workers: Optional[int] = None,
     ridge: bool = False,
-    numba: bool = False,
     lambda_reg: float = 1.0,
     **compute_kwargs,
 ):
@@ -422,18 +401,18 @@ def multiprocess_poisson_irls_multivar(
     if n_workers is None:
         n_workers = max(cpu_count() - 1, 1)
 
-    if numba:
-        threads = set_adaptive_numba_threads(n_workers=n_workers)
-        print(f"Using {threads} Numba threads per worker")
-
     results_dict = {} if not save_files else None
+    n_total = math.ceil(len(links_dict) / batch_size)
 
     with ProgressBar():
-        for chunk in chunked_iterable(links_dict.items(), batch_size):
-            tasks = []
-            keys_for_chunk = []
 
-            for bin_key, link_array in chunk:
+        for batch_idx, batch in enumerate(batched_iterable(links_dict.items(), batch_size), start=1):
+
+            print(f"# Processing batch {batch_idx} / {n_total}", flush=True)
+            tasks = []
+            keys_for_batch = []
+
+            for bin_key, link_array in batch:
                 links_reindexed, atac_sub, rna_sub = preprocess_batch(link_array, atac_sparse, rna_sparse)
 
                 task = delayed(process_sub_batch_multi)(
@@ -447,12 +426,11 @@ def multiprocess_poisson_irls_multivar(
                     max_iter=max_iter,
                     tol=tol,
                     ridge=ridge,
-                    numba=numba,
+                    lambda_reg=lambda_reg,
                 )
                 tasks.append(task)
-                keys_for_chunk.append(bin_key)
+                keys_for_batch.append(bin_key)
 
-                # free memory
                 del atac_sub, rna_sub, links_reindexed
                 gc.collect()
 
@@ -460,7 +438,7 @@ def multiprocess_poisson_irls_multivar(
             results = compute(*tasks, num_workers=n_workers, **compute_kwargs)
 
             if not save_files:
-                for key, res in zip(keys_for_chunk, results):
+                for key, res in zip(keys_for_batch, results):
                     results_dict[key] = res
 
             del tasks, results

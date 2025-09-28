@@ -86,7 +86,7 @@ def pearson_corr_sparse(mat_X, mat_Y, var_filter=False):
     return mat_corr
 
 
-def poisson_irls_loop(mat_x_full, mat_y_full, links=None, max_iter=100, tol=1e-3, ridge=False):
+def poisson_irls_loop(mat_x_full, mat_y_full, links=None, max_iter=100, tol=1e-3, ridge=False, flag_float32=True):
     """ Run poisson_irls_single over all link pairs sequentially on worker.
 
     Parameters
@@ -104,18 +104,21 @@ def poisson_irls_loop(mat_x_full, mat_y_full, links=None, max_iter=100, tol=1e-3
         Array of shape (n_pairs), computing 
     """
 
+    if flag_float32:
+        dtype = np.float32
+
     n = mat_x_full.shape[1]
     if links is None: 
         links = np.stack([np.arange(n)] * 2, axis=1)
 
     n_links = links.shape[0]
-    results = np.zeros((n_links, 2), dtype=np.float32)
+    results = np.zeros((n_links, 2), dtype=dtype)
 
     # Convert to float32 if needed once
-    if mat_x_full.dtype != np.float32:
-        mat_x_full = mat_x_full.astype(np.float32)
-    if mat_y_full.dtype != np.float32:
-        mat_y_full = mat_y_full.astype(np.float32)
+    if mat_x_full.dtype != dtype:
+        mat_x_full = mat_x_full.astype(dtype)
+    if mat_y_full.dtype != dtype:
+        mat_y_full = mat_y_full.astype(dtype)
 
     for i, (x_idx, y_idx) in enumerate(links):
         x_i = mat_x_full[:, x_idx].toarray().ravel()
@@ -124,12 +127,12 @@ def poisson_irls_loop(mat_x_full, mat_y_full, links=None, max_iter=100, tol=1e-3
         if ridge:
             results[i, :] = poisson_irls_single_ridge(x_i, y_i, max_iter=max_iter, tol=tol)
         else:
-            results[i, :] = poisson_irls_single(x_i, y_i, max_iter=max_iter, tol=tol)
+            results[i, :] = poisson_irls_single(x_i, y_i, max_iter=max_iter, tol=tol, flag_float32=flag_float32)
     
     return results
 
 
-def poisson_irls_single(x, y, max_iter=100, tol=1e-3):
+def poisson_irls_single(x, y, max_iter=100, tol=1e-3, flag_float32=True):
     """
     Run IRLS Poisson regression on a single feature pair.
 
@@ -145,13 +148,28 @@ def poisson_irls_single(x, y, max_iter=100, tol=1e-3):
     Returns : np.ndarray
         Array of shape (2,) [beta0, beta1] 
     """
-    
-    beta0 = np.float32(0.0)
-    beta1 = np.float32(0.0)
 
-    MAX_EXP = np.float32(80.0)
-    MAX_VAL = np.float32(1e10)
-    MIN_VAL = np.float32(1e-8)
+    if flag_float32:
+
+        dtype = np.float32
+    
+        beta0 = np.float32(0.0)
+        beta1 = np.float32(0.0)
+
+        MAX_EXP = np.float32(80.0)
+        MAX_VAL = np.float32(1e10)
+        MIN_VAL = np.float32(1e-8)
+
+    else:
+
+        dtype = np.float64
+
+        beta0 = 0.0
+        beta1 = 0.0
+
+        MAX_EXP = 80.0
+        MAX_VAL = 1e10
+        MIN_VAL = 1e-8
 
     for _ in range(max_iter):
         eta = beta0 + x * beta1
@@ -181,7 +199,14 @@ def poisson_irls_single(x, y, max_iter=100, tol=1e-3):
 
         beta0, beta1 = beta0_new, beta1_new
 
-    return np.array([beta0, beta1], dtype=np.float32)
+    
+    if flag_float32:
+
+        return np.array([beta0, beta1], dtype=dtype)
+
+    else:
+
+        return np.array([beta0, beta1], dtype=dtype)
 
 
 def poisson_irls_single_ridge(x, y, max_iter=100, tol=1e-3, lambda_reg=1.0):
@@ -243,7 +268,7 @@ def poisson_irls_single_ridge(x, y, max_iter=100, tol=1e-3, lambda_reg=1.0):
     return np.array([beta0, beta1], dtype=np.float32)
 
 
-def poisson_irls_loop_multi(mat_x_full, mat_y_full, X_multi, links=None, max_iter=100, tol=1e-3, ridge=False):
+def poisson_irls_loop_multi(mat_x_full, mat_y_full, X_multi, links=None, max_iter=100, tol=1e-3, ridge=False, lambda_reg=0.0):
     """
     Run Poisson IRLS (multi-covariate) over all link pairs sequentially on worker.
 
@@ -289,7 +314,7 @@ def poisson_irls_loop_multi(mat_x_full, mat_y_full, X_multi, links=None, max_ite
         X_i = np.hstack([x_i, X_multi])
 
         if ridge:
-            beta0, betas = poisson_irls_multi_ridge(X_i, y_i, max_iter=max_iter, tol=tol, lambda_reg=1.0)
+            beta0, betas = poisson_irls_multi_ridge(X_i, y_i, max_iter=max_iter, tol=tol, lambda_reg=lambda_reg)
         else:
             beta0, betas = poisson_irls_multi(X_i, y_i, max_iter=max_iter, tol=tol)
 
@@ -321,45 +346,53 @@ def poisson_irls_multi(X, y, max_iter=100, tol=1e-3):
     betas = np.zeros(p, dtype=np.float32)
 
     MAX_EXP, MAX_VAL, MIN_VAL = 80.0, 1e10, 1e-8
+    I = np.eye(p, dtype=np.float32)
 
     for _ in range(max_iter):
-
         eta = beta0 + X @ betas
         eta = np.clip(eta, -MAX_EXP, MAX_EXP)
 
-        mu = np.exp(eta)
-        mu = np.minimum(mu, MAX_VAL)
+        mu = np.exp(eta).astype(np.float32)
+        mu = np.clip(mu, MIN_VAL, MAX_VAL)
 
-        W = mu  # diag(mu)
+        W = mu
         z = eta + (y - mu) / np.maximum(mu, MIN_VAL)
 
-        # weighted least squares update
+        # compute weighted gram and rhs
         WX = X * W[:, None]
-        XtWX = WX.T @ X
-        XtWz = WX.T @ z
+        XtWX = np.dot(X.T, WX)
+        XtWz = np.dot(X.T, W * z)
 
-        # center to handle intercept
         sum_w = np.sum(W)
-        sum_y = np.sum(W * z)
-        sum_x = WX.sum(axis=0)
+        sum_y = np.dot(W, z)
+        sum_x = np.dot(X.T, W)
 
         XtWX_adj = XtWX - np.outer(sum_x, sum_x) / max(sum_w, MIN_VAL)
         XtWz_adj = XtWz - sum_x * sum_y / max(sum_w, MIN_VAL)
 
-        betas_new = np.linalg.solve(XtWX_adj + MIN_VAL*np.eye(p), XtWz_adj)
+        # add small jitter to diagonal to ensure positive definiteness
+        XtWX_jit = XtWX_adj + MIN_VAL * I
+
+        try:
+            c, low = sp.linalg.cho_factor(XtWX_jit, lower=True, check_finite=False)
+            betas_new = sp.linalg.cho_solve((c, low), XtWz_adj, check_finite=False)
+        except np.linalg.LinAlgError:
+            betas_new = np.linalg.solve(XtWX_jit, XtWz_adj)
+        
         beta0_new = (sum_y - betas_new @ sum_x) / max(sum_w, MIN_VAL)
 
         if np.allclose(betas_new, betas, atol=tol) and abs(beta0_new - beta0) < tol:
             break
 
-        betas, beta0 = betas_new, beta0_new
+        betas[:] = betas_new
+        beta0 = beta0_new
 
     return beta0, betas
 
 
 def poisson_irls_multi_ridge(X, y, max_iter=100, tol=1e-3, lambda_reg=1.0):
     """
-    Run IRLS Poisson regression (multi-covariate, Ridge regularization).
+    Run IRLS Poisson regression (multi-covariate, with Ridge regularization).
 
     Parameters
     ----------
@@ -368,7 +401,7 @@ def poisson_irls_multi_ridge(X, y, max_iter=100, tol=1e-3, lambda_reg=1.0):
     y : np.array, shape (n_cells,)
         Poisson counts
     lambda_reg : float
-        Ridge penalty strength (applies to betas only, not intercept)
+        Ridge penalty strength (L2)
 
     Returns
     -------
@@ -378,43 +411,208 @@ def poisson_irls_multi_ridge(X, y, max_iter=100, tol=1e-3, lambda_reg=1.0):
         Coefficients
     """
     n, p = X.shape
-    X_full = np.hstack([np.ones((n, 1)), X])
-    beta = np.zeros(p + 1, dtype=np.float64)
-
-    ridge_vec = np.concatenate([[0.0], np.full(p, lambda_reg)])
+    beta0 = 0.0
+    betas = np.zeros(p, dtype=np.float32)
 
     MAX_EXP, MAX_VAL, MIN_VAL = 80.0, 1e10, 1e-8
 
-    for _ in range(max_iter):
+    I = np.eye(p, dtype=np.float32)
+    I[0, 0] = 0.0
 
-        eta = X_full @ beta
+    for _ in range(max_iter):
+        # linear predictor
+        eta = beta0 + X @ betas
         eta = np.clip(eta, -MAX_EXP, MAX_EXP)
 
+        # mean response
         mu = np.exp(eta)
         mu = np.minimum(mu, MAX_VAL)
 
+        # working weights and response
         W = mu
         z = eta + (y - mu) / np.maximum(mu, MIN_VAL)
 
-        WX = X_full * W[:, None]
-        XtWX = WX.T @ X_full
-        XtWz = WX.T @ z
+        # weighted gram matrix and rhs
+        WX = X * W[:, None]
+        XtWX = np.dot(X.T, WX)
+        XtWz = np.dot(X.T, W * z)
 
-        # add ridge only to slopes
-        XtWX += np.diag(ridge_vec)
+        # center adjustment for intercept
+        sum_w = np.sum(W)
+        sum_y = np.dot(W, z)
+        sum_x = np.dot(X.T, W)
 
-        beta_new = np.linalg.solve(XtWX, XtWz)
+        XtWX_adj = XtWX - np.outer(sum_x, sum_x) / max(sum_w, MIN_VAL)
+        XtWz_adj = XtWz - sum_x * sum_y / max(sum_w, MIN_VAL)
 
-        if np.allclose(beta_new, beta, atol=tol):
-            beta = beta_new
+        # add ridge penalty to XtWX (but not to intercept)
+        XtWX_ridge = XtWX_adj + lambda_reg * I
+
+        try:
+            c, low = sp.linalg.cho_factor(XtWX_ridge, lower=True, check_finite=False)
+            betas_new = sp.linalg.cho_solve((c, low), XtWz_adj, check_finite=False)
+        except np.linalg.LinAlgError:
+            betas_new = np.linalg.solve(XtWX_ridge, XtWz_adj)
+
+        beta0_new = (sum_y - betas_new @ sum_x) / max(sum_w, MIN_VAL)
+
+        # convergence check
+        if np.allclose(betas_new, betas, atol=tol) and abs(beta0_new - beta0) < tol:
             break
- 
-        beta = beta_new
 
-    beta0 = beta[0]
-    betas = beta[1:]
+        betas[:] = betas_new
+        beta0 = beta0_new
 
     return beta0, betas
+
+
+def poisson_irls_loop_sparse_dense_multi(mat_x_full, mat_y_full, X_multi, links=None, max_iter=100, tol=1e-3, lambda_reg=0.0):
+    """
+    Run Poisson IRLS (multi-covariate) over all link pairs sequentially on worker.
+
+    Parameters
+    ----------
+    mat_x_full : sp.sparse.csc
+        Full sparse ATAC matrix (cells x features)
+    mat_y_full : sp.sparse.csc
+        Full sparse RNA matrix (cells x features)
+    X_multi : np.array, shape (n_cells, n_covariates)
+        Additional covariates to include for every link.
+    links : np.array
+        Array of shape (n_links, 2), where each row is (x_idx, y_idx)
+
+    Returns
+    -------
+    results : np.ndarray
+        Array of shape (n_links, n_covariates + 1), with intercept in column 0
+    """
+
+    n = mat_x_full.shape[1]
+    if links is None:
+        links = np.stack([np.arange(n)] * 2, axis=1)
+
+    n_links = links.shape[0]
+    n_cov = X_multi.shape[1]
+    results = np.zeros(n_links, dtype=np.float32)
+
+    if mat_x_full.dtype != np.float32:
+        mat_x_full = mat_x_full.astype(np.float32)
+    if mat_y_full.dtype != np.float32:
+        mat_y_full = mat_y_full.astype(np.float32)
+    if X_multi.dtype != np.float32:
+        X_multi = X_multi.astype(np.float32)
+
+    for i, (x_idx, y_idx) in enumerate(links):
+
+        y_i = mat_y_full[:, y_idx].toarray().ravel()
+        x_i = mat_x_full[:, x_idx]
+
+        beta0, betas = poisson_irls_sparse_dense_multi_ridge(x_i, 
+            X_multi,
+            y_i, 
+            max_iter=max_iter, 
+            tol=tol, 
+            lambda_reg=lambda_reg
+        )
+
+        results[i] = betas[0]
+
+    return results
+
+
+def poisson_irls_sparse_dense_multi_ridge(X_sparse, X_dense, y, max_iter=100, tol=1e-3, lambda_reg=1.0):
+    """
+    Poisson IRLS with sparse main predictor and dense covariates.
+
+    Parameters
+    ----------
+    X_sparse : scipy.sparse.csc or csr, shape (n_cells, n_sparse)
+        Sparse main predictors (e.g., peaks)
+    X_dense : np.ndarray, shape (n_cells, n_dense)
+        Dense covariates (e.g., batch effects)
+    y : np.ndarray, shape (n_cells,)
+        Poisson counts
+    lambda_reg : float
+        Ridge penalty applied to coefficients (not intercept)
+    """
+    n_cells = y.shape[0]
+    n_sparse = X_sparse.shape[1]
+    n_dense = X_dense.shape[1]
+    p = n_sparse + n_dense
+
+    beta0 = 0.0
+    betas = np.zeros(p, dtype=np.float32)
+
+    MAX_EXP, MAX_VAL, MIN_VAL = 80.0, 1e10, 1e-8
+
+    # Ridge identity, do not penalize intercept
+    I = np.eye(p, dtype=np.float32)
+    I[0, 0] = 0.0
+
+    for _ in range(max_iter):
+
+        # Linear predictor
+        eta = beta0 + X_sparse @ betas[:n_sparse] + X_dense @ betas[n_sparse:]
+        eta = np.clip(eta, -MAX_EXP, MAX_EXP)
+
+        # Mean response
+        mu = np.exp(eta)
+        mu = np.minimum(mu, MAX_VAL)
+
+        # Working weights and response
+        W = mu
+        z = eta + (y - mu) / np.maximum(mu, MIN_VAL)
+
+        # Weighted Gram and RHS
+        XtWX_sparse = (X_sparse.T @ (X_sparse.multiply(W[:, None]))).toarray()
+        XtWX_dense = (X_dense.T @ (X_dense * W[:, None]))
+        XtWz_sparse = (X_sparse.T @ (W * z)).ravel()
+        XtWz_dense = (X_dense.T @ (W * z)).ravel()
+        sum_x_sparse = (X_sparse.multiply(W[:, None])).sum(axis=0).A1
+        sum_x_dense = (X_dense * W[:, None]).sum(axis=0).ravel()
+
+        # Cross term
+        cross = (X_sparse.T @ (X_dense * W[:, None]))
+
+        # Assemble full Gram and RHS
+        XtWX = np.zeros((p, p), dtype=np.float32)
+        XtWz = np.zeros(p, dtype=np.float32)
+        sum_x = np.zeros(p, dtype=np.float32)
+
+        XtWX[:n_sparse, :n_sparse] = XtWX_sparse
+        XtWX[n_sparse:, n_sparse:] = XtWX_dense
+        XtWX[:n_sparse, n_sparse:] = cross
+        XtWX[n_sparse:, :n_sparse] = cross.T
+
+        XtWz[:n_sparse] = XtWz_sparse
+        XtWz[n_sparse:] = XtWz_dense
+
+        sum_x[:n_sparse] = sum_x_sparse
+        sum_x[n_sparse:] = sum_x_dense
+
+        # Centering for intercept
+        sum_w = np.sum(W)
+        sum_y = np.dot(W, z)
+
+        XtWX_adj = XtWX - np.outer(sum_x, sum_x) / max(sum_w, MIN_VAL)
+        XtWz_adj = XtWz - sum_x * sum_y / max(sum_w, MIN_VAL)
+
+        # Ridge penalty
+        XtWX_ridge = XtWX_adj + lambda_reg * I
+
+        # Solve
+        c, low = sp.linalg.cho_factor(XtWX_ridge, lower=True, check_finite=False)
+        betas_new = sp.linalg.cho_solve((c, low), XtWz_adj, check_finite=False)
+        beta0_new = (sum_y - np.dot(betas_new, sum_x)) / max(sum_w, MIN_VAL)
+
+        # Convergence check
+        if np.allclose(betas_new, betas, atol=tol) and abs(beta0_new - beta0) < tol:
+            break
+
+        betas, beta0 = betas_new, beta0_new
+
+    return beta0, betas
+
 
 
 ######################### generate null #########################
@@ -666,7 +864,8 @@ def create_ctrl_pairs(
     b = 100000,
     peak_col = 'peak',
     gene_col = 'gene',
-    return_bins_df = True
+    return_bins_df = True,
+    flag_combine_bin = False,
 ):
 
     ''' Obtain b control pairs for each permutation of bin features.
@@ -722,6 +921,9 @@ def create_ctrl_pairs(
     atac_bins_df = get_bins(adata_atac,num_bins=atac_bins,type=atac_type,col=peak_col,layer=atac_layer,genome_file=genome_file)
     rna_bins_df = get_bins(adata_rna,num_bins=rna_bins,type=rna_type,col=gene_col,layer=rna_layer)
     print('Get_bins done.')
+    if flag_combine_bin:
+        rna_bins_df.loc[rna_bins_df.mean_bin == 0, 'mean_bin'] = 1
+        rna_bins_df['mean_var_bin'] = rna_bins_df['mean_var_bin'].str.replace(r'^0.','1.',regex=True).values
     
     # Group indices for controls
     pairs = [(i, j) for i in atac_bins_df[f'{atac_type}_bin'].unique() for j in rna_bins_df[f'{rna_type}_bin'].unique()]
