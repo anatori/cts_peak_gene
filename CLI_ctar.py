@@ -47,6 +47,7 @@ def main(args):
     BIN_TYPE = args.binning_type
     PYBEDTOOLS_PATH = args.pybedtools_path
     COVAR_FILE = args.covar_file
+    ARRAY_IDX = args.array_idx
 
     # Parse and check arguments
     LEGAL_JOB_LIST = [
@@ -89,6 +90,7 @@ def main(args):
     header += "--binning_type %s\\\n" % BIN_TYPE
     header += "--pybedtools_path %s\\\n" % PYBEDTOOLS_PATH
     header += "--covar_file %s\\\n" % COVAR_FILE
+    header += "--array_idx %s\\\n" % ARRAY_IDX
     print(header)
 
     ###########################################################################################
@@ -120,8 +122,23 @@ def main(args):
             adata_rna = ad.read_h5ad(MULTIOME_FILE)
             adata_atac = adata_rna[:,adata_rna.var.feature_types == 'ATAC'].copy()
             adata_rna = adata_rna[:,adata_rna.var.feature_types == 'GEX'].copy()
+
+        if adata_rna.var.index.name is not None:
+            adata_rna.var.index.name = None
+        if adata_atac.var.index.name is not None:
+            adata_atac.var.index.name = None
+
         adata_rna.var['gene'] = adata_rna.var.index
         adata_atac.var['peak'] = adata_atac.var.index
+
+        try:
+            adata_rna.layers['counts']
+            adata_atac.layers['counts']
+            pass
+        except:
+            print("# Assuming counts are found in .X attribute...")
+            adata_rna.layers['counts'] = adata_rna.X
+            adata_atac.layers['counts'] = adata_atac.X
 
         # Preferentially use gene_id
         if 'gene_id' in adata_rna.var.columns:
@@ -154,6 +171,9 @@ def main(args):
         if not os.path.isfile(csv_file):
             raise FileNotFoundError(f"Expected cis_links_df.csv at {csv_file}, but it was not found.")
         cis_links_df = pd.read_csv(csv_file)
+
+        if ARRAY_IDX is not None:
+            ARRAY_IDX = int(ARRAY_IDX)
 
 
     ###########################################################################################
@@ -270,7 +290,6 @@ def main(args):
                     covar_mat=covar_mat,
                     batch_size=BATCH_SIZE,
                     scheduler="threads",
-                    numba=True,
                 )
         else:
             cis_coeff_dic = ctar.parallel.multiprocess_poisson_irls(
@@ -279,7 +298,8 @@ def main(args):
                     rna_sparse=rna_sparse,
                     batch_size=BATCH_SIZE,
                     scheduler="threads",
-                    numba=True,
+                    flag_float32=False,
+                    tol=1e-6,
                 )
         print('# Cis-links IRLS time = %0.2fs' % (time.time() - start_time))
 
@@ -301,26 +321,42 @@ def main(args):
 
         print("# Running --job compute_ctrl_only")
 
-        ctrl_links_dic, atac_bins_df, rna_bins_df = ctar.method.create_ctrl_pairs(
-            adata_atac, adata_rna, atac_bins=[n_atac_mean,n_atac_gc], rna_bins=[n_rna_mean,n_rna_var],
-            atac_type=atac_type, rna_type=rna_type, b=n_ctrl,
-            atac_layer='counts', rna_layer='counts', genome_file=GENOME_FILE
-        )
+        if ARRAY_IDX is None:
 
-        cis_links_df = ctar.data_loader.combine_peak_gene_bins(cis_links_df, atac_bins_df, rna_bins_df, 
-            atac_bins=[n_atac_mean,n_atac_gc], 
-            rna_bins=[n_rna_mean,n_rna_var]
-        )
+            ctrl_links_dic, atac_bins_df, rna_bins_df = ctar.method.create_ctrl_pairs(
+                adata_atac, adata_rna, atac_bins=[n_atac_mean,n_atac_gc], rna_bins=[n_rna_mean,n_rna_var],
+                atac_type=atac_type, rna_type=rna_type, b=n_ctrl,
+                atac_layer='counts', rna_layer='counts', genome_file=GENOME_FILE
+            )
 
-        cis_links_dic, cis_idx_dic = ctar.data_loader.groupby_combined_bins(cis_links_df, 
-            combined_bin_col=f'combined_bin_{BIN_CONFIG.rsplit('.',1)[0]}', 
-            return_dic=True
-        )
+            cis_links_df = ctar.data_loader.combine_peak_gene_bins(cis_links_df, atac_bins_df, rna_bins_df, 
+                atac_bins=[n_atac_mean,n_atac_gc], 
+                rna_bins=[n_rna_mean,n_rna_var]
+            )
+
+            cis_links_dic, cis_idx_dic = ctar.data_loader.groupby_combined_bins(cis_links_df, 
+                combined_bin_col=f'combined_bin_{BIN_CONFIG.rsplit('.',1)[0]}', 
+                return_dic=True
+            )
+
+            file_suffix = ''
+
+        else:
+
+            file_path = f'{TARGET_PATH}/ctrl_links_dic.pkl'
+            with open(file_path, 'rb') as file:
+                ctrl_links_dic = pickle.load(file)
+            ctrl_links_dic = dict(sorted(ctrl_links_dic.items()))
+            ctrl_links_dic = dict(list(ctrl_links_dic.items())[ARRAY_IDX*BATCH_SIZE : (ARRAY_IDX+1)*BATCH_SIZE])
+            print('# Running %d controls...' % (len(list(ctrl_links_dic.keys()))))
+
+            file_suffix = f'_{ARRAY_IDX}'
 
         rna_sparse = adata_rna.layers['counts']
         atac_sparse = adata_atac.layers['counts']
 
         print('# Starting control links IRLS...')
+        print(f'# ATAC and RNA dtype: {atac_sparse.dtype}, {rna_sparse.dtype}')
         start_time = time.time()
 
         if COVAR_FILE:
@@ -330,8 +366,7 @@ def main(args):
                     rna_sparse=rna_sparse,
                     covar_mat=covar_mat,
                     batch_size=BATCH_SIZE,
-                    scheduler="threads",
-                    numba=True,
+                    scheduler="threads",                
                 )
         else:
             ctrl_coeff_dic = ctar.parallel.multiprocess_poisson_irls(
@@ -340,29 +375,38 @@ def main(args):
                     rna_sparse=rna_sparse,
                     batch_size=BATCH_SIZE,
                     scheduler="threads",
-                    numba=True,
+                    flag_float32=False,
+                    tol=1e-6,
                 )
         print('# Control links IRLS time = %0.2fs' % (time.time() - start_time))
 
-        cis_coeff_dic = ctar.data_loader.map_df_to_dic(cis_links_df, 
-            keys_col=f'combined_bin_{BIN_CONFIG.rsplit('.',1)[0]}',
-            values_col='poissonb')
+        if ARRAY_IDX is None:
 
-        mcpval_dic, ppval_dic = ctar.method.binned_mcpval(cis_coeff_dic, ctrl_coeff_dic)
+            cis_coeff_dic = ctar.data_loader.map_df_to_dic(cis_links_df, 
+                keys_col=f'combined_bin_{BIN_CONFIG.rsplit('.',1)[0]}',
+                values_col='poissonb')
 
-        cis_links_df = ctar.data_loader.map_dic_to_df(cis_links_df, cis_idx_dic, mcpval_dic, col_name=f'{BIN_CONFIG}_mcpval')
-        cis_links_df = ctar.data_loader.map_dic_to_df(cis_links_df, cis_idx_dic, ppval_dic, col_name=f'{BIN_CONFIG}_ppval')
+            mcpval_dic, ppval_dic = ctar.method.binned_mcpval(cis_coeff_dic, ctrl_coeff_dic)
 
-        results_folder = f'{TARGET_PATH}/{JOB_ID}_results/'
+            cis_links_df = ctar.data_loader.map_dic_to_df(cis_links_df, cis_idx_dic, mcpval_dic, col_name=f'{BIN_CONFIG}_mcpval')
+            cis_links_df = ctar.data_loader.map_dic_to_df(cis_links_df, cis_idx_dic, ppval_dic, col_name=f'{BIN_CONFIG}_ppval')
+
+            results_folder = f'{TARGET_PATH}/{JOB_ID}_results/'
+            
+        else:
+            results_folder = f'{TARGET_PATH}/'
+
         print(f'# Saving files to {results_folder}')
         os.makedirs(results_folder, exist_ok=True)
 
-        with open(f'{results_folder}ctrl_coeff_dic.pkl', 'wb') as f:
+        with open(f'{results_folder}ctrl_coeff_dic{file_suffix}.pkl', 'wb') as f:
             pickle.dump(ctrl_coeff_dic, f)
-        with open(f'{results_folder}ctrl_links_dic.pkl', 'wb') as f:
-            pickle.dump(ctrl_links_dic, f)
 
-        cis_links_df.to_csv(f'{results_folder}cis_links_df.csv')
+        if ARRAY_IDX is None:
+            with open(f'{results_folder}ctrl_links_dic.pkl', 'wb') as f:
+                pickle.dump(ctrl_links_dic, f)
+
+            cis_links_df.to_csv(f'{results_folder}cis_links_df.csv')
 
 
 
@@ -391,6 +435,7 @@ if __name__ == "__main__":
     )
     parser.add_argument("--binning_type", type=str, required=False, default='mean_var', help='mean_var, cholesky')
     parser.add_argument("--pybedtools_path", type=str, required=False, default=None)
+    parser.add_argument("--array_idx", type=str, required=False, default=None)
 
     args = parser.parse_args()
     main(args)
