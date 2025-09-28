@@ -532,7 +532,15 @@ def analyze_enrichment_jacknife(eval_df, categorical_arr, score_col='gt_pip', me
     return enrich_df, lower_ci_df, upper_ci_df, std_ci_df, jn_dic
 
 
-def analyze_enrichment_auc_midpoint_jackknife(eval_df, categorical_arr, score_col='gt_pip', methods=None, nlinks_ls=None):
+def get_top_n_mask(pvals, n):
+    """Return a boolean mask for the top n smallest p-values."""
+    idx = np.argsort(pvals)[:n]
+    mask = np.zeros(len(pvals), dtype=bool)
+    mask[idx] = True
+    return mask
+
+
+def analyze_auc_midpoint_jackknife(eval_df, categorical_arr, score_col='gt_pip', methods=None, nlinks_ls=None, stat_method='enrichment'):
     """
     Compute enrichment AUC via midpoint rule using jackknife confidence intervals.
     
@@ -546,6 +554,8 @@ def analyze_enrichment_auc_midpoint_jackknife(eval_df, categorical_arr, score_co
         Name of the score column to use for enrichment ranking.
     nlinks_ls : list of int
         List of N link cutoffs (e.g. [500, 1000, ...]).
+    stat_method : str
+        'enrichment' or 'odds_ratio'
     
     Returns
     ----------
@@ -564,7 +574,7 @@ def analyze_enrichment_auc_midpoint_jackknife(eval_df, categorical_arr, score_co
     n_blocks = len(blocks_arr)
 
     # Midpoint and delta arrays
-    midpoints = (nlinks_arr[:-1] + nlinks_arr[1:]) / 2
+    midpoints = np.round((nlinks_arr[:-1] + nlinks_arr[1:]) / 2).astype(int)
     deltas = np.diff(nlinks_arr)
 
     auc_vals = []
@@ -577,10 +587,20 @@ def analyze_enrichment_auc_midpoint_jackknife(eval_df, categorical_arr, score_co
         pval_arr = eval_df[method].values
 
         nan_mask = ~np.isnan(score_arr) & ~np.isnan(pval_arr)
-        enrich_at_mid = np.array([
-            enrichment(score_arr[nan_mask], pval_arr[nan_mask], int(n)) for n in midpoints
-        ])
-        auc = np.sum(enrich_at_mid * deltas)
+        if stat_method == 'enrichment':
+            stat_at_mid = np.array([
+                enrichment(score_arr[nan_mask], pval_arr[nan_mask], int(n)) for n in midpoints
+            ])
+        elif stat_method == 'odds_ratio':
+            label_arr = (eval_df['label'].values[nan_mask])
+
+            stat_at_mid = np.array([
+                odds_ratio(get_top_n_mask(pval_arr, n), label_arr)[0] for n in midpoints
+            ])
+        else:
+            raise ValueError("stat_method must be either 'enrichment' or 'odds_ratio'")
+
+        auc = np.sum(stat_at_mid * deltas)
         auc_vals.append(auc)
 
         # Jackknife
@@ -593,6 +613,7 @@ def analyze_enrichment_auc_midpoint_jackknife(eval_df, categorical_arr, score_co
             ratio_arr[bi] = len(categorical_arr) / np.sum(categorical_arr == block)
             score_sub = score_arr[mask_block]
             pval_sub = pval_arr[mask_block]
+            label_sub = label_arr[mask_block] if stat_method == 'odds_ratio' else None
 
             # remove nans
             nan_mask = ~np.isnan(score_sub) & ~np.isnan(pval_sub)
@@ -603,10 +624,17 @@ def analyze_enrichment_auc_midpoint_jackknife(eval_df, categorical_arr, score_co
                 ratio_arr[bi] = np.nan
                 continue
 
-            enrich_jn[bi] = np.array([
-                enrichment(score_sub[nan_mask], pval_sub[nan_mask], int(n)) for n in midpoints
-            ])
-            jn_estimates[bi] = np.sum(enrich_jn[bi] * deltas)
+            if stat_method == 'enrichment':
+                stat_jn = np.array([
+                    enrichment(score_sub, pval_sub, int(n)) for n in midpoints
+                ])
+            elif stat_method == 'odds_ratio':
+                stat_jn = np.array([
+                    odds_ratio(get_top_n_mask(pval_sub, n), label_sub)[0] for n in midpoints
+                ])
+
+            auc_jn = np.sum(stat_jn * deltas)
+            jn_estimates[bi] = np.sum(auc_jn)
 
         jn_dic[0][method] = jn_estimates
 
@@ -711,12 +739,19 @@ def compute_pairwise_delta_or_with_fdr(selected_methods, bs_dic, odds_df, nlinks
     # Global FDR correction
     all_pvals_arr = np.array(all_pvals)
     pvals_corrected_all = np.array(all_pvals)
-    rej, pvals_corrected, _, _ = multipletests(
-        all_pvals_arr[~np.isnan(all_pvals_arr)],
-        alpha=0.05,
-        method='fdr_bh'
-    )
-    pvals_corrected_all[~np.isnan(all_pvals_arr)] = pvals_corrected
+    valid_mask = ~np.isnan(all_pvals_arr)
+
+    if valid_mask.sum() > 0:
+        rej, pvals_corrected, _, _ = multipletests(
+            all_pvals_arr[~np.isnan(all_pvals_arr)],
+            alpha=0.05,
+            method='fdr_bh'
+        )
+        pvals_corrected_all[~np.isnan(all_pvals_arr)] = pvals_corrected
+
+    else:
+        # no valid tests, just fill with NaNs
+        pvals_corrected_all = np.full_like(all_pvals_arr, np.nan, dtype=float)
 
     # Lookup dictionary for corrected p-values
     corrected_pval_lookup = {
