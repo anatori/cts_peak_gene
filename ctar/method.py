@@ -86,7 +86,7 @@ def pearson_corr_sparse(mat_X, mat_Y, var_filter=False):
     return mat_corr
 
 
-def poisson_irls_loop(mat_x_full, mat_y_full, links=None, max_iter=100, tol=1e-3, ridge=False, flag_float32=True):
+def poisson_irls_loop(mat_x_full, mat_y_full, links=None, max_iter=100, tol=1e-3, ridge=False, flag_float32=True, flag_se=False):
     """ Run poisson_irls_single over all link pairs sequentially on worker.
 
     Parameters
@@ -104,8 +104,7 @@ def poisson_irls_loop(mat_x_full, mat_y_full, links=None, max_iter=100, tol=1e-3
         Array of shape (n_pairs), computing 
     """
 
-    if flag_float32:
-        dtype = np.float32
+    dtype = np.float32 if flag_float32 else np.float64
 
     n = mat_x_full.shape[1]
     if links is None: 
@@ -114,7 +113,7 @@ def poisson_irls_loop(mat_x_full, mat_y_full, links=None, max_iter=100, tol=1e-3
     n_links = links.shape[0]
     results = np.zeros((n_links, 2), dtype=dtype)
 
-    # Convert to float32 if needed once
+    # Convert to if needed once
     if mat_x_full.dtype != dtype:
         mat_x_full = mat_x_full.astype(dtype)
     if mat_y_full.dtype != dtype:
@@ -127,12 +126,12 @@ def poisson_irls_loop(mat_x_full, mat_y_full, links=None, max_iter=100, tol=1e-3
         if ridge:
             results[i, :] = poisson_irls_single_ridge(x_i, y_i, max_iter=max_iter, tol=tol)
         else:
-            results[i, :] = poisson_irls_single(x_i, y_i, max_iter=max_iter, tol=tol, flag_float32=flag_float32)
+            results[i, :] = poisson_irls_single(x_i, y_i, max_iter=max_iter, tol=tol, flag_float32=flag_float32, flag_se=flag_se)
     
     return results
 
 
-def poisson_irls_single(x, y, max_iter=100, tol=1e-3, flag_float32=True):
+def poisson_irls_single(x, y, max_iter=100, tol=1e-3, flag_float32=True, flag_se=False):
     """
     Run IRLS Poisson regression on a single feature pair.
 
@@ -149,27 +148,11 @@ def poisson_irls_single(x, y, max_iter=100, tol=1e-3, flag_float32=True):
         Array of shape (2,) [beta0, beta1] 
     """
 
-    if flag_float32:
-
-        dtype = np.float32
-    
-        beta0 = np.float32(0.0)
-        beta1 = np.float32(0.0)
-
-        MAX_EXP = np.float32(80.0)
-        MAX_VAL = np.float32(1e10)
-        MIN_VAL = np.float32(1e-8)
-
-    else:
-
-        dtype = np.float64
-
-        beta0 = 0.0
-        beta1 = 0.0
-
-        MAX_EXP = 80.0
-        MAX_VAL = 1e10
-        MIN_VAL = 1e-8
+    dtype = np.float32 if flag_float32 else np.float64
+    beta0 = beta1 = dtype(0.0)
+    MAX_EXP = dtype(80.0)
+    MAX_VAL = dtype(1e10)
+    MIN_VAL = dtype(1e-8)
 
     for _ in range(max_iter):
         eta = beta0 + x * beta1
@@ -198,15 +181,23 @@ def poisson_irls_single(x, y, max_iter=100, tol=1e-3, flag_float32=True):
             break
 
         beta0, beta1 = beta0_new, beta1_new
-
     
-    if flag_float32:
+    if flag_se:
 
-        return np.array([beta0, beta1], dtype=dtype)
+        eta = beta0 + x * beta1
+        eta = np.clip(eta, -MAX_EXP, MAX_EXP)
+        w = np.exp(eta)
+        w = np.minimum(w, MAX_VAL)
+        sum_w = np.sum(w)
+        sum_xw = np.sum(x * w)
+        sum_xxw = np.sum(x * x * w)
+        denom = sum_w * sum_xxw - sum_xw ** 2
+        se_beta1 = np.sqrt(sum_w / denom)
+        norm_beta1 = beta1/se_beta1
 
-    else:
+        return np.array([beta0, norm_beta1], dtype=dtype)
 
-        return np.array([beta0, beta1], dtype=dtype)
+    return np.array([beta0, beta1], dtype=dtype)
 
 
 def poisson_irls_single_ridge(x, y, max_iter=100, tol=1e-3, lambda_reg=1.0):
@@ -311,14 +302,14 @@ def poisson_irls_loop_multi(mat_x_full, mat_y_full, X_multi, links=None, max_ite
 
         # adding covariates
         x_i = mat_x_full[:, x_idx].toarray().ravel()[:, None]
-        X_i = np.hstack([x_i, X_multi])
+        X_i = np.hstack([np.ones((x_i.shape[0], 1)), x_i, X_multi])
 
         if ridge:
-            beta0, betas = poisson_irls_multi_ridge(X_i, y_i, max_iter=max_iter, tol=tol, lambda_reg=lambda_reg)
+            betas = poisson_irls_multi_ridge(X_i, y_i, max_iter=max_iter, tol=tol, lambda_reg=lambda_reg)
         else:
-            beta0, betas = poisson_irls_multi(X_i, y_i, max_iter=max_iter, tol=tol)
+            betas = poisson_irls_multi(X_i, y_i, max_iter=max_iter, tol=tol)
 
-        results[i] = betas[0]
+        results[i] = betas[1]
 
     return results
 
@@ -336,58 +327,40 @@ def poisson_irls_multi(X, y, max_iter=100, tol=1e-3):
 
     Returns
     -------
-    beta0 : float
-        Intercept
-    betas : np.array, shape (n_covariates,)
+    betas : np.array, shape (n_covariates + 1,)
         Coefficients
     """
     n, p = X.shape
-    beta0 = 0.0
     betas = np.zeros(p, dtype=np.float32)
 
     MAX_EXP, MAX_VAL, MIN_VAL = 80.0, 1e10, 1e-8
     I = np.eye(p, dtype=np.float32)
+    WX = np.empty_like(X)
 
     for _ in range(max_iter):
-        eta = beta0 + X @ betas
-        eta = np.clip(eta, -MAX_EXP, MAX_EXP)
-
-        mu = np.exp(eta).astype(np.float32)
-        mu = np.clip(mu, MIN_VAL, MAX_VAL)
-
-        W = mu
+        eta = np.clip(X @ betas, -MAX_EXP, MAX_EXP)
+        mu = np.clip(np.exp(eta).astype(np.float32), MIN_VAL, MAX_VAL)
         z = eta + (y - mu) / np.maximum(mu, MIN_VAL)
 
         # compute weighted gram and rhs
-        WX = X * W[:, None]
-        XtWX = np.dot(X.T, WX)
-        XtWz = np.dot(X.T, W * z)
-
-        sum_w = np.sum(W)
-        sum_y = np.dot(W, z)
-        sum_x = np.dot(X.T, W)
-
-        XtWX_adj = XtWX - np.outer(sum_x, sum_x) / max(sum_w, MIN_VAL)
-        XtWz_adj = XtWz - sum_x * sum_y / max(sum_w, MIN_VAL)
+        np.multiply(X, mu[:, None], out=WX)
+        XtWX = X.T @ WX
+        XtWz = X.T @ (mu * z)
 
         # add small jitter to diagonal to ensure positive definiteness
-        XtWX_jit = XtWX_adj + MIN_VAL * I
-
+        XtWX_jit = XtWX + MIN_VAL * I
         try:
             c, low = sp.linalg.cho_factor(XtWX_jit, lower=True, check_finite=False)
-            betas_new = sp.linalg.cho_solve((c, low), XtWz_adj, check_finite=False)
+            betas_new = sp.linalg.cho_solve((c, low), XtWz, check_finite=False)
         except np.linalg.LinAlgError:
-            betas_new = np.linalg.solve(XtWX_jit, XtWz_adj)
-        
-        beta0_new = (sum_y - betas_new @ sum_x) / max(sum_w, MIN_VAL)
+            betas_new = np.linalg.solve(XtWX_jit, XtWz)
 
-        if np.allclose(betas_new, betas, atol=tol) and abs(beta0_new - beta0) < tol:
+        if np.allclose(betas_new, betas, atol=tol):
             break
 
         betas[:] = betas_new
-        beta0 = beta0_new
 
-    return beta0, betas
+    return betas
 
 
 def poisson_irls_multi_ridge(X, y, max_iter=100, tol=1e-3, lambda_reg=1.0):
@@ -454,16 +427,13 @@ def poisson_irls_multi_ridge(X, y, max_iter=100, tol=1e-3, lambda_reg=1.0):
         except np.linalg.LinAlgError:
             betas_new = np.linalg.solve(XtWX_ridge, XtWz_adj)
 
-        beta0_new = (sum_y - betas_new @ sum_x) / max(sum_w, MIN_VAL)
-
         # convergence check
-        if np.allclose(betas_new, betas, atol=tol) and abs(beta0_new - beta0) < tol:
+        if np.allclose(betas_new, betas, atol=tol):
             break
 
         betas[:] = betas_new
-        beta0 = beta0_new
 
-    return beta0, betas
+    return betas
 
 
 def poisson_irls_loop_sparse_dense_multi(mat_x_full, mat_y_full, X_multi, links=None, max_iter=100, tol=1e-3, lambda_reg=0.0):
