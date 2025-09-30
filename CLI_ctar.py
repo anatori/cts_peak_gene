@@ -164,6 +164,11 @@ def main(args):
             print("# Loading --covar_file")
             covar_mat = np.load(COVAR_FILE)
 
+        if RESULTS_PATH:
+            print("# Loading --results_path")
+            csv_file = os.path.join(RESULTS_PATH, 'cis_links_df.csv')
+            cis_links_df = pd.read_csv(csv_file)
+
     if JOB in ["compute_ctrl_only"]:
 
         print("# Loading --results_path")
@@ -257,19 +262,21 @@ def main(args):
 
         print("# Running --job compute_cis_only")
 
-        adata_rna.var = ctar.data_loader.get_gene_coords(adata_rna.var)
-        cis_links_df = ctar.data_loader.peak_to_gene(adata_atac.var, adata_rna.var, split_peaks=True)
+        if not RESULTS_PATH:
 
-        ctrl_links_dic, atac_bins_df, rna_bins_df = ctar.method.create_ctrl_pairs(
-            adata_atac, adata_rna, atac_bins=[n_atac_mean,n_atac_gc], rna_bins=[n_rna_mean,n_rna_var],
-            atac_type=atac_type, rna_type=rna_type, b=n_ctrl,
-            atac_layer='counts', rna_layer='counts', genome_file=GENOME_FILE
-        )
+            adata_rna.var = ctar.data_loader.get_gene_coords(adata_rna.var)
+            cis_links_df = ctar.data_loader.peak_to_gene(adata_atac.var, adata_rna.var, split_peaks=True)
 
-        cis_links_df = ctar.data_loader.combine_peak_gene_bins(cis_links_df, atac_bins_df, rna_bins_df, 
-            atac_bins=[n_atac_mean,n_atac_gc], 
-            rna_bins=[n_rna_mean,n_rna_var]
-        )
+            ctrl_links_dic, atac_bins_df, rna_bins_df = ctar.method.create_ctrl_pairs(
+                adata_atac, adata_rna, atac_bins=[n_atac_mean,n_atac_gc], rna_bins=[n_rna_mean,n_rna_var],
+                atac_type=atac_type, rna_type=rna_type, b=n_ctrl,
+                atac_layer='counts', rna_layer='counts', genome_file=GENOME_FILE
+            )
+
+            cis_links_df = ctar.data_loader.combine_peak_gene_bins(cis_links_df, atac_bins_df, rna_bins_df, 
+                atac_bins=[n_atac_mean,n_atac_gc], 
+                rna_bins=[n_rna_mean,n_rna_var]
+            )
 
         cis_links_dic, cis_idx_dic = ctar.data_loader.groupby_combined_bins(cis_links_df, 
             combined_bin_col=f'combined_bin_{BIN_CONFIG.rsplit('.',1)[0]}', 
@@ -309,10 +316,12 @@ def main(args):
         print(f'# Saving files to {results_folder}')
         os.makedirs(results_folder, exist_ok=True)
 
-        with open(f'{results_folder}cis_coeff_dic.pkl', 'wb') as f:
-            pickle.dump(cis_coeff_dic, f)
-        with open(f'{results_folder}cis_idx_dic.pkl', 'wb') as f:
-            pickle.dump(cis_idx_dic, f)
+        # with open(f'{results_folder}cis_coeff_dic.pkl', 'wb') as f:
+        #     pickle.dump(cis_coeff_dic, f)
+        # with open(f'{results_folder}cis_idx_dic.pkl', 'wb') as f:
+        #     pickle.dump(cis_idx_dic, f)
+        # with open(f'{results_folder}ctrl_links_dic.pkl', 'wb') as f:
+        #     pickle.dump(ctrl_links_dic, f)
 
         cis_links_df.to_csv(f'{results_folder}cis_links_df.csv')
 
