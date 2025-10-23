@@ -16,18 +16,36 @@ from ctar.method import poisson_irls_loop, poisson_irls_loop_multi
 
 
 
-def process_sub_batch(subatch_links, atac_sparse, rna_sparse, bin_name=None, out_path=None, save_files=False, max_iter=100, tol=1e-3, ridge=False, **irls_kwargs):
+def process_sub_batch(subatch_links, atac_sparse, rna_sparse, 
+    bin_name=None, 
+    out_path=None, 
+    save_files=False, 
+    max_iter=100, 
+    tol=1e-3, 
+    ridge=False, 
+    flag_se = False, 
+    flag_ll = False,
+    **irls_kwargs
+):
     """
     Worker task to process one sub-batch of links, run poisson IRLS, and save output if save_files.
     """
     result = poisson_irls_loop(
         atac_sparse, rna_sparse, subatch_links,
-        max_iter=max_iter, tol=tol, ridge=ridge,
+        max_iter=max_iter, tol=tol, ridge=ridge, flag_se=flag_se, flag_ll=flag_ll,
         **irls_kwargs,
     )
     if save_files: 
         np.save(os.path.join(out_path, f"poissonb_{bin_name}"), result[:, 1])
 
+    if flag_se or flag_ll:
+        # TODO documentation
+        # dictionary will be nx2 arrays where col1
+        # flag_se -- col1 : se_beta, col2: beta
+        # flag_ll -- col1 : loglikelihood, col2: beta
+        return result
+    
+    # beta only
     return result[:, 1]
 
 
@@ -245,6 +263,7 @@ def multiprocess_poisson_irls(
     ridge: bool = False,
     flag_float32: bool = True, 
     flag_se: bool = False,
+    flag_ll: bool = False,
     **compute_kwargs,
 ):
 
@@ -316,6 +335,7 @@ def multiprocess_poisson_irls(
                     ridge=ridge,
                     flag_float32=flag_float32, 
                     flag_se=flag_se,
+                    flag_ll=flag_ll,
                 )
                 tasks.append(task)
                 keys_for_batch.append(bin_key)
@@ -336,13 +356,13 @@ def multiprocess_poisson_irls(
     return results_dict
 
 
-def process_sub_batch_multi(subatch_links, atac_sparse, rna_sparse, covar_mat, bin_name=None, out_path=None, save_files=False, max_iter=100, tol=1e-3, ridge=False, lambda_reg=0.0):
+def process_sub_batch_multi(subatch_links, atac_sparse, rna_sparse, covar_mat, bin_name=None, out_path=None, save_files=False, **irls_kwargs):
     """
     Worker task to process one sub-batch of links, run poisson IRLS, and save output if save_files.
     """
     result = poisson_irls_loop_multi(
         atac_sparse, rna_sparse, covar_mat, subatch_links,
-        max_iter=max_iter, tol=tol, ridge=ridge, lambda_reg=lambda_reg,
+        **irls_kwargs
     )
     if save_files:
         np.save(os.path.join(out_path, f"poissonb_{bin_name}"), result)
@@ -362,6 +382,7 @@ def multiprocess_poisson_irls_multivar(
     n_workers: Optional[int] = None,
     ridge: bool = False,
     lambda_reg: float = 1.0,
+    flag_se: bool = False,
     **compute_kwargs,
 ):
     """
@@ -397,6 +418,9 @@ def multiprocess_poisson_irls_multivar(
     -------
     dict[str, np.ndarray] or None
         Mapping bin -> IRLS results (n_links x n_covariates+1)
+
+    TODO:
+    - implement return se + beta
     """
 
     if save_files:
@@ -432,6 +456,7 @@ def multiprocess_poisson_irls_multivar(
                     tol=tol,
                     ridge=ridge,
                     lambda_reg=lambda_reg,
+                    flag_se=flag_se,
                 )
                 tasks.append(task)
                 keys_for_batch.append(bin_key)
