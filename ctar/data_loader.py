@@ -312,7 +312,7 @@ def map_dic_to_df(links_df, idx_dic, results_dic, col_name='poissonb'):
 def map_df_to_dic(links_df, keys_col='combined_bin', values_col='poissonb'):
     ''' Return dictionary with groupby column as keys and col_name column as values.
     '''
-    return links_df.groupby(keys_col)[values_col].agg(list).apply(np.array).to_dict()
+    return links_df.groupby(keys_col)[values_col].apply(np.array).to_dict()
 
 
 def read_to_frag(x):
