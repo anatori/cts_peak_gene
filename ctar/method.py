@@ -86,7 +86,7 @@ def pearson_corr_sparse(mat_X, mat_Y, var_filter=False):
     return mat_corr
 
 
-def poisson_irls_loop(mat_x_full, mat_y_full, links=None, max_iter=100, tol=1e-3, ridge=False, flag_float32=True, flag_se=False):
+def poisson_irls_loop(mat_x_full, mat_y_full, links=None, max_iter=100, tol=1e-3, ridge=False, flag_float32=True, flag_se=False, flag_ll=False):
     """ Run poisson_irls_single over all link pairs sequentially on worker.
 
     Parameters
@@ -126,12 +126,12 @@ def poisson_irls_loop(mat_x_full, mat_y_full, links=None, max_iter=100, tol=1e-3
         if ridge:
             results[i, :] = poisson_irls_single_ridge(x_i, y_i, max_iter=max_iter, tol=tol)
         else:
-            results[i, :] = poisson_irls_single(x_i, y_i, max_iter=max_iter, tol=tol, flag_float32=flag_float32, flag_se=flag_se)
+            results[i, :] = poisson_irls_single(x_i, y_i, max_iter=max_iter, tol=tol, flag_float32=flag_float32, flag_se=flag_se, flag_ll=flag_ll)
     
     return results
 
 
-def poisson_irls_single(x, y, max_iter=100, tol=1e-3, flag_float32=True, flag_se=False):
+def poisson_irls_single(x, y, max_iter=100, tol=1e-3, flag_float32=True, flag_se=False, flag_ll=False):
     """
     Run IRLS Poisson regression on a single feature pair.
 
@@ -163,7 +163,7 @@ def poisson_irls_single(x, y, max_iter=100, tol=1e-3, flag_float32=True, flag_se
 
         sum_w = np.maximum(np.sum(w), MIN_VAL)
 
-        z = eta + (y - w) / np.maximum(w, MIN_VAL)
+        z = eta + (y - w) / w
 
         xw = x * w
         xwz = x * w * z
@@ -188,14 +188,21 @@ def poisson_irls_single(x, y, max_iter=100, tol=1e-3, flag_float32=True, flag_se
         eta = np.clip(eta, -MAX_EXP, MAX_EXP)
         w = np.exp(eta)
         w = np.minimum(w, MAX_VAL)
-        sum_w = np.sum(w)
+        sum_w = np.maximum(np.sum(w), MIN_VAL)
         sum_xw = np.sum(x * w)
         sum_xxw = np.sum(x * x * w)
         denom = sum_w * sum_xxw - sum_xw ** 2
         se_beta1 = np.sqrt(sum_w / denom)
-        norm_beta1 = beta1/se_beta1
 
-        return np.array([beta0, norm_beta1], dtype=dtype)
+        return np.array([se_beta1, beta1], dtype=dtype)
+
+    if flag_ll:
+
+        eta = beta0 + x * beta1
+        eta = np.clip(eta, -MAX_EXP, MAX_EXP)
+        w = np.exp(eta)
+        log_lik = np.sum(y * eta - w - sp.special.gammaln(y + 1))
+        return np.array([log_lik, beta1], dtype=dtype)
 
     return np.array([beta0, beta1], dtype=dtype)
 
@@ -259,7 +266,7 @@ def poisson_irls_single_ridge(x, y, max_iter=100, tol=1e-3, lambda_reg=1.0):
     return np.array([beta0, beta1], dtype=np.float32)
 
 
-def poisson_irls_loop_multi(mat_x_full, mat_y_full, X_multi, links=None, max_iter=100, tol=1e-3, ridge=False, lambda_reg=0.0):
+def poisson_irls_loop_multi(mat_x_full, mat_y_full, X_multi, links=None, max_iter=100, tol=1e-3, ridge=False, lambda_reg=0.0, flag_se=False):
     """
     Run Poisson IRLS (multi-covariate) over all link pairs sequentially on worker.
 
@@ -307,14 +314,14 @@ def poisson_irls_loop_multi(mat_x_full, mat_y_full, X_multi, links=None, max_ite
         if ridge:
             betas = poisson_irls_multi_ridge(X_i, y_i, max_iter=max_iter, tol=tol, lambda_reg=lambda_reg)
         else:
-            betas = poisson_irls_multi(X_i, y_i, max_iter=max_iter, tol=tol)
+            betas = poisson_irls_multi(X_i, y_i, max_iter=max_iter, tol=tol, flag_se=flag_se)
 
         results[i] = betas[1]
 
     return results
 
 
-def poisson_irls_multi(X, y, max_iter=100, tol=1e-3):
+def poisson_irls_multi(X, y, max_iter=100, tol=1e-3, flag_se=False):
     """
     Run IRLS Poisson regression (multi-covariate, no regularization).
 
@@ -359,6 +366,20 @@ def poisson_irls_multi(X, y, max_iter=100, tol=1e-3):
             break
 
         betas[:] = betas_new
+
+    if flag_se:
+
+        eta = X @ betas
+        eta = np.clip(eta, -MAX_EXP, MAX_EXP)
+        mu = np.exp(eta)
+        mu = np.clip(mu, MIN_VAL, MAX_VAL)
+        XtWX = X.T @ (X * mu[:, None])
+        XtWX_jit = XtWX + MIN_VAL * I
+        cov_beta = np.linalg.inv(XtWX_jit)
+        se_hat = np.sqrt(np.diag(cov_beta))
+        norm_betas = betas / se_hat
+
+        return norm_betas
 
     return betas
 
@@ -991,7 +1012,7 @@ def center_ctrls(ctrl_corray,main_array,axis=0):
     ctrl_corray : np.ndarray
         Array of shape (N,B) where N is number of genes and B is number
         of repetitions (typically 1000x). Contains correlation between
-        focal gene and random peaks.
+        random peak-gene pairs.
     main_array : np.ndarray
         Array of shape (N,) containing correlation between focal gene
         and focal peaks.
@@ -1018,6 +1039,49 @@ def center_ctrls(ctrl_corray,main_array,axis=0):
         mean = mean.reshape(-1,1)
         std = std.reshape(-1,1)
     ctrls = (ctrl_corray - mean) / std
+    
+    return ctrls.flatten(), main
+
+
+def center_ctrls_corrected(ctrl_array,ctrl_se,main_array,axis=0):
+
+    ''' Centers control and focal correlation arrays according to control mean and std.
+    Takes std = sqrt(sample variance of beta_hat + var_hat(beta_hat)).
+    
+    Parameters
+    ----------
+    ctrl_array : np.ndarray
+        Array of shape (N,B) where N is number of genes and B is number
+        of repetitions (typically 1000x). Contains correlation between
+        random peak-gene pairs.
+    ctrl_se : np.ndarray
+        Array of shape (N,B). Contains estimated standard error of random
+        peak-gene pairs.
+    main_array : np.ndarray
+        Array of shape (N,) containing correlation between focal gene
+        and focal peaks.
+    
+    Returns
+    ----------
+    ctrls : np.ndarray
+        Array of shape (N*B,) containing centered correlations between
+        focal gene and random peaks.
+    main : np.ndarray
+        Array of shape (N,) containing centered correlations between
+        focal gene and focal peak, according to ctrl mean and std.
+        
+    '''
+    
+    mean = np.mean(ctrl_array,axis=axis)
+    sample_var = np.var(ctrl_array,axis=axis)
+    beta_var = np.mean(ctrl_se**2,axis=axis)
+    std = np.sqrt(sample_var + beta_var)
+
+    main = (main_array - mean) / std
+    if axis == 1:
+        mean = mean.reshape(-1,1)
+        std = std.reshape(-1,1)
+    ctrls = (ctrl_array - mean) / std
     
     return ctrls.flatten(), main
 
@@ -1116,6 +1180,7 @@ def binned_mcpval(
     cis_pairs_dic, 
     ctrl_pairs_dic,
     b=None,
+    flag_corrected=False,
 ):
     '''
     Compute p-values for binned evaluation data using Monte Carlo method.
@@ -1128,6 +1193,8 @@ def binned_mcpval(
     ctrl_pairs_dic : dict
         Dictionary of numpy arrays where keys are bins and values are PR coefficients
         for control peak-gene pairs.
+    b : int
+        Number of controls. Defaults to length of first array in dictionary.
 
     Returns
     ----------
@@ -1136,6 +1203,7 @@ def binned_mcpval(
     ppval_dic : dict
         Dictionary of numpy arrays where keys are bins and values are pooled-pvalues.
     '''
+
     bin_keys = sorted(cis_pairs_dic.keys())
 
     # set b, arbitrarily using the first key
@@ -1149,12 +1217,20 @@ def binned_mcpval(
 
     for bin_key in bin_keys:
 
-        coeffs = cis_pairs_dic[bin_key]
-        ctrl_coeffs = ctrl_pairs_dic[bin_key].ravel()[:b]
+        if flag_corrected:
+            coeffs = cis_pairs_dic[bin_key][:,1]
+            ctrl_coeffs = ctrl_pairs_dic[bin_key][:,1][:b]
+            ctrl_se = ctrl_pairs_dic[bin_key][:,0][:b]
+        else:
+            coeffs = cis_pairs_dic[bin_key]
+            ctrl_coeffs = ctrl_pairs_dic[bin_key].ravel()[:b]
 
         mcpval_dic[bin_key] = basic_mcpval(ctrl_coeffs, coeffs)
 
-        centered_ctrls, centered_cis = center_ctrls(ctrl_coeffs,coeffs,axis=0)
+        if flag_corrected:
+            centered_ctrls, centered_cis = center_ctrls_corrected(ctrl_coeffs,ctrl_se,coeffs,axis=0)
+        else:
+            centered_ctrls, centered_cis = center_ctrls(ctrl_coeffs,coeffs,axis=0)
         centered_ctrl_ls.append(centered_ctrls)
         centered_cis_ls.append(centered_cis)
 
