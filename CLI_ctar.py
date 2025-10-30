@@ -54,6 +54,8 @@ def main(args):
         "compute_ctar",
         "compute_cis_only",
         "compute_ctrl_only",
+        "generate_links",
+        "generate_controls",
     ]
     err_msg = "# CLI_ctar: --job=%s not supported" % JOB
     assert JOB is not None, "--job required"
@@ -63,6 +65,8 @@ def main(args):
         "compute_ctar"
         "compute_cis_only",
         "compute_ctrl_only",
+        "generate_links",
+        "generate_controls",
     ]:
         assert MULTIOME_FILE is not None, "--multiome_file required for --job=%s" % JOB
         assert TARGET_PATH is not None, "--target_path required for --job=%s" % JOB
@@ -70,10 +74,11 @@ def main(args):
     if JOB in [
         "compute_ctar"
         "compute_ctrl_only",
+        "generate_controls",
     ]:
         assert BIN_TYPE is not None, "--binning_type required for --job=%s" % JOB
 
-    if JOB in ["compute_ctrl_only"]:
+    if JOB in ["compute_ctrl_only","generate_controls"]:
         assert RESULTS_PATH is not None, "--results_path required for --job=%s" % JOB
 
     # Print input options
@@ -100,7 +105,9 @@ def main(args):
     if JOB in [
         "compute_ctar",
         "compute_cis_only",
-        "compute_ctrl_only"
+        "compute_ctrl_only",
+        "generate_links",
+        "generate_controls",
     ]:
 
         # Setting bin config
@@ -167,18 +174,18 @@ def main(args):
         if RESULTS_PATH:
             print("# Loading --results_path")
             csv_file = os.path.join(RESULTS_PATH, 'cis_links_df.csv')
-            cis_links_df = pd.read_csv(csv_file)
+            cis_links_df = pd.read_csv(csv_file, index_col=0)
 
-    if JOB in ["compute_ctrl_only"]:
+        if ARRAY_IDX:
+            ARRAY_IDX = int(ARRAY_IDX)
+
+    if JOB in ["compute_ctrl_only","generate_controls"]:
 
         print("# Loading --results_path")
         csv_file = os.path.join(RESULTS_PATH, 'cis_links_df.csv')
         if not os.path.isfile(csv_file):
             raise FileNotFoundError(f"Expected cis_links_df.csv at {csv_file}, but it was not found.")
-        cis_links_df = pd.read_csv(csv_file)
-
-        if ARRAY_IDX is not None:
-            ARRAY_IDX = int(ARRAY_IDX)
+        cis_links_df = pd.read_csv(csv_file, index_col=0)
 
 
     ###########################################################################################
@@ -258,6 +265,69 @@ def main(args):
         cis_links_df.to_csv(f'{results_folder}cis_links_df.csv')
 
 
+    if JOB == "generate_links":
+
+        print("# Running --job generate_links")
+
+        adata_rna.var = ctar.data_loader.get_gene_coords(adata_rna.var)
+        cis_links_df = ctar.data_loader.peak_to_gene(adata_atac.var, adata_rna.var, split_peaks=True)
+
+        ctrl_links_dic, atac_bins_df, rna_bins_df = ctar.method.create_ctrl_pairs(
+            adata_atac, adata_rna, atac_bins=[n_atac_mean,n_atac_gc], rna_bins=[n_rna_mean,n_rna_var],
+            atac_type=atac_type, rna_type=rna_type, b=n_ctrl,
+            atac_layer='counts', rna_layer='counts', genome_file=GENOME_FILE
+        )
+
+        cis_links_df = ctar.data_loader.combine_peak_gene_bins(cis_links_df, atac_bins_df, rna_bins_df, 
+            atac_bins=[n_atac_mean,n_atac_gc], 
+            rna_bins=[n_rna_mean,n_rna_var]
+        )
+
+        cis_links_dic, cis_idx_dic = ctar.data_loader.groupby_combined_bins(cis_links_df, 
+            combined_bin_col=f'combined_bin_{BIN_CONFIG.rsplit('.',1)[0]}', 
+            return_dic=True
+        )
+
+        results_folder = f'{TARGET_PATH}/{JOB_ID}_results/'
+        print(f'# Saving files to {results_folder}')
+        os.makedirs(results_folder, exist_ok=True)
+
+        with open(f'{results_folder}cis_idx_dic.pkl', 'wb') as f:
+            pickle.dump(cis_idx_dic, f)
+        with open(f'{results_folder}ctrl_links_dic.pkl', 'wb') as f:
+            pickle.dump(ctrl_links_dic, f)
+        cis_links_df.to_csv(f'{results_folder}cis_links_df.csv')
+
+
+    if JOB == "generate_controls":
+
+        print("# Running --job generate_controls")
+
+        ctrl_links_dic, atac_bins_df, rna_bins_df = ctar.method.create_ctrl_pairs(
+            adata_atac, adata_rna, atac_bins=[n_atac_mean,n_atac_gc], rna_bins=[n_rna_mean,n_rna_var],
+            atac_type=atac_type, rna_type=rna_type, b=n_ctrl,
+            atac_layer='counts', rna_layer='counts', genome_file=GENOME_FILE
+        )
+
+        cis_links_df = ctar.data_loader.combine_peak_gene_bins(cis_links_df, atac_bins_df, rna_bins_df, 
+            atac_bins=[n_atac_mean,n_atac_gc], 
+            rna_bins=[n_rna_mean,n_rna_var]
+        )
+
+        cis_links_dic, cis_idx_dic = ctar.data_loader.groupby_combined_bins(cis_links_df, 
+            combined_bin_col=f'combined_bin_{BIN_CONFIG.rsplit('.',1)[0]}', 
+            return_dic=True
+        )
+
+        results_folder = f'{TARGET_PATH}/{JOB_ID}_results/'
+        print(f'# Saving files to {results_folder}')
+        os.makedirs(results_folder, exist_ok=True)
+
+        with open(f'{results_folder}ctrl_links_dic.pkl', 'wb') as f:
+            pickle.dump(ctrl_links_dic, f)
+        cis_links_df.to_csv(f'{results_folder}cis_links_df.csv')
+
+
     if JOB == "compute_cis_only":
 
         print("# Running --job compute_cis_only")
@@ -278,10 +348,26 @@ def main(args):
                 rna_bins=[n_rna_mean,n_rna_var]
             )
 
+        file_suffix = ''
+
         cis_links_dic, cis_idx_dic = ctar.data_loader.groupby_combined_bins(cis_links_df, 
             combined_bin_col=f'combined_bin_{BIN_CONFIG.rsplit('.',1)[0]}', 
             return_dic=True
         )
+
+        if ARRAY_IDX is not None:
+
+            with open(f'{TARGET_PATH}/cis_links_dic.pkl', 'rb') as file:
+                cis_links_dic = pickle.load(file)
+            with open(f'{TARGET_PATH}/cis_idx_dic.pkl', 'rb') as file:
+                cis_idx_dic = pickle.load(file)
+
+            cis_links_dic = dict(sorted(cis_links_dic.items()))
+            cis_links_dic = dict(list(cis_links_dic.items())[ARRAY_IDX*BATCH_SIZE : (ARRAY_IDX+1)*BATCH_SIZE])
+            cis_idx_dic  = {key : cis_idx_dic[key]  for key in cis_links_dic.keys()}
+            print('# Running %d controls...' % (len(list(cis_links_dic.keys()))))
+
+            file_suffix = f'_{ARRAY_IDX}'
 
         rna_sparse = adata_rna.layers['counts']
         atac_sparse = adata_atac.layers['counts']
@@ -305,25 +391,22 @@ def main(args):
                     rna_sparse=rna_sparse,
                     batch_size=BATCH_SIZE,
                     scheduler="threads",
-                    flag_float32=False,
-                    tol=1e-6,
+                    flag_se=True,
                 )
         print('# Cis-links IRLS time = %0.2fs' % (time.time() - start_time))
-
-        cis_links_df = ctar.data_loader.map_dic_to_df(cis_links_df, cis_idx_dic, cis_coeff_dic, col_name='poissonb')
 
         results_folder = f'{TARGET_PATH}/{JOB_ID}_results/'
         print(f'# Saving files to {results_folder}')
         os.makedirs(results_folder, exist_ok=True)
 
-        # with open(f'{results_folder}cis_coeff_dic.pkl', 'wb') as f:
-        #     pickle.dump(cis_coeff_dic, f)
-        # with open(f'{results_folder}cis_idx_dic.pkl', 'wb') as f:
-        #     pickle.dump(cis_idx_dic, f)
-        # with open(f'{results_folder}ctrl_links_dic.pkl', 'wb') as f:
-        #     pickle.dump(ctrl_links_dic, f)
-
-        cis_links_df.to_csv(f'{results_folder}cis_links_df.csv')
+        with open(f'{results_folder}cis_coeff_dic{file_suffix}.pkl', 'wb') as f:
+            pickle.dump(cis_coeff_dic, f)
+        with open(f'{results_folder}cis_idx_dic{file_suffix}.pkl', 'wb') as f:
+            pickle.dump(cis_idx_dic, f)
+        with open(f'{results_folder}cis_links_dic{file_suffix}.pkl', 'wb') as f:
+            pickle.dump(cis_links_dic, f)
+        if not RESULTS_PATH:
+            cis_links_df.to_csv(f'{results_folder}cis_links_df.csv')
 
 
     if JOB == "compute_ctrl_only":
@@ -352,7 +435,7 @@ def main(args):
 
         else:
 
-            file_path = f'{TARGET_PATH}/ctrl_links_dic.pkl'
+            file_path = f'{RESULTS_PATH}/ctrl_links_dic.pkl'
             with open(file_path, 'rb') as file:
                 ctrl_links_dic = pickle.load(file)
             ctrl_links_dic = dict(sorted(ctrl_links_dic.items()))
@@ -384,21 +467,23 @@ def main(args):
                     rna_sparse=rna_sparse,
                     batch_size=BATCH_SIZE,
                     scheduler="threads",
-                    flag_float32=False,
-                    tol=1e-6,
+                    flag_se=True,
                 )
         print('# Control links IRLS time = %0.2fs' % (time.time() - start_time))
 
         if ARRAY_IDX is None:
 
-            cis_coeff_dic = ctar.data_loader.map_df_to_dic(cis_links_df, 
-                keys_col=f'combined_bin_{BIN_CONFIG.rsplit('.',1)[0]}',
-                values_col='poissonb')
+            # if ctrl_coeff_dic[list(ctrl_coeff_dic.keys())[0]].shape[1] > 1:
+            #     raise ValueError('Inference for non-1D values (e.g. when flag_se=True) is not yet implemented !!')
 
-            mcpval_dic, ppval_dic = ctar.method.binned_mcpval(cis_coeff_dic, ctrl_coeff_dic)
+            # cis_coeff_dic = ctar.data_loader.map_df_to_dic(cis_links_df, 
+            #     keys_col=f'combined_bin_{BIN_CONFIG.rsplit('.',1)[0]}',
+            #     values_col='poissonb')
 
-            cis_links_df = ctar.data_loader.map_dic_to_df(cis_links_df, cis_idx_dic, mcpval_dic, col_name=f'{BIN_CONFIG}_mcpval')
-            cis_links_df = ctar.data_loader.map_dic_to_df(cis_links_df, cis_idx_dic, ppval_dic, col_name=f'{BIN_CONFIG}_ppval')
+            # mcpval_dic, ppval_dic = ctar.method.binned_mcpval(cis_coeff_dic, ctrl_coeff_dic)
+
+            # cis_links_df = ctar.data_loader.map_dic_to_df(cis_links_df, cis_idx_dic, mcpval_dic, col_name=f'{BIN_CONFIG}_mcpval')
+            # cis_links_df = ctar.data_loader.map_dic_to_df(cis_links_df, cis_idx_dic, ppval_dic, col_name=f'{BIN_CONFIG}_ppval')
 
             results_folder = f'{TARGET_PATH}/{JOB_ID}_results/'
             
