@@ -573,10 +573,6 @@ def analyze_auc_midpoint_jackknife(eval_df, categorical_arr, score_col='gt_pip',
     blocks_arr = np.unique(categorical_arr)
     n_blocks = len(blocks_arr)
 
-    # Midpoint and delta arrays
-    midpoints = np.round((nlinks_arr[:-1] + nlinks_arr[1:]) / 2).astype(int)
-    deltas = np.diff(nlinks_arr)
-
     auc_vals = []
     lower_ci_vals = []
     upper_ci_vals = []
@@ -586,20 +582,28 @@ def analyze_auc_midpoint_jackknife(eval_df, categorical_arr, score_col='gt_pip',
     for method in tqdm(methods):
         pval_arr = eval_df[method].values
 
-        nan_mask = ~np.isnan(score_arr) & ~np.isnan(pval_arr)
-        if stat_method == 'enrichment':
-            stat_at_mid = np.array([
-                enrichment(score_arr[nan_mask], pval_arr[nan_mask], int(n)) for n in midpoints
-            ])
-        elif stat_method == 'odds_ratio':
-            label_arr = (eval_df['label'].values[nan_mask])
+        nan_mask = np.isfinite(score_arr) & np.isfinite(pval_arr)
+        score = score_arr[nan_mask]
+        pval = pval_arr[nan_mask]
+        cat = np.asarray(categorical_arr)[nan_mask]
+        n_rows = len(pval)
+        blocks = np.unique(cat)
 
+        nlinks_arr_eff = nlinks_arr[nlinks_arr < n_rows]
+        midpoints = np.round((nlinks_arr_eff[:-1] + nlinks_arr_eff[1:]) / 2).astype(int)
+        deltas = np.diff(nlinks_arr_eff)
+
+        if stat_method == 'enrichment':
+            stat_at_mid = np.array([enrichment(score, pval, int(n)) for n in midpoints])
+        elif stat_method == 'odds_ratio':
+            label_arr = score
             stat_at_mid = np.array([
-                odds_ratio(get_top_n_mask(pval_arr, n), label_arr)[0] for n in midpoints
+                odds_ratio(get_top_n_mask(pval, n), label_arr)[0] for n in midpoints
             ])
         else:
             raise ValueError("stat_method must be either 'enrichment' or 'odds_ratio'")
 
+        stat_at_mid[np.isinf(stat_at_mid)] = 0.0
         auc = np.sum(stat_at_mid * deltas)
         auc_vals.append(auc)
 
@@ -609,14 +613,12 @@ def analyze_auc_midpoint_jackknife(eval_df, categorical_arr, score_col='gt_pip',
         enrich_jn = np.zeros((n_blocks, len(midpoints)))
 
         for bi, block in enumerate(blocks_arr):
-            mask_block = categorical_arr != block
-            ratio_arr[bi] = len(categorical_arr) / np.sum(categorical_arr == block)
-            score_sub = score_arr[mask_block]
-            pval_sub = pval_arr[mask_block]
+            mask_block = cat != block
+            ratio_arr[bi] = len(cat) / np.sum(cat == block)
+            score_sub = score[mask_block]
+            pval_sub = pval[mask_block]
             label_sub = label_arr[mask_block] if stat_method == 'odds_ratio' else None
 
-            # remove nans
-            nan_mask = ~np.isnan(score_sub) & ~np.isnan(pval_sub)
             if len(score_sub) == 0 or len(pval_sub) == 0:
                 print(f'Excluding {method}, {block} from JN computation...')
                 enrich_jn[bi] = np.nan
@@ -633,13 +635,14 @@ def analyze_auc_midpoint_jackknife(eval_df, categorical_arr, score_col='gt_pip',
                     odds_ratio(get_top_n_mask(pval_sub, n), label_sub)[0] for n in midpoints
                 ])
 
+            stat_jn[np.isinf(stat_jn)] = 0.0
             auc_jn = np.sum(stat_jn * deltas)
-            jn_estimates[bi] = np.sum(auc_jn)
+            jn_estimates[bi] = auc_jn
 
         jn_dic[0][method] = jn_estimates
 
         # Remove NaNs before CI/stat calculation
-        valid = ~np.isnan(jn_estimates) & ~np.isnan(ratio_arr)
+        valid = np.isfinite(jn_estimates) & np.isfinite(ratio_arr)
         jn_estimates = jn_estimates[valid]
         ratio_arr = ratio_arr[valid]
 
@@ -706,58 +709,100 @@ def compute_pairwise_delta_or_with_fdr(selected_methods, bs_dic, odds_df, nlinks
         focal_method = method
         comparison_methods = [m for m in selected_methods if m != method]
 
-        delta_std_ci_df = pd.DataFrame(index=nlinks_ls, columns=comparison_methods)
-        delta_mean_ci_df = pd.DataFrame(index=nlinks_ls, columns=comparison_methods)
+        # same dataframes as original, initialized with NaN
+        delta_std_ci_df = pd.DataFrame(index=nlinks_ls, columns=comparison_methods, dtype=float)
+        delta_mean_ci_df = pd.DataFrame(index=nlinks_ls, columns=comparison_methods, dtype=float)
 
         for key in nlinks_ls:
-            for m in comparison_methods:
-                delta_or = bs_dic[key][focal_method] - bs_dic[key][m]
-                delta_std_ci_df.loc[key, m] = np.std(delta_or)
-                delta_mean_ci_df.loc[key, m] = np.mean(delta_or)
+            # if bootstrap dict doesn't have this key, leave NaNs
+            if key not in bs_dic:
+                continue
 
-        std_vals = delta_std_ci_df.values.T.astype(float)
+            for m in comparison_methods:
+                # require both methods present in bootstrap dict for this key
+                if focal_method not in bs_dic[key] or m not in bs_dic[key]:
+                    continue
+
+                # get bootstrap arrays
+                arr_f = np.asarray(bs_dic[key][focal_method], dtype=float)
+                arr_m = np.asarray(bs_dic[key][m], dtype=float)
+
+                # if shapes mismatch, try to handle by broadcasting or skip
+                if arr_f.size != arr_m.size:
+                    # try to broadcast/truncate to the min length if both are >0
+                    min_len = min(arr_f.size, arr_m.size)
+                    if min_len == 0:
+                        # can't compute difference
+                        continue
+                    arr_f = arr_f[:min_len]
+                    arr_m = arr_m[:min_len]
+
+                delta_or = arr_f - arr_m
+                # compute mean/std robustly (ignore NaNs)
+                delta_mean = np.nanmean(delta_or)
+                delta_std = np.nanstd(delta_or, ddof=0)
+
+                delta_mean_ci_df.loc[key, m] = delta_mean
+                delta_std_ci_df.loc[key, m] = delta_std
+
+        # convert to numpy arrays
+        # std_vals and mean_vals shaped (n_comparisons x n_nlinks) to match your original code
+        std_vals = delta_std_ci_df.values.T.astype(float)   # shape (len(comparison_methods), len(nlinks_ls))
         mean_vals = delta_mean_ci_df.values.T.astype(float)
 
-        # Compute uncorrected p-values using z-test
-        z = mean_vals / std_vals
-        pvals = 2 * (1 - sp.stats.norm.cdf(np.abs(z)))
+        # compute z and p-values safely: only where std is finite and > 0
+        z = np.full_like(mean_vals, np.nan, dtype=float)
+        pvals = np.full_like(mean_vals, np.nan, dtype=float)
+        valid_mask = np.isfinite(mean_vals) & np.isfinite(std_vals) & (std_vals > 0)
+        if np.any(valid_mask):
+            z[valid_mask] = mean_vals[valid_mask] / std_vals[valid_mask]
+            # two-sided p-values
+            pvals[valid_mask] = 2 * (1 - sp.stats.norm.cdf(np.abs(z[valid_mask])))
 
-        # Store raw p-values and metadata
+        # Collect p-values and meta info in the same iteration order as your original code
         for i, m in enumerate(comparison_methods):
             for j, key in enumerate(nlinks_ls):
                 all_pvals.append(pvals[i, j])
                 meta_info.append((focal_method, key, m))
 
-        # Store for visualization or further processing
-        delta_or = (
-            odds_df.loc[nlinks_ls, focal_method].values.reshape(-1, 1) -
-            odds_df.loc[nlinks_ls, comparison_methods].values
-        )
+        # Build delta_or array from odds_df just like your original code, but mask invalid entries
+        try:
+            delta_or = (
+                odds_df.loc[nlinks_ls, focal_method].values.reshape(-1, 1) -
+                odds_df.loc[nlinks_ls, comparison_methods].values
+            )  # shape (len(nlinks_ls), len(comparison_methods))
+        except Exception:
+            # if odds_df lookup fails, build NaN array of correct shape
+            delta_or = np.full((len(nlinks_ls), len(comparison_methods)), np.nan, dtype=float)
+
+        # mask delta_or values where we don't have valid bootstrap-based mean (i.e., delta_mean_ci_df is NaN)
+        mask_missing = delta_mean_ci_df.isna().values  # shape (len(nlinks_ls), len(comparison_methods))
+        # delta_or is shape (nlinks, ncomparisons) whereas mask_missing is (nlinks, ncomparisons) - same orientation
+        delta_or = delta_or.astype(float)
+        delta_or[mask_missing] = np.nan
+
         all_delta_or_data[focal_method] = delta_or
+
+        # all_yerr uses std_vals transposed in your original code path; keep same orientation
+        # std_vals currently shape (n_comp, n_nlinks) — multiply by 1.96 and keep that
         all_yerr[focal_method] = std_vals * 1.96
 
-    # Global FDR correction
-    all_pvals_arr = np.array(all_pvals)
-    pvals_corrected_all = np.array(all_pvals)
+    # Global FDR correction across all valid p-values
+    all_pvals_arr = np.array(all_pvals, dtype=float)
+    pvals_corrected_all = np.full_like(all_pvals_arr, np.nan, dtype=float)
     valid_mask = ~np.isnan(all_pvals_arr)
 
     if valid_mask.sum() > 0:
-        rej, pvals_corrected, _, _ = multipletests(
-            all_pvals_arr[~np.isnan(all_pvals_arr)],
-            alpha=0.05,
-            method='fdr_bh'
-        )
-        pvals_corrected_all[~np.isnan(all_pvals_arr)] = pvals_corrected
-
+        rej, pvals_corrected, _, _ = multipletests(all_pvals_arr[valid_mask], alpha=0.05, method='fdr_bh')
+        pvals_corrected_all[valid_mask] = pvals_corrected
     else:
-        # no valid tests, just fill with NaNs
-        pvals_corrected_all = np.full_like(all_pvals_arr, np.nan, dtype=float)
+        # no valid tests -> pvals_corrected_all already NaN
+        pass
 
-    # Lookup dictionary for corrected p-values
-    corrected_pval_lookup = {
-        (focal, key, comp): (raw, corr)
-        for (focal, key, comp), raw, corr in zip(meta_info, all_pvals, pvals_corrected_all)
-    }
+    # Build lookup dictionary mapping (focal, key, comp) -> (raw_pval, corrected_pval)
+    corrected_pval_lookup = {}
+    for (meta, raw, corr) in zip(meta_info, all_pvals_arr.tolist(), pvals_corrected_all.tolist()):
+        corrected_pval_lookup[meta] = (raw, corr)
 
     return corrected_pval_lookup, all_delta_or_data, all_yerr
 
@@ -1002,6 +1047,157 @@ def compute_pairwise_delta_or_with_fdr_bins(
     }
 
     return corrected_pval_lookup, all_delta_or_data, all_yerr
+
+
+def analyze_delta_enrichment_auc_jackknife(eval_df, categorical_arr, bin_arr,
+                                             score_col='gt_pip', methods=None,
+                                             nlinks_ls=None):
+    """
+    Compute enrichment AUC via midpoint rule using jackknife confidence intervals,
+    and also compute per-bin contributions (leave-one-bin-out) with jackknife SEs.
+    
+    Parameters
+    ----------
+    eval_df : pd.DataFrame
+        DataFrame with p-value columns and a score column.
+    categorical_arr : np.array
+        Jackknife blocking array (e.g., chromosomes).
+    bin_arr : np.array
+        Bin labels (same length as eval_df), e.g. '1.1.1.1'.
+    score_col : str
+        Name of the score column to use for enrichment ranking.
+    nlinks_ls : list of int
+        List of N link cutoffs (e.g. [500, 1000, ...]).
+    
+    Returns
+    ----------
+    auc_df, lower_ci_df, upper_ci_df, std_ci_df, jn_dic, bin_contribs_df
+        - auc_df etc. are method-level AUCs and jackknife CIs
+        - bin_contribs_df: DataFrame with columns [bin, method, contribution, se]
+    """
+    if nlinks_ls is None:
+        nlinks_ls = [500, 1000, 1500, 2000, 2500]
+    nlinks_arr = np.sort(np.array(nlinks_ls))
+
+    if methods is None:
+        methods = [s for s in eval_df.columns if 'pval' in s]
+
+    score_arr = eval_df[score_col].values
+    blocks_arr = np.unique(categorical_arr)
+    n_blocks = len(blocks_arr)
+
+    # Midpoint and delta arrays
+    midpoints = (nlinks_arr[:-1] + nlinks_arr[1:]) / 2
+    deltas = np.diff(nlinks_arr)
+
+    auc_vals = []
+    lower_ci_vals = []
+    upper_ci_vals = []
+    std_ci_vals = []
+    jn_dic = {0:{}}
+
+    # To collect bin-level results
+    bin_contribs_mean = {method:{} for method in methods}
+    bin_contribs_jn   = {method:{b:[] for b in np.unique(bin_arr)} for method in methods}
+
+    # Helper
+    def compute_auc(scores, pvals):
+        nan_mask = ~np.isnan(scores) & ~np.isnan(pvals)
+        if nan_mask.sum() == 0:
+            return np.nan
+        enrich_at_mid = np.array([
+            ctar.simu.enrichment(scores[nan_mask], pvals[nan_mask], int(n)) for n in midpoints
+        ])
+        return np.sum(enrich_at_mid * deltas)
+
+    for method in tqdm(methods):
+        pval_arr = eval_df[method].values
+
+        auc = compute_auc(score_arr, pval_arr)
+        auc_vals.append(auc)
+
+        for b in np.unique(bin_arr):
+            mask = (bin_arr != b)
+            auc_sub = compute_auc(score_arr[mask], pval_arr[mask])
+            if np.isnan(auc_sub):
+                contrib = np.nan
+            else:
+                contrib = auc - auc_sub
+            bin_contribs_mean[method][b] = contrib
+
+        jn_estimates = np.zeros(n_blocks)
+        ratio_arr = np.zeros(n_blocks)
+
+        for bi, block in enumerate(blocks_arr):
+            mask_block = categorical_arr != block
+            score_sub = score_arr[mask_block]
+            pval_sub = pval_arr[mask_block]
+            ratio_arr[bi] = len(categorical_arr) / np.sum(categorical_arr == block)
+
+            auc_block = compute_auc(score_sub, pval_sub)
+            if np.isnan(auc_block):
+                jn_estimates[bi] = np.nan
+                ratio_arr[bi] = np.nan
+                continue
+            jn_estimates[bi] = auc_block
+
+            for b in np.unique(bin_arr):
+                mask_bin = (bin_arr != b) & mask_block
+                auc_block_bin = compute_auc(score_arr[mask_bin], pval_arr[mask_bin])
+                if np.isnan(auc_block_bin):
+                    continue
+                contrib_block = auc_block - auc_block_bin
+                bin_contribs_jn[method][b].append(contrib_block)
+
+        jn_dic[0][method] = jn_estimates
+
+        # Remove NaNs before CI/stat calculation
+        valid = ~np.isnan(jn_estimates) & ~np.isnan(ratio_arr)
+        jn_estimates = jn_estimates[valid]
+        ratio_arr = ratio_arr[valid]
+
+        if len(jn_estimates) == 0:
+            lower_ci_vals.append(np.nan)
+            upper_ci_vals.append(np.nan)
+            std_ci_vals.append(np.nan)
+            continue
+
+        # CI and Std
+        lower, upper = np.percentile(jn_estimates, [2.5, 97.5])
+        mean_jn = np.sum(auc - jn_estimates) + np.sum((1/ratio_arr) * jn_estimates)
+        tau = ratio_arr * auc - (ratio_arr - 1) * jn_estimates
+        std = np.sqrt((1 / n_blocks) * np.sum((tau - mean_jn)**2 / (ratio_arr - 1)))
+
+        lower_ci_vals.append(lower)
+        upper_ci_vals.append(upper)
+        std_ci_vals.append(std)
+
+    index = [0]
+    auc_df = pd.DataFrame([auc_vals], columns=methods, index=index)
+    lower_ci_df = pd.DataFrame([lower_ci_vals], columns=methods, index=index)
+    upper_ci_df = pd.DataFrame([upper_ci_vals], columns=methods, index=index)
+    std_ci_df = pd.DataFrame([std_ci_vals], columns=methods, index=index)
+
+    for df in [auc_df, lower_ci_df, upper_ci_df, std_ci_df]:
+        df.index.name = 'nlinks'
+
+    records = []
+    for method in methods:
+        for b, contrib_mean in bin_contribs_mean[method].items():
+            contrib_reps = np.array(bin_contribs_jn[method][b])
+            if len(contrib_reps) > 1:
+                se = np.std(contrib_reps, ddof=1) * np.sqrt(len(contrib_reps)-1)
+            else:
+                se = np.nan
+            records.append({
+                'bin': b,
+                'method': method,
+                'contribution': contrib_mean,
+                'se': se
+            })
+    bin_contribs_df = pd.DataFrame(records)
+
+    return auc_df, lower_ci_df, upper_ci_df, std_ci_df, jn_dic, bin_contribs_df
 
 
 class ZeroInflatedPoisson:
