@@ -70,7 +70,9 @@ def odds_ratio(y_arr, label_arr, return_table=False, smoothed=False, epsilon=1e-
 
     stat, pval = sp.stats.fisher_exact(table)
     
-    if ( np.isnan(stat)) and smoothed: # np.isinf(stat) or
+    if ( np.isnan(stat)) and smoothed:
+
+        # haldane-anscombe correction
 
         tp_s = tp + epsilon
         fp_s = fp + epsilon
@@ -181,6 +183,33 @@ def test_overlap(list1, list2, list_background):
         return pvalue, oddsratio, or_ub, or_lb
 
 
+def adaptive_nlinks(label_arr, N_points=20, k_min_tp=5, n_cap=None):
+    """ 
+    Adaptively determine top N links such that we have at least k positives at our first evaluation
+    point. Returns range in linear + loglinear space.
+    """
+
+    N = len(label_arr)
+    p = np.mean(label_arr)
+    if p == 0:
+        return np.array([])  # nothing to do, no positives
+    n_min = max(1, int(np.ceil(k_min_tp / p)))  # ensure we expect at least k positives
+    n_max = N - 1
+
+    if n_cap is not None:
+        n_max = min(n_max, n_cap)
+    if n_min >= n_max:
+        return np.array([min(n_min, n_max)])
+
+    # hybrid: near n_min linear small steps, then logspace to n_max
+    small_linear = np.arange(n_min, min(n_min + 10, n_max + 1))
+    log_spaced = np.unique(np.round(np.logspace(np.log10(max(n_min, 10)), np.log10(n_max), N_points)).astype(int))
+    nlinks = np.unique(np.concatenate([small_linear, log_spaced]))
+    nlinks = nlinks[(nlinks > 0) & (nlinks <= n_max)]
+    
+    return np.sort(nlinks)
+
+
 def analyze_odds_ratio_bootstrap(eval_df, nlinks_ls=None, methods=None, n_bs_samples=1000):
     """
     Perform odds ratio analysis with bootstrap confidence intervals
@@ -200,6 +229,9 @@ def analyze_odds_ratio_bootstrap(eval_df, nlinks_ls=None, methods=None, n_bs_sam
     odds_df, pval_df, lower_ci_df, upper_ci_df, std_ci_df, bs_dic: pd.DataFrame
       DataFrames containing the computed statistics indexed by `nlinks_ls`
       and columns as methods.
+
+    TODO:
+    - flag_adaptive_nlinks option
     """
 
     if nlinks_ls is None:
@@ -296,6 +328,9 @@ def analyze_odds_ratio_jacknife(eval_df, categorical_arr, methods=None, nlinks_l
     odds_df, pval_df, lower_ci_df, upper_ci_df, std_ci_df, jn_dic: pd.DataFrame
       DataFrames containing the computed statistics indexed by `nlinks_arr`
       and columns as methods.
+
+    TODO:
+    - flag_adaptive_nlinks option
     """
 
     if nlinks_ls is None:
@@ -390,6 +425,9 @@ def analyze_enrichment_bootstrap(eval_df, score_col='gt_pip', nlinks_ls=None, me
     odds_df, lower_ci_df, upper_ci_df, std_ci_df, bs_dic: pd.DataFrame
       DataFrames containing the computed statistics indexed by `nlinks_ls`
       and columns as methods.
+
+    TODO:
+    - flag_adaptive_nlinks option
     """
 
     if nlinks_ls is None:
@@ -468,6 +506,9 @@ def analyze_enrichment_jacknife(eval_df, categorical_arr, score_col='gt_pip', me
     odds_df, lower_ci_df, upper_ci_df, std_ci_df, jn_dic: pd.DataFrame
       DataFrames containing the computed statistics indexed by `nlinks_arr`
       and columns as methods.
+
+    TODO:
+    - flag_adaptive_nlinks option
     """
 
     if nlinks_ls is None:
