@@ -392,6 +392,8 @@ def multiprocess_poisson_irls_multivar(
     ----------
     links_dict : dict
         Dictionary mapping bin names to link arrays (n_links, 2)
+        ATAC [x] should be in position [:,0]
+        RNA [y] should be in position [:,1]
     atac_sparse : scipy.sparse matrix
         ATAC-seq sparse matrix (cells x peaks)
     rna_sparse : scipy.sparse matrix
