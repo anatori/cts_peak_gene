@@ -6,6 +6,13 @@ import statsmodels.api as sm
 from statsmodels.discrete.discrete_model import NegativeBinomial
 from statsmodels.stats.multitest import multipletests
 from tqdm import tqdm
+from sklearn import metrics
+import os
+import warnings
+from typing import Optional, Tuple, Dict, Any
+import pybedtools
+import seaborn as sns
+from ctar.data_loader import get_gene_coords
 
 
 def null_peak_gene_pairs(rna, atac):
@@ -58,7 +65,7 @@ def null_peak_gene_pairs(rna, atac):
     return null_pairs
 
 
-def odds_ratio(y_arr, label_arr, return_table=False, smoothed=False, epsilon=1e-6):
+def odds_ratio(y_arr, label_arr, return_table=False, smoothed=False, epsilon=1e-6, fn_cap=None):
 
     # (tp * tn) / (fp * fn)
     
@@ -70,15 +77,16 @@ def odds_ratio(y_arr, label_arr, return_table=False, smoothed=False, epsilon=1e-
 
     stat, pval = sp.stats.fisher_exact(table)
     
-    if ( np.isnan(stat)) and smoothed:
-
+    if smoothed:
         # haldane-anscombe correction
-
         tp_s = tp + epsilon
         fp_s = fp + epsilon
         fn_s = fn + epsilon
         tn_s = tn + epsilon
         stat = (tp_s * tn_s) / (fp_s * fn_s)
+
+    if fn_cap and (fn < fn_cap):
+        stat = np.nan
 
     if return_table:
         return table, stat, pval
@@ -86,7 +94,7 @@ def odds_ratio(y_arr, label_arr, return_table=False, smoothed=False, epsilon=1e-
     return stat, pval
 
 
-def enrichment(scores, pvals, top_n, smoothed=False, epsilon=1e-6):
+def enrichment(scores, pvals, top_n, treat_missing='exclude', smoothed=False, epsilon=1e-6):
 
     ''' ( sum(scores of top nlinks) / top nlinks ) / ( sum(scores of all links) / all links )
 
@@ -98,6 +106,9 @@ def enrichment(scores, pvals, top_n, smoothed=False, epsilon=1e-6):
         Array of p-values from method.
     top_n : int
         Number of top smallest p-values to consider true.
+    treat_missing :  str
+        'exclude' (default) -> compute numerator/denominator only on observed scores;
+        'zero' -> treat missing scores as 0.
 
     Returns
     -------
@@ -105,11 +116,39 @@ def enrichment(scores, pvals, top_n, smoothed=False, epsilon=1e-6):
     
     '''
     
-    numerator = np.argsort(pvals)
-    numerator = np.sum(scores[numerator][:top_n]) / top_n
-    denominator = np.sum(scores) / len(scores)
+    if top_n <= 0:
+        return np.nan
 
-    return numerator / denominator
+    sorted_idx = np.argsort(pvals)
+    take_n = min(int(top_n), len(pvals))
+    top_idx = sorted_idx[:take_n]
+
+    if treat_missing == 'zero':
+        scores_filled = np.where(np.isfinite(scores), scores, 0.0)
+        # numerator averaged over exactly top_n slots (missing => 0)
+        numerator = np.nanmean(scores_filled[top_idx]) if take_n > 0 else np.nan
+        denominator = np.nanmean(scores_filled) if scores_filled.size > 0 else np.nan
+        if not np.isfinite(denominator) or denominator == 0:
+            return np.nan
+        return numerator / denominator
+
+    # else 'exclude' behaviour: compute using observed (finite) scores only
+    observed_mask = np.isfinite(scores)
+    obs_idx = np.nonzero(observed_mask)[0]
+    if obs_idx.size == 0:
+        return np.nan
+
+    # restrict top indices to observed rows
+    top_obs_idx = [i for i in top_idx if observed_mask[i]]
+    if len(top_obs_idx) == 0:
+        # no observed rows among top_n -> no signal in top
+        return 0.0
+
+    mean_top = float(np.nanmean(scores[top_obs_idx]))
+    mean_all = float(np.nanmean(scores[obs_idx]))
+    if not np.isfinite(mean_all) or mean_all == 0:
+        return np.nan
+    return mean_top / mean_all
 
 
 def contingency(link_list_sig, link_list_all, link_list_true):
@@ -147,8 +186,610 @@ def contingency(link_list_sig, link_list_all, link_list_true):
         link_list_all,
     )
     return enrich, pvalue, oddsratio, or_ub, or_lb
+
+
+def auprc_enrichment(y_true, y_scores):
+    """Enrichment with based on label.
+    
+    Parameters
+    ----------
+    y_true: np.array, bool
+        Array of true labels.
+    y_scores : np.array
+        Array of scores.
+
+    Returns
+    -------
+    auprc, recall, enrichment
+    """
+
+    y_true = np.asarray(y_true)
+    y_scores = np.asarray(y_scores)
+    n_links = len(y_true)
+    n_relevant = int(np.sum(y_true))
+    if n_links == 0 or n_relevant == 0:
+        return np.nan, None, None
+    precision, recall, _ = metrics.precision_recall_curve(y_true, y_scores, pos_label=1)
+    enrichment = precision * (n_links / n_relevant)
+    try:
+        auprc = metrics.auc(recall, enrichment)
+    except Exception:
+        auprc = np.nan
+    return auprc, recall, enrichment
+
+
+def stratified_bootstrap_auprc(y_true, y_scores, n_boot=1000, seed=0):
+    ''' Bootstrap AUPRC that resamples positives & negatives separately.
+    '''
+    rng = np.random.default_rng(seed)
+    pos_idx = np.where(y_true==1)[0]
+    neg_idx = np.where(y_true==0)[0]
+    n_pos, n_neg = len(pos_idx), len(neg_idx)
+    boot_vals = []
+    for _ in range(n_boot):
+        pos_sample = rng.choice(pos_idx, size=n_pos, replace=True) if n_pos>0 else np.array([],dtype=int)
+        neg_sample = rng.choice(neg_idx, size=n_neg, replace=True) if n_neg>0 else np.array([],dtype=int)
+        idx = np.concatenate([pos_sample, neg_sample])
+        yb = y_true[idx]; sb = y_scores[idx]
+        if yb.sum()==0 or yb.sum()==len(yb):
+            continue
+        val, _, _ = auprc_enrichment(yb, sb)
+        if np.isfinite(val):
+            boot_vals.append(val)
+    return np.array(boot_vals)
+
+
+def pgb_enrichment_recall(df, col, min_recall, max_recall, ascending=True, 
+                          gold_col='label', full_info=False, extrapolate=False):
+    '''Adapted from Dorans et al. NG 2025.
+    
+    Supports both binary labels (0/1) and continuous scores (0.0-1.0) in gold_col.
+    For continuous scores:  a value of 0.5 contributes 0.5 to cumulative gold. 
+    
+    CHANGES from original:
+    - Added total_gold and total_length calculation before filtering (handles NaN)
+    - Modified "linked" calculation to check . notna() in addition to > 0
+    - Modified "gold_cum" to only count gold items that are linked
+    - Fixed recall calculation to use total_gold instead of tmp["gold_cum"].max()
+    - Fixed enrich_denom to use total_gold/total_length instead of max/len of filtered
+    - Modified unscored identification to check .notna() & (col > 0)
+    - Fixed extrapolation:  new_enrichment uses (i+1) instead of i
+    '''
+    tmp = df[[col, gold_col]].copy()
+    
+    # CHANGED: Store totals from original df BEFORE filtering (to handle NaN correctly)
+    # Works with continuous gold_col values (sums the total "gold mass")
+    total_gold = tmp[gold_col].sum()
+    total_length = len(tmp)
+    
+    tmp = tmp.sort_values(by=col, ascending=ascending).reset_index(drop=True)
+    
+    # CHANGED: Check .notna() in addition to > 0
+    tmp["linked"] = 1 * (tmp[col]. notna() & (tmp[col] > 0))
+    tmp["linked_cum"] = tmp["linked"].cumsum()
+    
+    # CHANGED: Only count gold in linked items (multiply by "linked" mask)
+    # For continuous scores:  this accumulates the weighted "gold mass"
+    tmp["gold_cum"] = (tmp[gold_col] * tmp["linked"]).cumsum()
+    
+    # CHANGED: Use total_gold instead of tmp["gold_cum"].max()
+    # Recall = fraction of total "gold mass" recovered
+    tmp["recall"] = tmp["gold_cum"] / total_gold
+    
+    # CHANGED: Use total_gold / total_length instead of tmp["gold_cum"].max() / len(tmp)
+    # Enrichment denom = average "gold density" across all items
+    enrich_denom = total_gold / total_length
+    tmp["enrichment"] = (tmp["gold_cum"]. divide(tmp["linked_cum"])) / enrich_denom
+    
+    # CHANGED:  Identify unscored as NaN or <= 0 using .notna() check
+    unscored = tmp[~(tmp[col].notna() & (tmp[col] > 0))].reset_index(drop=True)
+    tmp = tmp[tmp[col].notna() & (tmp[col] > 0)][["recall", "enrichment"]]
+    
+    if extrapolate and len(unscored) > 0 and unscored[gold_col].sum() > 0:
+        last_point = tmp.iloc[-1]
+        last_recall, last_enrichment = last_point["recall"], last_point["enrichment"]
+        
+        # Remaining "gold mass" in unscored items
+        num_new_points = int(unscored[gold_col].sum())
+        recall_increment = (1 - last_recall) / num_new_points
+        enrichment_increment = (last_enrichment - 1) / num_new_points
+        new_recall = [last_recall + (recall_increment * (i + 1)) for i in range(num_new_points)]
+        
+        # CHANGED: Use (i + 1) instead of i for consistency with new_recall
+        new_enrichment = [last_enrichment - (enrichment_increment * (i + 1)) for i in range(num_new_points)]
+        
+        extrapolated_er = pd. DataFrame({"recall": new_recall, "enrichment": new_enrichment})
+        tmp = pd.concat([tmp, extrapolated_er], ignore_index=True)
+    
+    tmp = tmp[(tmp["recall"] <= max_recall) & (tmp["recall"] >= min_recall)]
+    
+    if full_info:
+        return tmp. drop_duplicates(subset=["recall"], keep="first")
+    else:
+        return tmp[["recall", "enrichment"]].drop_duplicates(subset=["recall"], keep="first")
     
 
+def pgb_auerc(df, col, min_recall = 0.0, max_recall = 1.0, ascending = True, gold_col='label', extrapolate = False, weighted = False):
+    ''' Adapted from Dorans et al. NG 2025.
+    '''
+    er = pgb_enrichment_recall(df, col, min_recall, max_recall, ascending = ascending, extrapolate = extrapolate, gold_col=gold_col)
+    if weighted == True:
+        return np.average(er["enrichment"], weights = 1 - er["recall"])
+    else:
+        return np.average(er["enrichment"])
+
+
+def boostrap_pgb_auerc(df, col, ci, n_bs = 1000, **auerc_kwargs):
+    estimate = pgb_auerc(df, col, **auerc_kwargs)
+    boots = np.empty(n_bs)
+    N = len(df)
+    for i in range(n_bs):
+        idx = np.random.randint(0, N, size=N)
+        sample = df.iloc[idx].reset_index(drop=True)
+        boots[i] = pgb_auerc(sample, col, **auerc_kwargs)
+    alpha = 1.0 - ci
+    lower = np.quantile(boots, alpha / 2.0)
+    upper = np.quantile(boots, 1.0 - alpha / 2.0)
+    out = {"estimate": estimate, "ci_lower": lower, "ci_upper": upper, "bootstraps": boots}
+    return out
+
+
+def compute_bootstrap_table(all_df, methods,
+                            gold_col = "label",
+                            reference_method = 'CTAR',
+                            n_bootstrap = 1000, ci = 0.95,
+                            fillna = True,
+                            **auerc_kwargs):
+    """
+    Compute bootstrap AUERC results for a list of methods present in all_df.
+    all_df is expected to contain rows for all methods, and column name that identifies the method.
+    We assume these are p-values so smaller == better.
+
+    Returns a DataFrame with columns:
+      method, estimate (auerc), ci_lower, ci_upper, n_bootstrap
+    Additionally, if reference_method is provided and present, a p_value column is computed
+    testing whether difference (ref - method) > 0 using bootstrap samples (two-sided).
+    """
+    rows = []
+    for method in tqdm(methods):
+        all_df[method] = all_df[method].clip(1e-100)
+        if fillna:
+            all_df[method] = all_df[method].fillna(1.0)
+        res = boostrap_pgb_auerc(all_df, method, ci,
+                                n_bs=n_bootstrap,
+                                **auerc_kwargs
+        )
+        rows.append({
+            "method": method,
+            "estimate": res["estimate"],
+            "ci_lower": res["ci_lower"],
+            "ci_upper": res["ci_upper"],
+            "n_bootstrap": n_bootstrap,
+            "bootstraps": res["bootstraps"]
+        })
+    res_df = pd.DataFrame(rows)
+
+    # p-values comparing to reference method: two-sided bootstrap test on difference
+    if reference_method is not None:
+        if reference_method not in res_df["method"].values:
+            warnings.warn(f"reference_method {reference_method} not present - skipping p-values")
+        else:
+            ref_row = res_df.loc[res_df["method"] == reference_method].iloc[0]
+            ref_boot = ref_row["bootstraps"]
+            for idx, row in res_df.iterrows():
+                boots = row["bootstraps"]
+                if boots.size == 0 or ref_boot.size == 0:
+                    pval = np.nan
+                else:
+                    # align bootstrap sample sizes; if equal n_bootstrap we can subtract elementwise
+                    nmin = min(len(boots), len(ref_boot))
+                    diffs = ref_boot[:nmin] - boots[:nmin]
+                    # two-sided p-value: fraction of diffs >=0 and <=0; compute empirical two-sided
+                    p_lower = np.mean(diffs <= 0)
+                    p_upper = np.mean(diffs >= 0)
+                    pval = 2.0 * min(p_lower, p_upper)
+                    pval = min(1.0, max(0.0, pval))
+                res_df.at[idx, "p_value"] = pval
+
+    # drop bootstraps (they can be large)
+    res_df_out = res_df.drop(columns=["bootstraps"])
+    return res_df_out
+
+
+def scent_enrichment_setup(annotations_df,
+    genomes_file,
+    causal_variants_bed,
+    ):
+    ''' Setup dataframes for scent_enrichment.
+    Parameters
+    ----------
+    genomes_file : BED file path containing common SNPs in hg38. Must be tab delimited.
+    causal_variants_bed : pybedtools object containing causal variants (PIP < 0.2 in SCENT paper).
+
+    Returns
+    -------
+    causal_var_in_annot, common_var_in_annot, annotations_df, genomes_df, windows_df
+
+    '''
+
+    # create annotations bed
+    annotations_df[['peak','gene']] = annotations_df.reset_index()['index'].str.split(';',expand=True).values
+    annotations_df[['chr','start','end']] = annotations_df.peak.str.split(':|-',expand=True).values
+    annotations_df[['start','end']] = annotations_df[['start','end']].astype(int)
+    annotations_df = annotations_df.reset_index(names='idx')
+    annotations_df.index = annotations_df['idx']
+    annotations_bed = pybedtools.BedTool.from_dataframe(annotations_df[['chr','start','end','idx']])
+    
+    # load common snps
+    genomes_df = pd.read_csv(genomes_file,header=None, sep='\t')
+    genomes_df.columns = ['CHROM','START','END','rsid']
+    common_variants_bed = pybedtools.BedTool.from_dataframe(genomes_df)
+    
+    # precompute common variants in annotations
+    common_var_in_annot = common_variants_bed.intersect(annotations_bed, wa=True, wb=True)
+    common_var_in_annot = common_var_in_annot.to_dataframe(names=['CHROM', 'POS', 'POS2', 'RSID', 'CHROM_ANN', 'START_ANN', 'END_ANN', 'GENE_ANN'])
+    common_var_in_annot[['PEAK_ANN','GENE_ANN']] = common_var_in_annot['GENE_ANN'].str.split(';',expand=True).values
+    
+    windows_df = get_gene_coords(annotations_df,gene_col='gene',gene_id_type='ensembl_gene_id')
+    windows_df.dropna(subset=['chr', 'start', 'end'],inplace=True)
+    windows_df['CIS_START'] = windows_df['start'].astype(int) - 500000
+    windows_df['CIS_START'] = windows_df['CIS_START'].clip(lower=0)  # Ensure CIS_START is not negative
+    windows_df['CIS_END'] = windows_df['end'].astype(int) + 500000
+    windowsdf_bed = pybedtools.BedTool.from_dataframe(
+        windows_df[['chr', 'CIS_START', 'CIS_END', 'gene']]
+    )
+    
+    # precompute causal variants in annotations
+    causal_var_in_annot = causal_variants_bed.intersect(annotations_bed, wa=True, wb=True)
+    causal_var_in_annot = causal_var_in_annot.to_dataframe(names=['CHROM', 'POS', 'POS2', 'PROB', 'CHROM_ANN', 'START_ANN', 'END_ANN', 'GENE_ANN'])
+    causal_var_in_annot[['eQTL','eQTL_GENE','eQTL_PROB','eQTL_TISSUE']] = causal_var_in_annot['PROB'].str.split(';',expand=True).values
+    causal_var_in_annot['eQTL_PROB'] = causal_var_in_annot['eQTL_PROB'].astype(float)
+    causal_var_in_annot.index = causal_var_in_annot['GENE_ANN']
+    causal_var_in_annot.index.name = ''
+    causal_var_in_annot[['PEAK_ANN','GENE_ANN']] = causal_var_in_annot['GENE_ANN'].str.split(';',expand=True).values
+    
+    return causal_var_in_annot, common_var_in_annot, annotations_df, genomes_df, windows_df
+
+
+def scent_enrichment(causal_var_in_annot,
+                    common_var_in_annot,
+                    annotations_df,
+                    ref_df,
+                    genomes_df,
+                    windows_df,
+                    method,
+                    threshold,
+                    flag_debug=False,
+    ):
+    """
+    Vectorized replacement for the per-gene loop.
+
+    Parameters
+    ----------
+    causal_var_in_annot: DataFrame with columns ['eQTL_GENE','GENE_ANN','eQTL_PROB', method, ...]
+    common_var_in_annot: DataFrame with column 'GENE_ANN' (1000G variant in annotation peaks)
+    ref_df: DataFrame with column 'GENE' and 'Probability'
+    genomes_df: DataFrame with columns ['CHROM','START','END'] for common variants (hg38)
+    windows_df: DataFrame with columns ['gene', 'chr', 'CIS_START', 'CIS_END']
+                  (chr should include 'chr' prefix to match genomes_df['CHROM'])
+    method: column name in causal_var_in_annot to threshold (smaller is better if you use '< threshold' as in your loop)
+    threshold: threshold applied as causal_var_in_annot[method] < threshold
+
+    Returns
+    -------
+    overall_enrichment: scalar (mean over included genes)
+    per_gene_enrichment: pandas Series indexed by gene name for included genes (same ordering as original logic)
+    """
+    # gene universe (match original: intersection of annotations and reference genes)
+    genes_eQTL = ref_df['GENE'].astype(str).unique()
+    genes_ANN  = annotations_df['gene'].astype(str).unique()
+    genes = np.intersect1d(genes_eQTL, genes_ANN) # sorted unique
+
+    # precompute pip totals by eQTL_GENE (pip_causal_var_genei)
+    pip_total = ref_df.groupby('GENE')['Probability'].sum()
+    # reindex to full gene list (missing -> 0)
+    pip_total_arr = pip_total.reindex(genes).fillna(0.0).to_numpy(dtype=float)
+
+    if isinstance(threshold, int) and threshold >= 1:
+        # treat smaller values as better (like p-values). Select rows with smallest `method` values.
+        scores = causal_var_in_annot[method].to_numpy()
+        # put NaNs at the end by replacing with +inf so they are not selected
+        scores_clean = np.where(np.isfinite(scores), scores, np.inf)
+        # argsort and take top-N indices
+        order = np.argsort(scores_clean)
+        top_n = threshold
+        if top_n >= len(scores_clean):
+            selected_idx = order  # all
+        else:
+            selected_idx = order[:top_n]
+        mask_method = np.zeros(len(causal_var_in_annot), dtype=bool)
+        mask_method[selected_idx] = True
+    else:
+        # original numeric threshold behavior: select rows with method value < threshold
+        mask_method = causal_var_in_annot[method] < threshold
+
+    # precompute pip in annotated peaks where the method condition holds AND GENE matches (eQTL_GENE == GENE_ANN)
+    mask_same = causal_var_in_annot['eQTL_GENE'].astype(str) == causal_var_in_annot['GENE_ANN'].astype(str)
+    df_linked = causal_var_in_annot.loc[mask_method & mask_same]
+    pip_in_annot = df_linked.groupby('eQTL_GENE')['eQTL_PROB'].sum()
+    pip_in_annot_arr = pip_in_annot.reindex(genes).fillna(0.0).to_numpy(dtype=float)
+
+    # precompute num_common_var_in_annot_genei from common_var_in_annot grouped by GENE_ANN
+    num_common_annot = common_var_in_annot.groupby('GENE_ANN').size()
+    num_common_annot_arr = num_common_annot.reindex(genes).fillna(0).to_numpy(dtype=int)
+
+    # compute num_common_var_in_cis_genei efficiently per-chromosome using numpy.searchsorted
+    genomes = genomes_df.copy()
+    # assume genomes['START'] is int; if not, convert
+    genomes['START'] = genomes['START'].astype(int)
+    # group genomes by CHROM and build sorted arrays of STARTs
+    genomes_grouped = {chrom: arr['START'].to_numpy(dtype=int) for chrom, arr in genomes.groupby('CHROM')}
+    for chrom in genomes_grouped:
+        genomes_grouped[chrom] = np.sort(genomes_grouped[chrom])
+
+    # arrange windows by chrom and compute counts vectorized per-chrom
+    # create arrays aligned with genes
+    gene_to_index = {g: i for i, g in enumerate(genes)}
+    num_common_cis_arr = np.zeros(len(genes), dtype=int)
+    # filter windows_df to only genes present in our gene list
+    w = windows_df[windows_df['gene'].astype(str).isin(genes)].copy()
+    # standardize 'chr' column name
+    if 'chr' in w.columns:
+        chrom_col = 'chr'
+    elif 'CHROM' in w.columns:
+        chrom_col = 'CHROM'
+    else:
+        raise KeyError("windows_df must contain a 'chr' or 'CHROM' column")
+
+    # ensure same 'chr' formatting: convert to string and keep 'chr' prefix if present in genome
+    w[chrom_col] = w[chrom_col].astype(str)
+
+    # group by chromosome and do vectorized searchsorted per chrom
+    for chrom, grp in w.groupby(chrom_col):
+        starts = genomes_grouped.get(chrom)
+        if starts is None or starts.size == 0:
+            # zero counts for all genes on this chrom
+            for idx, row in grp.iterrows():
+                gi = gene_to_index[str(row['gene'])]
+                num_common_cis_arr[gi] = 0
+            continue
+        # vector of window starts/ends for this chrom
+        cis_starts = grp['CIS_START'].to_numpy(dtype=int)
+        cis_ends   = grp['CIS_END'].to_numpy(dtype=int)
+        # searchsorted supports vectorized inputs
+        left_idx  = np.searchsorted(starts, cis_starts, side='left')
+        right_idx = np.searchsorted(starts, cis_ends, side='right')
+        counts = (right_idx - left_idx).astype(int)
+        # assign to array based on genes in this group
+        for gene_name, cnt in zip(grp['gene'].astype(str).tolist(), counts.tolist()):
+            gi = gene_to_index[gene_name]
+            num_common_cis_arr[gi] = int(cnt)
+
+    # vectorized logic implementing the same control flow as the loop:
+    # - if pip_total == 0 -> enrichment = 0 (include)
+    # - elif num_common_annot == 0 -> enrichment = 0 (include)
+    # - elif num_common_cis == 0 -> skip (do not include)
+    # - else compute enrichment = (pip_in_annot / num_common_annot) / (pip_total / num_common_cis)
+
+    pip_total = pip_total_arr
+    pip_annot = pip_in_annot_arr
+    n_common_annot = num_common_annot_arr
+    n_common_cis = num_common_cis_arr
+
+    G = len(genes)
+    enrichment_vals = np.empty(G, dtype=float)
+    included_mask = np.zeros(G, dtype=bool)
+
+    # case A: pip_total == 0 -> 0 and include
+    mask_pip0 = (pip_total == 0.0)
+    enrichment_vals[mask_pip0] = 0.0
+    included_mask[mask_pip0] = True
+
+    # case B: pip_total > 0 -> consider further
+    mask_remaining = ~mask_pip0
+
+    # case B1: n_common_annot == 0 => enrichment 0 and include
+    mask_annot0 = mask_remaining & (n_common_annot == 0)
+    enrichment_vals[mask_annot0] = 0.0
+    included_mask[mask_annot0] = True
+
+    # case C: have both pip_total>0 and n_common_annot>0 => potential compute
+    mask_to_compute = mask_remaining & (n_common_annot > 0)
+
+    # from these, those with n_common_cis == 0 are skipped
+    mask_cis0 = mask_to_compute & (n_common_cis == 0)
+    # do nothing for mask_cis0 (excluded)
+
+    # final compute mask: pip_total>0 & n_common_annot>0 & n_common_cis>0
+    mask_compute_final = mask_to_compute & (n_common_cis > 0)
+
+    if np.any(mask_compute_final):
+        numer = pip_annot[mask_compute_final] / n_common_annot[mask_compute_final].astype(float)
+        denom = pip_total[mask_compute_final] / n_common_cis[mask_compute_final].astype(float)
+        if flag_debug:
+            print('pip_annot',pip_annot[mask_compute_final])
+            print('n_common_annot',n_common_annot[mask_compute_final].astype(float))
+            print('pip_total',pip_total[mask_compute_final])
+            print('n_common_cis',n_common_cis[mask_compute_final].astype(float))
+            print('')
+            print('numer',numer)
+            print('denom',denom)
+        # guard against zero denom (shouldn't happen because n_common_cis >0 and pip_total>0)
+        with np.errstate(divide='ignore', invalid='ignore'):
+            enr = numer / denom
+        # where denom==0 or nan set enr to np.nan (but the original code wouldn't hit denom==0)
+        enr = np.where(np.isfinite(enr), enr, np.nan)
+        enrichment_vals[mask_compute_final] = enr
+        included_mask[mask_compute_final] = True
+
+    # now compute the final list exactly like original: include entries for genes with included_mask True
+    included_enrichments = enrichment_vals[included_mask]
+
+    # overall enrichment: mean of included values
+    overall_enrichment = float(np.nanmean(included_enrichments)) if included_enrichments.size > 0 else float('nan')
+
+    # build a pd.Series of per-gene enrichment for included genes (to inspect)
+    included_genes = genes[included_mask]
+    per_gene_series = pd.Series(included_enrichments, index=included_genes)
+
+    return overall_enrichment, per_gene_series
+
+
+def scent_enrichment_toplinks(causal_var_in_annot,
+                              common_var_in_annot,
+                              annotations_df,
+                              ref_df,
+                              genomes_df,
+                              windows_df,
+                              method_col,
+                              prefixes=None,
+                              top_n_mode=True,
+                              flag_debug=False):
+    """
+    Compute scent-style enrichment for many top-k prefixes efficiently.
+
+    - causal_var_in_annot: DataFrame with rows corresponding to candidate links and columns:
+      eQTL_GENE, GENE_ANN, eQTL_PROB, and method_col (score small=better).
+      It should be the same DF you used to compute annotations; we only use rows where
+      eQTL_GENE == GENE_ANN (candidates that can contribute).
+    - prefixes: iterable of ints (k values for top-k). If None and top_n_mode True,
+      we will use k = 1..n_scored (all prefixes).
+
+    Returns:
+      DataFrame with columns ['k','enrichment'] for each prefix in input order.
+    """
+
+    genes_eQTL = ref_df['GENE'].astype(str).unique()
+    genes_ANN  = annotations_df['gene'].astype(str).unique()
+    genes = np.intersect1d(genes_eQTL, genes_ANN)
+    G = len(genes)
+    gene_to_idx = {g: i for i, g in enumerate(genes)}
+
+    pip_total_ser = ref_df.groupby('GENE')['Probability'].sum()
+    pip_total = pip_total_ser.reindex(genes).fillna(0).to_numpy(dtype=float)
+
+    n_common_annot_ser = common_var_in_annot.groupby('GENE_ANN').size()
+    n_common_annot = n_common_annot_ser.reindex(genes).fillna(0).to_numpy(dtype=int)
+
+    # compute n_common_cis with per-chromosome searchsorted
+    genomes_local = genomes_df.copy()
+    genomes_local['START'] = genomes_local['START'].astype(int)
+    genomes_grouped = {chrom: arr['START'].to_numpy(dtype=int) for chrom, arr in genomes_local.groupby('CHROM')}
+    for chrom in genomes_grouped:
+        genomes_grouped[chrom].sort()
+
+    w = windows_df[windows_df['gene'].astype(str).isin(genes)].copy()
+    if 'chr' in w.columns:
+        chrom_col = 'chr'
+    elif 'CHROM' in w.columns:
+        chrom_col = 'CHROM'
+    else:
+        raise KeyError("windows_df must contain a 'chr' or 'CHROM' column")
+    w[chrom_col] = w[chrom_col].astype(str)
+
+    n_common_cis = np.zeros(G, dtype=int)
+    for chrom, grp in w.groupby(chrom_col):
+        starts = genomes_grouped.get(chrom)
+        if starts is None or starts.size == 0:
+            for _, row in grp.iterrows():
+                n_common_cis[gene_to_idx[str(row['gene'])]] = 0
+            continue
+        cis_starts = grp['CIS_START'].to_numpy(dtype=int)
+        cis_ends   = grp['CIS_END'].to_numpy(dtype=int)
+        left_idx  = np.searchsorted(starts, cis_starts, side='left')
+        right_idx = np.searchsorted(starts, cis_ends, side='right')
+        counts = (right_idx - left_idx).astype(int)
+        for gene_name, cnt in zip(grp['gene'].astype(str).tolist(), counts.tolist()):
+            n_common_cis[gene_to_idx[gene_name]] = int(cnt)
+
+    # candidate rows that can contribute to numerator (same-gene)
+    same_mask = causal_var_in_annot['eQTL_GENE'].astype(str).to_numpy() == causal_var_in_annot['GENE_ANN'].astype(str).to_numpy()
+    cv = causal_var_in_annot.loc[same_mask].reset_index(drop=True)
+    if cv.shape[0] == 0:
+        # nothing to do
+        return pd.DataFrame(columns=['k','enrichment'])
+
+    # prepare ordered rows by score (ascending: smaller is better)
+    scores = cv[method_col].to_numpy()
+    scores_clean = np.where(np.isfinite(scores), scores, np.inf)
+    order = np.argsort(scores_clean)  # ascending
+
+    probs = cv['eQTL_PROB'].to_numpy(dtype=float)
+    gene_ids = cv['eQTL_GENE'].astype(str).to_numpy()
+    gene_idx = np.array([gene_to_idx[g] for g in gene_ids], dtype=int)
+
+    # default prefixes: top-1..top-N
+    n_rows = len(scores_clean)
+    if prefixes is None and top_n_mode:
+        prefixes = np.arange(1, n_rows+1, dtype=int)
+    else:
+        prefixes = np.asarray(prefixes, dtype=int)
+
+    # sanity: restrict prefixes to [1, n_rows]
+    prefixes = prefixes[(prefixes >= 1) & (prefixes <= n_rows)]
+    if prefixes.size == 0:
+        return pd.DataFrame(columns=['k','enrichment'])
+
+    # Decide method: dense matrix (fast) or bincount loop (memory conservative)
+    N = n_rows
+    K = prefixes.size
+
+    if flag_debug:
+        print(f"genes G={G}, rows N={N}, prefixes K={K}")
+
+    # Build dense (G x N) array, fill per-position probabilities, cumsum across axis=1
+    A = np.zeros((G, N), dtype=np.float64)
+    # fill: for each position i, gene = gene_idx[i], A[gene, i] = probs[i]
+    A[gene_idx, np.arange(N)] = probs # vectorized fancy-indexing fill
+    A_cum = A.cumsum(axis=1) # shape (G, N): pip_in_annot per gene for top-(i+1)
+    # extract columns for requested prefixes (prefix k -> column k-1)
+    cols = prefixes - 1
+    pip_in_annot_per_prefix = A_cum[:, cols] # shape (G, K)
+
+    # compute enrichment per prefix vectorized:
+    # For each prefix j we have numerator vector = pip_in_annot_per_prefix[:, j]
+    # Denominator per gene = (pip_total / n_common_cis) (precomputed), numerator per gene must be divided by n_common_annot.
+    denom_annot = n_common_annot.astype(float)
+    denom_cis = n_common_cis.astype(float)
+    pip_total_arr = pip_total.astype(float)
+
+    # precompute denominator per gene where valid
+    denom_per_gene = np.full(G, np.nan, dtype=float)
+    mask_valid_denom = (denom_cis > 0) & (pip_total_arr >= 0)
+    denom_per_gene[mask_valid_denom] = pip_total_arr[mask_valid_denom] / denom_cis[mask_valid_denom]
+
+    # prepare output list
+    out_rows = []
+    for j, k in enumerate(prefixes):
+        numer = pip_in_annot_per_prefix[:, j]
+        # compute numerator per gene = numer / n_common_annot (or 0 where n_common_annot==0)
+        numer_div = np.zeros_like(numer)
+        nz_annot = denom_annot > 0
+        numer_div[nz_annot] = numer[nz_annot] / denom_annot[nz_annot].astype(float)
+
+        # compute enrichment per gene:
+        enr = np.full(G, np.nan, dtype=float)
+        # case A pip_total==0 -> enrichment 0 include
+        mask_pip0 = (pip_total_arr == 0.0)
+        enr[mask_pip0] = 0.0
+        # case B pip_total>0 & n_common_annot==0 -> 0 include
+        mask_annot0 = (~mask_pip0) & (denom_annot == 0)
+        enr[mask_annot0] = 0.0
+        # compute for valid denom_per_gene
+        mask_compute = (~mask_pip0) & (denom_annot > 0) & (denom_cis > 0)
+        # avoid division by zero
+        with np.errstate(divide='ignore', invalid='ignore'):
+            block = numer_div[mask_compute] / denom_per_gene[mask_compute]
+        enr[mask_compute] = np.where(np.isfinite(block), block, np.nan)
+        # included genes are those in mask_pip0 | mask_annot0 | mask_compute
+        included = mask_pip0 | mask_annot0 | mask_compute
+        included_vals = enr[included]
+        overall = float(np.nanmean(included_vals)) if included_vals.size > 0 else float('nan')
+        out_rows.append({'k': int(k), 'enrichment': overall})
+
+    return pd.DataFrame(out_rows).sort_values('k').reset_index(drop=True)
+
+    
 def test_overlap(list1, list2, list_background):
     """
     Test overlap of two gene sets using Fisher's exact test
@@ -183,30 +824,52 @@ def test_overlap(list1, list2, list_background):
         return pvalue, oddsratio, or_ub, or_lb
 
 
-def adaptive_nlinks(label_arr, N_points=20, k_min_tp=5, n_cap=None):
-    """ 
-    Adaptively determine top N links such that we have at least k positives at our first evaluation
-    point. Returns range in linear + loglinear space.
+def adaptive_nlinks(label_arr, N_points=20, k_min_tp=5, n_lower=None, n_upper=None):
     """
+    Adaptively determine top N links such that we have at least k positives at our first evaluation
+    point.
 
-    N = len(label_arr)
-    p = np.mean(label_arr)
-    if p == 0:
-        return np.array([])  # nothing to do, no positives
+    Interpretation:
+    - A value is counted as a positive only if (value == True).
+    - NaNs and False are treated as non-positives for the numerator.
+    - The denominator N is the full length of label_arr (so NaNs are counted in N).
+    - Returns a sorted array of nlink sizes (integers). Returns empty array if there are no positives.
+    """
+    arr = np.asarray(label_arr, dtype=object)  # preserve NaNs and booleans uniformly
+    N = arr.size
+    if N == 0:
+        return np.array([])
+
+    # Count strict True values as positives. Everything else (False / None / np.nan / other) -> non-positive.
+    # Use equality to True which is robust for object/boolean arrays.
+    mask_true = (arr == True)
+    positives = int(np.sum(mask_true))
+
+    # p = positives / total N (NaNs contribute to denominator)
+    if positives == 0:
+        return np.array([])
+
+    p = positives / float(N)
+
+    # compute n_min / n_max same as before but using p and total N
     n_min = max(1, int(np.ceil(k_min_tp / p)))  # ensure we expect at least k positives
     n_max = N - 1
 
-    if n_cap is not None:
-        n_max = min(n_max, n_cap)
+    if n_lower is not None:
+        if n_lower == 'pos': n_lower = positives
+        n_min = min(n_min, n_lower)
+    if n_upper is not None:
+        n_max = min(n_max, n_upper)
     if n_min >= n_max:
         return np.array([min(n_min, n_max)])
 
     # hybrid: near n_min linear small steps, then logspace to n_max
     small_linear = np.arange(n_min, min(n_min + 10, n_max + 1))
-    log_spaced = np.unique(np.round(np.logspace(np.log10(max(n_min, 10)), np.log10(n_max), N_points)).astype(int))
+    start = max(n_min, 10)
+    log_spaced = np.unique(np.round(np.logspace(np.log10(start), np.log10(n_max), N_points)).astype(int))
     nlinks = np.unique(np.concatenate([small_linear, log_spaced]))
     nlinks = nlinks[(nlinks > 0) & (nlinks <= n_max)]
-    
+
     return np.sort(nlinks)
 
 
@@ -260,12 +923,13 @@ def analyze_odds_ratio_bootstrap(eval_df, nlinks_ls=None, methods=None, n_bs_sam
     for mi, method in enumerate(tqdm(methods)):
         pval_arr_col = eval_df[method].values
         sorted_idx = np.argsort(pval_arr_col)
+        notna_mask = pd.notna(label_arr) & np.isfinite(pval_arr_col)
 
         for ni, nlinks in enumerate(nlinks_ls):
             y_score = np.zeros(len(eval_df), dtype=bool)
             y_score[sorted_idx[:nlinks]] = True
 
-            stat, pval = odds_ratio(y_score, label_arr)
+            stat, pval = odds_ratio(y_score[notna_mask], label_arr[notna_mask])
             odds_arr[ni, mi] = stat
             pval_arr[ni, mi] = pval
 
@@ -305,7 +969,7 @@ def split_by_chromosome(df,col='peak',sep=':'):
     return df[col].str.split(sep).str[0].astype('category').values
 
 
-def analyze_odds_ratio_jacknife(eval_df, categorical_arr, methods=None, nlinks_ls=None):
+def analyze_odds_ratio_jacknife(eval_df, categorical_arr, label='label', methods=None, nlinks_ls=None, flag_print=False, **odds_ratio_kwargs):
     """
     Perform odds ratio analysis with jacknife confidence intervals by
     chromosome blocks for multiple p-value methods in a DataFrame.
@@ -317,9 +981,11 @@ def analyze_odds_ratio_jacknife(eval_df, categorical_arr, methods=None, nlinks_l
     Parameters
     ----------
     eval_df: pd.DataFrame
-      DataFrame containing 'label' column and p-value columns.
+      DataFrame containing label and p-value columns.
     categorical_arr : np.array
       Array of values corresponding to category to split on for jacknifing (e.g. loci blocks)
+    label : str
+      Column name containing ground truth labels.
     nlinks_ls: list of int, optional
       List of numbers of links to consider. Default: [500, 1000, 1500, 2000, 2500]
 
@@ -354,7 +1020,7 @@ def analyze_odds_ratio_jacknife(eval_df, categorical_arr, methods=None, nlinks_l
     upper_ci_arr = np.full(results_shape, np.nan)
     std_ci_arr = np.full(results_shape, np.nan)
 
-    label_arr = eval_df['label'].values
+    label_arr = eval_df[label].values
 
     for mi, method in enumerate(tqdm(methods)):
         pval_arr_col = eval_df[method].values
@@ -364,7 +1030,12 @@ def analyze_odds_ratio_jacknife(eval_df, categorical_arr, methods=None, nlinks_l
             y_score = np.zeros(len(eval_df), dtype=bool)
             y_score[sorted_idx[:nlinks]] = True
 
-            odds_arr[ni, mi], pval_arr[ni, mi] = odds_ratio(y_score, label_arr)
+            tbl, odds_arr[ni, mi], pval_arr[ni, mi] = odds_ratio(y_score, label_arr, 
+                return_table=True,
+                **odds_ratio_kwargs
+                )
+            if flag_print:
+                print(tbl)
 
             if method in limit_dic and nlinks < limit_dic[method]:
                 odds_arr[ni, mi] = np.nan
@@ -485,7 +1156,7 @@ def analyze_enrichment_bootstrap(eval_df, score_col='gt_pip', nlinks_ls=None, me
     return enrich_df, lower_ci_df, upper_ci_df, std_ci_df, bs_dic
 
 
-def analyze_enrichment_jacknife(eval_df, categorical_arr, score_col='gt_pip', methods=None, nlinks_ls=None):
+def analyze_enrichment_jacknife(eval_df, categorical_arr, score_col='gt_pip', methods=None, nlinks_ls=None, n_cap=None, treat_missing='exclude'):
     """
     Perform enrichment analysis with jacknife confidence intervals by
     chromosome blocks for multiple p-value methods in a DataFrame.
@@ -513,54 +1184,136 @@ def analyze_enrichment_jacknife(eval_df, categorical_arr, score_col='gt_pip', me
 
     if nlinks_ls is None:
         nlinks_ls = [500, 1000, 1500, 2000, 2500]
-    nlinks_arr = np.sort(np.array(nlinks_ls))
+    nlinks_arr = np.sort(np.array(nlinks_ls)).astype(int)
 
     if methods is None:
         methods = [s for s in eval_df.columns if 'pval' in s]
 
+    # limit dic preserved for 'mc' methods as in previous code
     limit_dic = {
         method: (eval_df[method] == eval_df[method].min()).sum()
         for method in methods if 'mc' in method
     }
 
     jn_dic = {n: {m: [] for m in methods} for n in nlinks_arr}
-
     results_shape = (len(nlinks_arr), len(methods))
     enrich_arr = np.full(results_shape, np.nan)
     lower_ci_arr = np.full(results_shape, np.nan)
     upper_ci_arr = np.full(results_shape, np.nan)
     std_ci_arr = np.full(results_shape, np.nan)
 
-    score_arr = eval_df[score_col].values
+    score_arr_full = eval_df[score_col].values
+    observed_mask_full = np.isfinite(score_arr_full)
+    total_observed = int(np.sum(observed_mask_full))
+
+    # optionally cap nlinks to observed rows to avoid instability
+    if n_cap is None and total_observed > 0:
+        # keep nlinks strictly less than total_observed (so leave at least one observed positive out)
+        n_cap_eff = total_observed - 1
+    else:
+        n_cap_eff = n_cap
+
+    if n_cap_eff is not None:
+        nlinks_arr = nlinks_arr[nlinks_arr <= int(n_cap_eff)]
+
+    blocks_arr = np.unique(categorical_arr)
+    per_block_observed = {block: int(np.sum((categorical_arr == block) & observed_mask_full)) for block in blocks_arr}
 
     for mi, method in enumerate(tqdm(methods)):
         pval_arr_col = eval_df[method].values
+        sorted_idx = np.argsort(pval_arr_col)  # NaNs to end
 
         for ni, nlinks in enumerate(nlinks_arr):
+            # build top-n mask on full data
+            take_n = min(nlinks, len(eval_df))
+            y_score = np.zeros(len(eval_df), dtype=bool)
+            y_score[sorted_idx[:take_n]] = True
 
-            enrich_arr[ni, mi] = enrichment(score_arr, pval_arr_col, nlinks)
+            # compute enrichment on observed only (or treat_missing='zero')
+            if treat_missing == 'zero':
+                enrich_arr[ni, mi] = enrichment(score_arr_full, pval_arr_col, nlinks, treat_missing='zero')
+            else:
+                obs_idx = np.nonzero(observed_mask_full)[0]
+                if obs_idx.size == 0:
+                    enrich_arr[ni, mi] = np.nan
+                else:
+                    top_obs = np.in1d(np.argsort(pval_arr_col)[:take_n], obs_idx)
+                    # reuse function logic on observed rows: compute means on observed subset
+                    top_idx = np.argsort(pval_arr_col)[:take_n]
+                    top_obs_idx = [i for i in top_idx if observed_mask_full[i]]
+                    if len(top_obs_idx) == 0:
+                        enrich_arr[ni, mi] = 0.0
+                    else:
+                        mean_top = float(np.nanmean(score_arr_full[top_obs_idx]))
+                        mean_all = float(np.nanmean(score_arr_full[obs_idx]))
+                        enrich_arr[ni, mi] = (mean_top / mean_all) if (mean_all not in [0, np.nan]) else np.nan
 
             if method in limit_dic and nlinks < limit_dic[method]:
                 enrich_arr[ni, mi] = np.nan
                 continue
 
-            blocks_arr = np.unique(categorical_arr)
+            # jackknife
             n_blocks = len(blocks_arr)
-            ratio_arr = np.zeros(n_blocks)
-            jn_stats = np.zeros(n_blocks)
+            ratio_arr = np.full(n_blocks, np.nan)
+            jn_stats = np.full(n_blocks, np.nan)
 
-            for bi,block in enumerate(blocks_arr):
-                ind = np.argwhere(categorical_arr != block).flatten()
-                jn_stats[bi] = enrichment(score_arr[ind], pval_arr_col[ind], nlinks)
-                ratio_arr[bi] = len(categorical_arr) / sum(categorical_arr == block)
-            
-            tau = ratio_arr * enrich_arr[ni,mi] - (ratio_arr - 1) * jn_stats
-            jn_estimates = np.sum(enrich_arr[ni,mi] - jn_stats) + np.sum((1/ratio_arr) * jn_stats)
+            for bi, block in enumerate(blocks_arr):
+                m_i = per_block_observed.get(block, 0)
+                if m_i == 0:
+                    ratio_arr[bi] = np.nan
+                    jn_stats[bi] = np.nan
+                    continue
 
-            jn_dic[nlinks][method] = jn_stats
-            lower_ci_arr[ni, mi], upper_ci_arr[ni, mi] = np.percentile(jn_stats, [2.5, 97.5])
-            std_ci_arr[ni, mi] = (1/n_blocks) * np.sum((tau - jn_estimates)**2 / (ratio_arr - 1))
-            std_ci_arr[ni, mi] = np.sqrt(std_ci_arr[ni, mi])
+                # keep observed rows not in this block
+                keep_mask = (categorical_arr != block) & observed_mask_full
+                ind = np.nonzero(keep_mask)[0]
+                if ind.size == 0:
+                    ratio_arr[bi] = np.nan
+                    jn_stats[bi] = np.nan
+                    continue
+
+                # top-n mask on full but restricted to observed & excluding block
+                take_n_local = min(nlinks, len(eval_df))
+                top_full_idx = np.argsort(pval_arr_col)[:take_n_local]
+                top_ind_mask = np.in1d(top_full_idx, ind)
+                top_ind_idx = top_full_idx[top_ind_mask]
+
+                if treat_missing == 'zero':
+                    # consider missing as zeros; but ind already excludes non-observed
+                    jn_stats[bi] = enrichment(score_arr_full[ind], pval_arr_col[ind], len(top_ind_idx), treat_missing='zero')
+                else:
+                    if len(top_ind_idx) == 0:
+                        jn_stats[bi] = 0.0
+                    else:
+                        mean_top_jn = float(np.nanmean(score_arr_full[top_ind_idx]))
+                        mean_all_jn = float(np.nanmean(score_arr_full[ind]))
+                        jn_stats[bi] = (mean_top_jn / mean_all_jn) if (mean_all_jn not in [0, np.nan]) else np.nan
+
+                ratio_arr[bi] = total_observed / float(m_i)
+
+            jn_dic[nlinks][method] = jn_stats.copy()
+
+            valid_mask = np.isfinite(ratio_arr) & np.isfinite(jn_stats)
+            if valid_mask.sum() == 0:
+                lower_ci_arr[ni, mi] = np.nan
+                upper_ci_arr[ni, mi] = np.nan
+                std_ci_arr[ni, mi] = np.nan
+                continue
+
+            r_valid = ratio_arr[valid_mask]
+            jn_valid = jn_stats[valid_mask]
+            try:
+                lower_ci_arr[ni, mi], upper_ci_arr[ni, mi] = np.percentile(jn_valid, [2.5, 97.5])
+            except Exception:
+                lower_ci_arr[ni, mi], upper_ci_arr[ni, mi] = np.nan, np.nan
+
+            tau = r_valid * enrich_arr[ni, mi] - (r_valid - 1) * jn_valid
+            jn_estimates = np.sum(enrich_arr[ni, mi] - jn_valid) + np.sum((1.0 / r_valid) * jn_valid)
+            try:
+                std_val = (1.0 / valid_mask.sum()) * np.sum((tau - jn_estimates) ** 2 / (r_valid - 1.0))
+                std_ci_arr[ni, mi] = np.sqrt(std_val) if std_val >= 0 else np.nan
+            except Exception:
+                std_ci_arr[ni, mi] = np.nan
 
     enrich_df = pd.DataFrame(enrich_arr, index=nlinks_arr, columns=methods)
     lower_ci_df = pd.DataFrame(lower_ci_arr, index=nlinks_arr, columns=methods)
@@ -574,14 +1327,16 @@ def analyze_enrichment_jacknife(eval_df, categorical_arr, score_col='gt_pip', me
 
 
 def get_top_n_mask(pvals, n):
-    """Return a boolean mask for the top n smallest p-values."""
-    idx = np.argsort(pvals)[:n]
+    """Return a boolean mask for the top n smallest p-values (on full array)."""
+    pvals = np.asarray(pvals)
+    take_n = min(int(n), len(pvals))
+    idx = np.argsort(pvals)[:take_n]
     mask = np.zeros(len(pvals), dtype=bool)
     mask[idx] = True
     return mask
 
 
-def analyze_auc_midpoint_jackknife(eval_df, categorical_arr, score_col='gt_pip', methods=None, nlinks_ls=None, stat_method='enrichment'):
+def analyze_auc_midpoint_jackknife(eval_df, categorical_arr, score_col='gt_pip', methods=None, nlinks_ls=None, stat_method='enrichment', label_col=None, n_cap=None):
     """
     Compute enrichment AUC via midpoint rule using jackknife confidence intervals.
     
@@ -603,101 +1358,165 @@ def analyze_auc_midpoint_jackknife(eval_df, categorical_arr, score_col='gt_pip',
     auc_df, lower_ci_df, upper_ci_df, std_ci_df, jn_dic : pd.DataFrame, ...
         AUCs and jackknife CIs, all indexed by method.
     """
+
     if nlinks_ls is None:
         nlinks_ls = [500, 1000, 1500, 2000, 2500]
-    nlinks_arr = np.sort(np.array(nlinks_ls))
+    nlinks_arr = np.sort(np.array(nlinks_ls)).astype(int)
 
     if methods is None:
         methods = [s for s in eval_df.columns if 'pval' in s]
 
-    score_arr = eval_df[score_col].values
+    score_arr_full = eval_df[score_col].values
+    observed_mask_full = np.isfinite(score_arr_full)
+    total_observed = int(np.sum(observed_mask_full))
+
+    # optionally cap nlinks to observed rows to avoid FN->0 instability
+    if n_cap is None and total_observed > 0:
+        n_cap_eff = total_observed - 1
+    else:
+        n_cap_eff = n_cap
+
+    if n_cap_eff is not None:
+        nlinks_arr = nlinks_arr[nlinks_arr <= int(n_cap_eff)]
+
     blocks_arr = np.unique(categorical_arr)
+    per_block_observed = {block: int(np.sum((categorical_arr == block) & observed_mask_full)) for block in blocks_arr}
     n_blocks = len(blocks_arr)
 
     auc_vals = []
     lower_ci_vals = []
     upper_ci_vals = []
     std_ci_vals = []
-    jn_dic = {0:{}}
+    jn_dic = {0: {}}
 
     for method in tqdm(methods):
         pval_arr = eval_df[method].values
+        sorted_idx_full = np.argsort(pval_arr)
 
-        nan_mask = np.isfinite(score_arr) & np.isfinite(pval_arr)
-        score = score_arr[nan_mask]
-        pval = pval_arr[nan_mask]
-        cat = np.asarray(categorical_arr)[nan_mask]
-        n_rows = len(pval)
-        blocks = np.unique(cat)
+        # ensure at least two nlinks to get midpoints
+        nlinks_arr_eff = nlinks_arr[nlinks_arr < len(eval_df)]
+        if nlinks_arr_eff.size < 2:
+            auc_vals.append(np.nan)
+            lower_ci_vals.append(np.nan)
+            upper_ci_vals.append(np.nan)
+            std_ci_vals.append(np.nan)
+            jn_dic[0][method] = np.full(n_blocks, np.nan)
+            continue
 
-        nlinks_arr_eff = nlinks_arr[nlinks_arr < n_rows]
         midpoints = np.round((nlinks_arr_eff[:-1] + nlinks_arr_eff[1:]) / 2).astype(int)
         deltas = np.diff(nlinks_arr_eff)
 
-        if stat_method == 'enrichment':
-            stat_at_mid = np.array([enrichment(score, pval, int(n)) for n in midpoints])
-        elif stat_method == 'odds_ratio':
-            label_arr = score
-            stat_at_mid = np.array([
-                odds_ratio(get_top_n_mask(pval, n), label_arr)[0] for n in midpoints
-            ])
-        else:
-            raise ValueError("stat_method must be either 'enrichment' or 'odds_ratio'")
+        # compute stat at midpoints (stat computed on observed subset)
+        stat_at_mid = []
+        for n in midpoints:
+            top_mask = np.zeros(len(eval_df), dtype=bool)
+            take_n = min(n, len(eval_df))
+            top_mask[sorted_idx_full[:take_n]] = True
 
+            obs_idx = np.nonzero(observed_mask_full)[0]
+            top_obs = top_mask[obs_idx]
+            score_obs = score_arr_full[obs_idx]
+
+            if stat_method == 'enrichment':
+                if top_obs.sum() == 0 or score_obs.size == 0:
+                    stat_at_mid.append(0.0)
+                else:
+                    mean_top = float(np.nanmean(score_obs[top_obs]))
+                    mean_all = float(np.nanmean(score_obs))
+                    stat_at_mid.append((mean_top / mean_all) if (mean_all not in [0, np.nan]) else np.nan)
+
+            elif stat_method == 'odds_ratio':
+                if label_col is None:
+                    raise ValueError("When stat_method=='odds_ratio' you must pass label_col with binary ground truth.")
+                label_arr_full = eval_df[label_col].values
+                label_obs_full = label_arr_full[obs_idx]
+                if np.sum(label_obs_full == True) == 0:
+                    stat_at_mid.append(np.nan)
+                else:
+                    y_obs = top_obs
+                    or_val, _ = odds_ratio(y_obs, label_obs_full)
+                    stat_at_mid.append(or_val)
+            else:
+                raise ValueError("stat_method must be 'enrichment' or 'odds_ratio'")
+
+        stat_at_mid = np.array(stat_at_mid, dtype=float)
         stat_at_mid[np.isinf(stat_at_mid)] = 0.0
         auc = np.sum(stat_at_mid * deltas)
         auc_vals.append(auc)
 
-        # Jackknife
+        # jackknife
         jn_estimates = np.zeros(n_blocks)
         ratio_arr = np.zeros(n_blocks)
-        enrich_jn = np.zeros((n_blocks, len(midpoints)))
 
         for bi, block in enumerate(blocks_arr):
-            mask_block = cat != block
-            ratio_arr[bi] = len(cat) / np.sum(cat == block)
-            score_sub = score[mask_block]
-            pval_sub = pval[mask_block]
-            label_sub = label_arr[mask_block] if stat_method == 'odds_ratio' else None
-
-            if len(score_sub) == 0 or len(pval_sub) == 0:
-                print(f'Excluding {method}, {block} from JN computation...')
-                enrich_jn[bi] = np.nan
+            m_i = per_block_observed.get(block, 0)
+            if m_i == 0:
                 jn_estimates[bi] = np.nan
                 ratio_arr[bi] = np.nan
                 continue
 
-            if stat_method == 'enrichment':
-                stat_jn = np.array([
-                    enrichment(score_sub, pval_sub, int(n)) for n in midpoints
-                ])
-            elif stat_method == 'odds_ratio':
-                stat_jn = np.array([
-                    odds_ratio(get_top_n_mask(pval_sub, n), label_sub)[0] for n in midpoints
-                ])
+            # remove block: keep observed rows not in this block
+            keep_mask = (categorical_arr != block) & observed_mask_full
+            ind = np.nonzero(keep_mask)[0]
 
+            score_jn = score_arr_full[ind]
+            pval_jn = pval_arr[ind]
+
+            if len(score_jn) == 0 or len(pval_jn) == 0:
+                jn_estimates[bi] = np.nan
+                ratio_arr[bi] = np.nan
+                continue
+
+            sorted_idx_jn = np.argsort(pval_jn)
+            stat_jn = []
+            for n in midpoints:
+                take_n_jn = min(n, len(pval_jn))
+                top_mask_jn = np.zeros(len(pval_jn), dtype=bool)
+                top_mask_jn[sorted_idx_jn[:take_n_jn]] = True
+
+                if stat_method == 'enrichment':
+                    if top_mask_jn.sum() == 0:
+                        stat_jn.append(0.0)
+                    else:
+                        mean_top_jn = float(np.nanmean(score_jn[top_mask_jn]))
+                        mean_all_jn = float(np.nanmean(score_jn))
+                        stat_jn.append((mean_top_jn / mean_all_jn) if (mean_all_jn not in [0, np.nan]) else np.nan)
+                else:  # odds_ratio
+                    label_jn = eval_df[label_col].values[ind]
+                    if np.sum(label_jn == True) == 0:
+                        stat_jn.append(np.nan)
+                    else:
+                        or_jn, _ = odds_ratio(top_mask_jn, label_jn)
+                        stat_jn.append(or_jn)
+
+            stat_jn = np.array(stat_jn, dtype=float)
             stat_jn[np.isinf(stat_jn)] = 0.0
-            auc_jn = np.sum(stat_jn * deltas)
+            auc_jn = np.sum(stat_jn * deltas[:len(stat_jn)])
             jn_estimates[bi] = auc_jn
+            ratio_arr[bi] = total_observed / float(m_i)
 
-        jn_dic[0][method] = jn_estimates
+        jn_dic[0][method] = jn_estimates.copy()
 
-        # Remove NaNs before CI/stat calculation
         valid = np.isfinite(jn_estimates) & np.isfinite(ratio_arr)
-        jn_estimates = jn_estimates[valid]
-        ratio_arr = ratio_arr[valid]
-
-        if len(jn_estimates) == 0:
+        if valid.sum() == 0:
             lower_ci_vals.append(np.nan)
             upper_ci_vals.append(np.nan)
             std_ci_vals.append(np.nan)
             continue
 
-        # CI and Std
-        lower, upper = np.percentile(jn_estimates, [2.5, 97.5])
-        mean_jn = np.sum(auc - jn_estimates) + np.sum((1/ratio_arr) * jn_estimates)
-        tau = ratio_arr * auc - (ratio_arr - 1) * jn_estimates
-        std = np.sqrt((1 / n_blocks) * np.sum((tau - mean_jn)**2 / (ratio_arr - 1)))
+        jn_valid = jn_estimates[valid]
+        r_valid = ratio_arr[valid]
+        try:
+            lower, upper = np.percentile(jn_valid, [2.5, 97.5])
+        except Exception:
+            lower, upper = np.nan, np.nan
+
+        mean_jn = np.sum(auc - jn_valid) + np.sum((1.0 / r_valid) * jn_valid)
+        tau = r_valid * auc - (r_valid - 1) * jn_valid
+        try:
+            std = np.sqrt((1.0 / valid.sum()) * np.sum((tau - mean_jn)**2 / (r_valid - 1.0)))
+        except Exception:
+            std = np.nan
 
         lower_ci_vals.append(lower)
         upper_ci_vals.append(upper)
