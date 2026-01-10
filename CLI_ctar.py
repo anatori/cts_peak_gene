@@ -18,8 +18,8 @@ import argparse
 Job description
 ----------------
 
-compute_ctar : find cis pairs within 500kb of annotated peak and genes
-    - Input : --job | --job_id | --multiome_file | --batch_size | --target_path | --binning_config | --bin_type
+compute_ctar :  find cis pairs within 500kb of annotated peak and genes
+    - Input :  --job | --job_id | --multiome_file | --batch_size | --target_path | --binning_config | --bin_type
     - Output : additional columns added to links_file pertaining to computed pvalues
     
 TODO
@@ -45,7 +45,7 @@ def main(args):
     GENOME_FILE = args.genome_file
     BIN_CONFIG = args.binning_config
     BIN_TYPE = args.binning_type
-    PYBEDTOOLS_PATH = args.pybedtools_path
+    PYBEDTOOLS_PATH = args. pybedtools_path
     COVAR_FILE = args.covar_file
     ARRAY_IDX = args.array_idx
 
@@ -57,12 +57,12 @@ def main(args):
         "generate_links",
         "generate_controls",
     ]
-    err_msg = "# CLI_ctar: --job=%s not supported" % JOB
+    err_msg = "# CLI_ctar:  --job=%s not supported" % JOB
     assert JOB is not None, "--job required"
     assert JOB in LEGAL_JOB_LIST, err_msg
 
     if JOB in [
-        "compute_ctar"
+        "compute_ctar",
         "compute_cis_only",
         "compute_ctrl_only",
         "generate_links",
@@ -72,7 +72,7 @@ def main(args):
         assert TARGET_PATH is not None, "--target_path required for --job=%s" % JOB
     
     if JOB in [
-        "compute_ctar"
+        "compute_ctar",
         "compute_ctrl_only",
         "generate_controls",
     ]:
@@ -108,55 +108,56 @@ def main(args):
         "compute_ctrl_only",
         "generate_links",
         "generate_controls",
-    ]:
+    ]: 
 
         # Setting bin config
-        # Order: MEAN.GC.MEAN.VAR
+        # Order:  MEAN. GC.MEAN.VAR
         n_atac_mean, n_atac_gc, n_rna_mean, n_rna_var, n_ctrl = BIN_CONFIG.split('.')
-        n_atac_mean, n_atac_gc, n_rna_mean, n_rna_var, n_ctrl = map(int, [n_atac_mean, 
-            n_atac_gc,
-            n_rna_mean,
-            n_rna_var, 
-            n_ctrl]
-        )
+        n_atac_mean, n_atac_gc, n_ctrl = map(int, [n_atac_mean, n_atac_gc, n_ctrl])
+        
+        # Check if using inf.inf mode (no RNA binning)
+        USE_INF_MODE = (f'{n_rna_mean}. {n_rna_var}' == 'inf.inf')
+        
+        if not USE_INF_MODE: 
+            n_rna_mean, n_rna_var = map(int, [n_rna_mean, n_rna_var])
 
         print("# Loading --multiome_file")
-        if MULTIOME_FILE.endswith('.h5mu'):
+        if MULTIOME_FILE. endswith('.h5mu'):
             adata_rna = mu.read(MULTIOME_FILE)
             adata_atac = adata_rna.mod['atac']
-            adata_rna = adata_rna.mod['rna']
+            adata_rna = adata_rna. mod['rna']
         else:
             adata_rna = ad.read_h5ad(MULTIOME_FILE)
-            adata_atac = adata_rna[:,adata_rna.var.feature_types == 'ATAC'].copy()
-            adata_rna = adata_rna[:,adata_rna.var.feature_types == 'GEX'].copy()
+            adata_atac = adata_rna[:,adata_rna.var. feature_types == 'ATAC']. copy()
+            adata_rna = adata_rna[:,adata_rna.var. feature_types == 'GEX'].copy()
 
         if adata_rna.var.index.name is not None:
-            adata_rna.var.index.name = None
-        if adata_atac.var.index.name is not None:
+            adata_rna.var.index. name = None
+        if adata_atac.var. index.name is not None:
             adata_atac.var.index.name = None
 
-        adata_rna.var['gene'] = adata_rna.var.index
-        adata_atac.var['peak'] = adata_atac.var.index
+        adata_rna. var['gene'] = adata_rna.var.index
+        adata_atac.var['peak'] = adata_atac. var.index
 
         try:
             adata_rna.layers['counts']
             adata_atac.layers['counts']
             pass
         except:
-            print("# Assuming counts are found in .X attribute...")
-            adata_rna.layers['counts'] = adata_rna.X
+            print("# Assuming counts are found in . X attribute...")
+            adata_rna. layers['counts'] = adata_rna.X
             adata_atac.layers['counts'] = adata_atac.X
 
         # Preferentially use gene_id
         if 'gene_id' in adata_rna.var.columns:
-            adata_rna.var['gene'] = adata_rna.var.gene_id
-            adata_rna.var.index = adata_rna.var.gene_id 
+            adata_rna. var['gene'] = adata_rna.var. gene_id
+            adata_rna.var. index = adata_rna. var.gene_id 
 
         # Setting atac bin type
         if (n_atac_gc == 1) and (n_atac_mean > 1):
             atac_type = 'mean'
             atac_bins = n_atac_mean # only depends on mean
-        if BIN_TYPE == 'cholesky':
+        elif BIN_TYPE == 'cholesky':
             atac_type = 'chol_logsum_gc'
             atac_bins = [n_atac_mean, n_atac_gc]
         else:
@@ -179,7 +180,7 @@ def main(args):
         if ARRAY_IDX:
             ARRAY_IDX = int(ARRAY_IDX)
 
-    if JOB in ["compute_ctrl_only","generate_controls"]:
+    if JOB in ["compute_ctrl_only","generate_controls"]: 
 
         print("# Loading --results_path")
         csv_file = os.path.join(RESULTS_PATH, 'cis_links_df.csv')
@@ -197,146 +198,85 @@ def main(args):
 
         print("# Running --job compute_ctar")
 
-        adata_rna.var = ctar.data_loader.get_gene_coords(adata_rna.var)
+        adata_rna. var = ctar.data_loader.get_gene_coords(adata_rna.var)
         cis_links_df = ctar.data_loader.peak_to_gene(adata_atac.var, adata_rna.var, split_peaks=True)
 
-        ctrl_links_dic, atac_bins_df, rna_bins_df = ctar.method.create_ctrl_pairs(
-            adata_atac, adata_rna, atac_bins=[n_atac_mean,n_atac_gc], rna_bins=[n_rna_mean,n_rna_var],
-            atac_type=atac_type, rna_type=rna_type, b=n_ctrl,
-            atac_layer='counts', rna_layer='counts', genome_file=GENOME_FILE
-        )
-
-        cis_links_df = ctar.data_loader.combine_peak_gene_bins(cis_links_df, atac_bins_df, rna_bins_df, 
-            atac_bins=[n_atac_mean,n_atac_gc], 
-            rna_bins=[n_rna_mean,n_rna_var]
-        )
-
-        cis_links_dic, cis_idx_dic = ctar.data_loader.groupby_combined_bins(cis_links_df, 
-            combined_bin_col=f'combined_bin_{BIN_CONFIG.rsplit('.',1)[0]}', 
-            return_dic=True
-        )
-
-        rna_sparse = adata_rna.layers['counts']
-        atac_sparse = adata_atac.layers['counts']
-
-        print('# Starting cis-links IRLS...')
-        start_time = time.time()
-
-        cis_coeff_dic = ctar.parallel.multiprocess_poisson_irls_chunked(
-                links_dict=cis_links_dic,
-                atac_sparse=atac_sparse,
-                rna_sparse=rna_sparse,
-                batch_size=BATCH_SIZE,
-                scheduler="threads",
+        if USE_INF_MODE:
+            print("# Using inf.inf mode - creating control peaks only")
+            
+            # Create control peaks (not peak-gene pairs)
+            ctrl_peaks = ctar.method.create_ctrl_peaks(
+                adata_atac, type=atac_type, num_bins=atac_bins, b=n_ctrl,
+                peak_col='peak', layer='counts', genome_file=GENOME_FILE
             )
-        print('# Cis-links IRLS time = %0.2fs' % (time.time() - start_time))
-
-        print('# Starting control links IRLS...')
-        start_time = time.time()
-
-        ctrl_coeff_dic = ctar.parallel.multiprocess_poisson_irls_chunked(
-            links_dict=ctrl_links_dic,
-            atac_sparse=atac_sparse,
-            rna_sparse=rna_sparse,
-            batch_size=BATCH_SIZE,
-            scheduler="threads",
-        )
-        print('# Control links IRLS time = %0.2fs' % (time.time() - start_time))
-
-        mcpval_dic, ppval_dic = ctar.method.binned_mcpval(cis_coeff_dic, ctrl_coeff_dic)
-
-        cis_links_df = ctar.data_loader.map_dic_to_df(cis_links_df, cis_idx_dic, mcpval_dic, col_name=f'{BIN_CONFIG}_mcpval')
-        cis_links_df = ctar.data_loader.map_dic_to_df(cis_links_df, cis_idx_dic, mcpval_dic, col_name=f'{BIN_CONFIG}_ppval')
-        cis_links_df = ctar.data_loader.map_dic_to_df(cis_links_df, cis_idx_dic, cis_coeff_dic, col_name='poissonb')
-
-        results_folder = f'{TARGET_PATH}/{JOB_ID}_results/'
-        print(f'# Saving files to {results_folder}')
-        os.makedirs(results_folder, exist_ok=True)
-        with open(f'{results_folder}cis_coeff_dic.pkl', 'wb') as f:
-            pickle.dump(cis_coeff_dic, f)
-        with open(f'{results_folder}cis_idx_dic.pkl', 'wb') as f:
-            pickle.dump(cis_idx_dic, f)
-
-        with open(f'{results_folder}ctrl_coeff_dic.pkl', 'wb') as f:
-            pickle.dump(ctrl_coeff_dic, f)
-        with open(f'{results_folder}ctrl_links_dic.pkl', 'wb') as f:
-            pickle.dump(ctrl_links_dic, f)
-
-        cis_links_df.to_csv(f'{results_folder}cis_links_df.csv')
-
-
-    if JOB == "generate_links":
-
-        print("# Running --job generate_links")
-
-        adata_rna.var = ctar.data_loader.get_gene_coords(adata_rna.var)
-        cis_links_df = ctar.data_loader.peak_to_gene(adata_atac.var, adata_rna.var, split_peaks=True)
-
-        ctrl_links_dic, atac_bins_df, rna_bins_df = ctar.method.create_ctrl_pairs(
-            adata_atac, adata_rna, atac_bins=[n_atac_mean,n_atac_gc], rna_bins=[n_rna_mean,n_rna_var],
-            atac_type=atac_type, rna_type=rna_type, b=n_ctrl,
-            atac_layer='counts', rna_layer='counts', genome_file=GENOME_FILE
-        )
-
-        cis_links_df = ctar.data_loader.combine_peak_gene_bins(cis_links_df, atac_bins_df, rna_bins_df, 
-            atac_bins=[n_atac_mean,n_atac_gc], 
-            rna_bins=[n_rna_mean,n_rna_var]
-        )
-
-        cis_links_dic, cis_idx_dic = ctar.data_loader.groupby_combined_bins(cis_links_df, 
-            combined_bin_col=f'combined_bin_{BIN_CONFIG.rsplit('.',1)[0]}', 
-            return_dic=True
-        )
-
-        results_folder = f'{TARGET_PATH}/{JOB_ID}_results/'
-        print(f'# Saving files to {results_folder}')
-        os.makedirs(results_folder, exist_ok=True)
-
-        with open(f'{results_folder}cis_idx_dic.pkl', 'wb') as f:
-            pickle.dump(cis_idx_dic, f)
-        with open(f'{results_folder}ctrl_links_dic.pkl', 'wb') as f:
-            pickle.dump(ctrl_links_dic, f)
-        cis_links_df.to_csv(f'{results_folder}cis_links_df.csv')
-
-
-    if JOB == "generate_controls":
-
-        print("# Running --job generate_controls")
-
-        ctrl_links_dic, atac_bins_df, rna_bins_df = ctar.method.create_ctrl_pairs(
-            adata_atac, adata_rna, atac_bins=[n_atac_mean,n_atac_gc], rna_bins=[n_rna_mean,n_rna_var],
-            atac_type=atac_type, rna_type=rna_type, b=n_ctrl,
-            atac_layer='counts', rna_layer='counts', genome_file=GENOME_FILE
-        )
-
-        cis_links_df = ctar.data_loader.combine_peak_gene_bins(cis_links_df, atac_bins_df, rna_bins_df, 
-            atac_bins=[n_atac_mean,n_atac_gc], 
-            rna_bins=[n_rna_mean,n_rna_var]
-        )
-
-        cis_links_dic, cis_idx_dic = ctar.data_loader.groupby_combined_bins(cis_links_df, 
-            combined_bin_col=f'combined_bin_{BIN_CONFIG.rsplit('.',1)[0]}', 
-            return_dic=True
-        )
-
-        results_folder = f'{TARGET_PATH}/{JOB_ID}_results/'
-        print(f'# Saving files to {results_folder}')
-        os.makedirs(results_folder, exist_ok=True)
-
-        with open(f'{results_folder}ctrl_links_dic.pkl', 'wb') as f:
-            pickle.dump(ctrl_links_dic, f)
-        cis_links_df.to_csv(f'{results_folder}cis_links_df.csv')
-
-
-    if JOB == "compute_cis_only":
-
-        print("# Running --job compute_cis_only")
-
-        if not RESULTS_PATH:
-
-            adata_rna.var = ctar.data_loader.get_gene_coords(adata_rna.var)
-            cis_links_df = ctar.data_loader.peak_to_gene(adata_atac.var, adata_rna.var, split_peaks=True)
-
+            adata_atac.varm['ctrl_peaks'] = ctrl_peaks[: , : n_ctrl]
+            
+            # Get cis links as array
+            adata_atac.var['atac_idx'] = range(len(adata_atac.var))
+            adata_rna.var['rna_idx'] = range(len(adata_rna.var))
+            cis_links_df['atac_idx'] = cis_links_df['peak']. map(adata_atac.var['atac_idx'])
+            cis_links_df['rna_idx'] = cis_links_df['gene'].map(adata_rna.var['rna_idx'])
+            links_arr = cis_links_df[['atac_idx', 'rna_idx']].values. T
+            
+            # Compute cis coefficients
+            print('# Starting cis-links IRLS.. .')
+            start_time = time.time()
+            cis_coeff_list = []
+            for i in range(0, len(cis_links_df), BATCH_SIZE):
+                end = min(i + BATCH_SIZE, len(cis_links_df))
+                links = links_arr[: , i:end]
+                atac_data = adata_atac[: , links[0]].layers['counts']
+                rna_data = adata_rna[: , links[1]].layers['counts']
+                
+                if COVAR_FILE:
+                    # Use multivariate IRLS if covariates provided
+                    _, beta, _ = ctar.method.vectorized_poisson_regression_safe_converged(
+                        atac_data, rna_data, tol=1e-3, covar_mat=covar_mat
+                    )
+                else:
+                    _, beta, _ = ctar.method.vectorized_poisson_regression_safe_converged(
+                        atac_data, rna_data, tol=1e-3
+                    )
+                cis_coeff_list.append(beta. flatten())
+            cis_coeff = np.concatenate(cis_coeff_list)
+            print('# Cis-links IRLS time = %0.2fs' % (time.time() - start_time))
+            
+            # Compute control coefficients
+            print('# Starting control links IRLS...')
+            start_time = time.time()
+            ctrl_coeff_list = []
+            for i in range(0, len(cis_links_df), BATCH_SIZE):
+                end = min(i + BATCH_SIZE, len(cis_links_df))
+                links = links_arr[:, i:end]
+                ctrl_peaks_batch = adata_atac[:, links[0]].varm['ctrl_peaks']
+                rna_data = adata_rna[:, links[1]].layers['counts']
+                
+                batch_ctrl_coeff = []
+                for j in range(end - i):
+                    atac_j = adata_atac[:, ctrl_peaks_batch[j]]. layers['counts']
+                    rna_j = rna_data[:, [j]]
+                    
+                    if COVAR_FILE:
+                        _, beta, _ = ctar.method.vectorized_poisson_regression_safe_converged(
+                            atac_j, rna_j, tol=1e-3, covar_mat=covar_mat
+                        )
+                    else:
+                        _, beta, _ = ctar. method.vectorized_poisson_regression_safe_converged(
+                            atac_j, rna_j, tol=1e-3
+                        )
+                    batch_ctrl_coeff.append(beta.flatten())
+                ctrl_coeff_list.append(np.array(batch_ctrl_coeff))
+            ctrl_coeff = np.vstack(ctrl_coeff_list)
+            print('# Control links IRLS time = %0.2fs' % (time.time() - start_time))
+            
+            # Compute p-values
+            cis_links_df[f'{BIN_CONFIG}_mcpval'] = ctar.method.initial_mcpval(ctrl_coeff, cis_coeff)
+            cis_links_df[f'{BIN_CONFIG}_ppval'] = ctar.method. pooled_mcpval(ctrl_coeff, cis_coeff)
+            cis_links_df[f'{BIN_CONFIG}_zpval'] = ctar.method. zscore_pval(ctrl_coeff, cis_coeff)[0]
+            cis_links_df['poissonb'] = cis_coeff
+            
+        else:
+            # Standard binned mode
             ctrl_links_dic, atac_bins_df, rna_bins_df = ctar.method.create_ctrl_pairs(
                 adata_atac, adata_rna, atac_bins=[n_atac_mean,n_atac_gc], rna_bins=[n_rna_mean,n_rna_var],
                 atac_type=atac_type, rna_type=rna_type, b=n_ctrl,
@@ -348,73 +288,152 @@ def main(args):
                 rna_bins=[n_rna_mean,n_rna_var]
             )
 
-        file_suffix = ''
+            cis_links_dic, cis_idx_dic = ctar.data_loader. groupby_combined_bins(cis_links_df, 
+                combined_bin_col=f'combined_bin_{BIN_CONFIG. rsplit('.',1)[0]}', 
+                return_dic=True
+            )
 
-        cis_links_dic, cis_idx_dic = ctar.data_loader.groupby_combined_bins(cis_links_df, 
-            combined_bin_col=f'combined_bin_{BIN_CONFIG.rsplit('.',1)[0]}', 
-            return_dic=True
-        )
+            rna_sparse = adata_rna.layers['counts']
+            atac_sparse = adata_atac. layers['counts']
 
-        if ARRAY_IDX is not None:
+            print('# Starting cis-links IRLS...')
+            start_time = time.time()
 
-            with open(f'{TARGET_PATH}/cis_links_dic.pkl', 'rb') as file:
-                cis_links_dic = pickle.load(file)
-            with open(f'{TARGET_PATH}/cis_idx_dic.pkl', 'rb') as file:
-                cis_idx_dic = pickle.load(file)
+            if COVAR_FILE:
+                cis_coeff_dic = ctar.parallel. multiprocess_poisson_irls_multivar(
+                        links_dict=cis_links_dic,
+                        atac_sparse=atac_sparse,
+                        rna_sparse=rna_sparse,
+                        covar_mat=covar_mat,
+                        batch_size=BATCH_SIZE,
+                        scheduler="threads",
+                    )
+            else:
+                cis_coeff_dic = ctar.parallel.multiprocess_poisson_irls_chunked(
+                        links_dict=cis_links_dic,
+                        atac_sparse=atac_sparse,
+                        rna_sparse=rna_sparse,
+                        batch_size=BATCH_SIZE,
+                        scheduler="threads",
+                    )
+            print('# Cis-links IRLS time = %0.2fs' % (time. time() - start_time))
 
-            cis_links_dic = dict(sorted(cis_links_dic.items()))
-            cis_links_dic = dict(list(cis_links_dic.items())[ARRAY_IDX*BATCH_SIZE : (ARRAY_IDX+1)*BATCH_SIZE])
-            cis_idx_dic  = {key : cis_idx_dic[key]  for key in cis_links_dic.keys()}
-            print('# Running %d controls...' % (len(list(cis_links_dic.keys()))))
+            print('# Starting control links IRLS...')
+            start_time = time.time()
 
-            file_suffix = f'_{ARRAY_IDX}'
-
-        rna_sparse = adata_rna.layers['counts']
-        atac_sparse = adata_atac.layers['counts']
-
-        print('# Starting cis-links IRLS...')
-        start_time = time.time()
-
-        if COVAR_FILE:
-            cis_coeff_dic = ctar.parallel.multiprocess_poisson_irls_multivar(
-                    links_dict=cis_links_dic,
+            if COVAR_FILE:
+                ctrl_coeff_dic = ctar.parallel.multiprocess_poisson_irls_multivar(
+                        links_dict=ctrl_links_dic,
+                        atac_sparse=atac_sparse,
+                        rna_sparse=rna_sparse,
+                        covar_mat=covar_mat,
+                        batch_size=BATCH_SIZE,
+                        scheduler="threads",
+                    )
+            else:
+                ctrl_coeff_dic = ctar.parallel.multiprocess_poisson_irls_chunked(
+                    links_dict=ctrl_links_dic,
                     atac_sparse=atac_sparse,
                     rna_sparse=rna_sparse,
-                    covar_mat=covar_mat,
                     batch_size=BATCH_SIZE,
                     scheduler="threads",
                 )
-        else:
-            cis_coeff_dic = ctar.parallel.multiprocess_poisson_irls(
-                    links_dict=cis_links_dic,
-                    atac_sparse=atac_sparse,
-                    rna_sparse=rna_sparse,
-                    batch_size=BATCH_SIZE,
-                    scheduler="threads",
-                    flag_se=True,
-                )
-        print('# Cis-links IRLS time = %0.2fs' % (time.time() - start_time))
+            print('# Control links IRLS time = %0.2fs' % (time. time() - start_time))
+
+            mcpval_dic, ppval_dic = ctar.method.binned_mcpval(cis_coeff_dic, ctrl_coeff_dic)
+
+            cis_links_df = ctar.data_loader.map_dic_to_df(cis_links_df, cis_idx_dic, mcpval_dic, col_name=f'{BIN_CONFIG}_mcpval')
+            cis_links_df = ctar.data_loader.map_dic_to_df(cis_links_df, cis_idx_dic, ppval_dic, col_name=f'{BIN_CONFIG}_ppval')
+            cis_links_df = ctar.data_loader.map_dic_to_df(cis_links_df, cis_idx_dic, cis_coeff_dic, col_name='poissonb')
 
         results_folder = f'{TARGET_PATH}/{JOB_ID}_results/'
         print(f'# Saving files to {results_folder}')
         os.makedirs(results_folder, exist_ok=True)
+        
+        if USE_INF_MODE:
+            np.save(f'{results_folder}ctrl_peaks.npy', ctrl_peaks)
+            np.save(f'{results_folder}cis_coeff.npy', cis_coeff)
+            np.save(f'{results_folder}ctrl_coeff.npy', ctrl_coeff)
+        else:
+            with open(f'{results_folder}cis_coeff_dic.pkl', 'wb') as f:
+                pickle.dump(cis_coeff_dic, f)
+            with open(f'{results_folder}cis_idx_dic.pkl', 'wb') as f:
+                pickle. dump(cis_idx_dic, f)
+            with open(f'{results_folder}ctrl_coeff_dic.pkl', 'wb') as f:
+                pickle.dump(ctrl_coeff_dic, f)
+            with open(f'{results_folder}ctrl_links_dic.pkl', 'wb') as f:
+                pickle. dump(ctrl_links_dic, f)
 
-        with open(f'{results_folder}cis_coeff_dic{file_suffix}.pkl', 'wb') as f:
-            pickle.dump(cis_coeff_dic, f)
-        with open(f'{results_folder}cis_idx_dic{file_suffix}.pkl', 'wb') as f:
-            pickle.dump(cis_idx_dic, f)
-        with open(f'{results_folder}cis_links_dic{file_suffix}.pkl', 'wb') as f:
-            pickle.dump(cis_links_dic, f)
-        if not RESULTS_PATH:
+        cis_links_df.to_csv(f'{results_folder}cis_links_df.csv')
+
+
+    if JOB == "generate_links":
+
+        print("# Running --job generate_links")
+
+        adata_rna.var = ctar.data_loader.get_gene_coords(adata_rna.var)
+        cis_links_df = ctar. data_loader.peak_to_gene(adata_atac. var, adata_rna. var, split_peaks=True)
+
+        if USE_INF_MODE:
+            print("# Using inf.inf mode - creating control peaks only")
+            ctrl_peaks = ctar.method. create_ctrl_peaks(
+                adata_atac, type=atac_type, num_bins=atac_bins, b=n_ctrl,
+                peak_col='peak', layer='counts', genome_file=GENOME_FILE
+            )
+            
+            results_folder = f'{TARGET_PATH}/{JOB_ID}_results/'
+            print(f'# Saving files to {results_folder}')
+            os.makedirs(results_folder, exist_ok=True)
+            
+            np.save(f'{results_folder}ctrl_peaks.npy', ctrl_peaks)
+            cis_links_df.to_csv(f'{results_folder}cis_links_df.csv')
+            
+        else:
+            ctrl_links_dic, atac_bins_df, rna_bins_df = ctar.method.create_ctrl_pairs(
+                adata_atac, adata_rna, atac_bins=[n_atac_mean,n_atac_gc], rna_bins=[n_rna_mean,n_rna_var],
+                atac_type=atac_type, rna_type=rna_type, b=n_ctrl,
+                atac_layer='counts', rna_layer='counts', genome_file=GENOME_FILE
+            )
+
+            cis_links_df = ctar.data_loader.combine_peak_gene_bins(cis_links_df, atac_bins_df, rna_bins_df, 
+                atac_bins=[n_atac_mean,n_atac_gc], 
+                rna_bins=[n_rna_mean,n_rna_var]
+            )
+
+            cis_links_dic, cis_idx_dic = ctar.data_loader. groupby_combined_bins(cis_links_df, 
+                combined_bin_col=f'combined_bin_{BIN_CONFIG.rsplit('.',1)[0]}', 
+                return_dic=True
+            )
+
+            results_folder = f'{TARGET_PATH}/{JOB_ID}_results/'
+            print(f'# Saving files to {results_folder}')
+            os.makedirs(results_folder, exist_ok=True)
+
+            with open(f'{results_folder}cis_idx_dic.pkl', 'wb') as f:
+                pickle. dump(cis_idx_dic, f)
+            with open(f'{results_folder}ctrl_links_dic.pkl', 'wb') as f:
+                pickle.dump(ctrl_links_dic, f)
             cis_links_df.to_csv(f'{results_folder}cis_links_df.csv')
 
 
-    if JOB == "compute_ctrl_only":
+    if JOB == "generate_controls":
 
-        print("# Running --job compute_ctrl_only")
+        print("# Running --job generate_controls")
 
-        if ARRAY_IDX is None:
-
+        if USE_INF_MODE:
+            print("# Using inf.inf mode - creating control peaks only")
+            ctrl_peaks = ctar.method.create_ctrl_peaks(
+                adata_atac, type=atac_type, num_bins=atac_bins, b=n_ctrl,
+                peak_col='peak', layer='counts', genome_file=GENOME_FILE
+            )
+            
+            results_folder = f'{TARGET_PATH}/{JOB_ID}_results/'
+            print(f'# Saving files to {results_folder}')
+            os.makedirs(results_folder, exist_ok=True)
+            
+            np.save(f'{results_folder}ctrl_peaks.npy', ctrl_peaks)
+            
+        else:
             ctrl_links_dic, atac_bins_df, rna_bins_df = ctar.method.create_ctrl_pairs(
                 adata_atac, adata_rna, atac_bins=[n_atac_mean,n_atac_gc], rna_bins=[n_rna_mean,n_rna_var],
                 atac_type=atac_type, rna_type=rna_type, b=n_ctrl,
@@ -431,76 +450,283 @@ def main(args):
                 return_dic=True
             )
 
-            file_suffix = ''
+            results_folder = f'{TARGET_PATH}/{JOB_ID}_results/'
+            print(f'# Saving files to {results_folder}')
+            os.makedirs(results_folder, exist_ok=True)
 
-        else:
+            with open(f'{results_folder}ctrl_links_dic.pkl', 'wb') as f:
+                pickle.dump(ctrl_links_dic, f)
+                
+        cis_links_df.to_csv(f'{results_folder}cis_links_df. csv')
 
-            file_path = f'{RESULTS_PATH}/ctrl_links_dic.pkl'
-            with open(file_path, 'rb') as file:
-                ctrl_links_dic = pickle.load(file)
-            ctrl_links_dic = dict(sorted(ctrl_links_dic.items()))
-            ctrl_links_dic = dict(list(ctrl_links_dic.items())[ARRAY_IDX*BATCH_SIZE : (ARRAY_IDX+1)*BATCH_SIZE])
-            print('# Running %d controls...' % (len(list(ctrl_links_dic.keys()))))
 
-            file_suffix = f'_{ARRAY_IDX}'
+    if JOB == "compute_cis_only":
 
-        rna_sparse = adata_rna.layers['counts']
-        atac_sparse = adata_atac.layers['counts']
+        print("# Running --job compute_cis_only")
 
-        print('# Starting control links IRLS...')
-        print(f'# ATAC and RNA dtype: {atac_sparse.dtype}, {rna_sparse.dtype}')
-        start_time = time.time()
+        if not RESULTS_PATH: 
 
-        if COVAR_FILE:
-            ctrl_coeff_dic = ctar.parallel.multiprocess_poisson_irls_multivar(
-                    links_dict=ctrl_links_dic,
-                    atac_sparse=atac_sparse,
-                    rna_sparse=rna_sparse,
-                    covar_mat=covar_mat,
-                    batch_size=BATCH_SIZE,
-                    scheduler="threads",                
+            adata_rna.var = ctar.data_loader.get_gene_coords(adata_rna.var)
+            cis_links_df = ctar. data_loader.peak_to_gene(adata_atac. var, adata_rna. var, split_peaks=True)
+
+            if not USE_INF_MODE:
+                ctrl_links_dic, atac_bins_df, rna_bins_df = ctar.method.create_ctrl_pairs(
+                    adata_atac, adata_rna, atac_bins=[n_atac_mean,n_atac_gc], rna_bins=[n_rna_mean,n_rna_var],
+                    atac_type=atac_type, rna_type=rna_type, b=n_ctrl,
+                    atac_layer='counts', rna_layer='counts', genome_file=GENOME_FILE
                 )
-        else:
-            ctrl_coeff_dic = ctar.parallel.multiprocess_poisson_irls(
-                    links_dict=ctrl_links_dic,
-                    atac_sparse=atac_sparse,
-                    rna_sparse=rna_sparse,
-                    batch_size=BATCH_SIZE,
-                    scheduler="threads",
-                    flag_se=True,
+
+                cis_links_df = ctar.data_loader.combine_peak_gene_bins(cis_links_df, atac_bins_df, rna_bins_df, 
+                    atac_bins=[n_atac_mean,n_atac_gc], 
+                    rna_bins=[n_rna_mean,n_rna_var]
                 )
-        print('# Control links IRLS time = %0.2fs' % (time.time() - start_time))
+
+        file_suffix = ''
+
+        if USE_INF_MODE:
+            # For inf.inf mode, compute all cis links
+            adata_atac.var['atac_idx'] = range(len(adata_atac.var))
+            adata_rna.var['rna_idx'] = range(len(adata_rna.var))
+            cis_links_df['atac_idx'] = cis_links_df['peak']. map(adata_atac.var['atac_idx'])
+            cis_links_df['rna_idx'] = cis_links_df['gene'].map(adata_rna.var['rna_idx'])
+            links_arr = cis_links_df[['atac_idx', 'rna_idx']].values. T
+            
+            rna_sparse = adata_rna.layers['counts']
+            atac_sparse = adata_atac. layers['counts']
+            
+            print('# Starting cis-links IRLS.. .')
+            start_time = time.time()
+            cis_coeff_list = []
+            
+            for i in range(0, len(cis_links_df), BATCH_SIZE):
+                end = min(i + BATCH_SIZE, len(cis_links_df))
+                links = links_arr[: , i:end]
+                atac_data = atac_sparse[:, links[0]]
+                rna_data = rna_sparse[:, links[1]]
+                
+                if COVAR_FILE:
+                    _, beta, _ = ctar.method.vectorized_poisson_regression_safe_converged(
+                        atac_data, rna_data, tol=1e-3, covar_mat=covar_mat
+                    )
+                else: 
+                    _, beta, _ = ctar.method.vectorized_poisson_regression_safe_converged(
+                        atac_data, rna_data, tol=1e-3
+                    )
+                cis_coeff_list.append(beta.flatten())
+            
+            cis_coeff = np.concatenate(cis_coeff_list)
+            print('# Cis-links IRLS time = %0.2fs' % (time.time() - start_time))
+            
+        else:
+            # Standard binned mode
+            cis_links_dic, cis_idx_dic = ctar.data_loader.groupby_combined_bins(cis_links_df, 
+                combined_bin_col=f'combined_bin_{BIN_CONFIG.rsplit('.',1)[0]}', 
+                return_dic=True
+            )
+
+            if ARRAY_IDX is not None: 
+
+                with open(f'{TARGET_PATH}/cis_links_dic.pkl', 'rb') as file:
+                    cis_links_dic = pickle.load(file)
+                with open(f'{TARGET_PATH}/cis_idx_dic.pkl', 'rb') as file:
+                    cis_idx_dic = pickle.load(file)
+
+                cis_links_dic = dict(sorted(cis_links_dic. items()))
+                cis_links_dic = dict(list(cis_links_dic. items())[ARRAY_IDX*BATCH_SIZE :  (ARRAY_IDX+1)*BATCH_SIZE])
+                cis_idx_dic  = {key :  cis_idx_dic[key]  for key in cis_links_dic.keys()}
+                print('# Running %d controls.. .' % (len(list(cis_links_dic.keys()))))
+
+                file_suffix = f'_{ARRAY_IDX}'
+
+            rna_sparse = adata_rna.layers['counts']
+            atac_sparse = adata_atac.layers['counts']
+
+            print('# Starting cis-links IRLS...')
+            start_time = time.time()
+
+            if COVAR_FILE:
+                cis_coeff_dic = ctar.parallel. multiprocess_poisson_irls_multivar(
+                        links_dict=cis_links_dic,
+                        atac_sparse=atac_sparse,
+                        rna_sparse=rna_sparse,
+                        covar_mat=covar_mat,
+                        batch_size=BATCH_SIZE,
+                        scheduler="threads",
+                    )
+            else:
+                cis_coeff_dic = ctar.parallel.multiprocess_poisson_irls(
+                        links_dict=cis_links_dic,
+                        atac_sparse=atac_sparse,
+                        rna_sparse=rna_sparse,
+                        batch_size=BATCH_SIZE,
+                        scheduler="threads",
+                        flag_se=True,
+                    )
+            print('# Cis-links IRLS time = %0.2fs' % (time. time() - start_time))
+
+        results_folder = f'{TARGET_PATH}/{JOB_ID}_results/'
+        print(f'# Saving files to {results_folder}')
+        os.makedirs(results_folder, exist_ok=True)
+
+        if USE_INF_MODE: 
+            np.save(f'{results_folder}cis_coeff{file_suffix}.npy', cis_coeff)
+        else:
+            with open(f'{results_folder}cis_coeff_dic{file_suffix}.pkl', 'wb') as f:
+                pickle.dump(cis_coeff_dic, f)
+            with open(f'{results_folder}cis_idx_dic{file_suffix}.pkl', 'wb') as f:
+                pickle.dump(cis_idx_dic, f)
+            with open(f'{results_folder}cis_links_dic{file_suffix}.pkl', 'wb') as f:
+                pickle.dump(cis_links_dic, f)
+                
+        if not RESULTS_PATH:
+            cis_links_df.to_csv(f'{results_folder}cis_links_df.csv')
+
+
+    if JOB == "compute_ctrl_only":
+
+        print("# Running --job compute_ctrl_only")
+
+        if USE_INF_MODE:
+            # Load control peaks
+            if RESULTS_PATH:
+                ctrl_peaks = np.load(os.path.join(RESULTS_PATH, 'ctrl_peaks. npy'))
+            else:
+                ctrl_peaks = ctar.method.create_ctrl_peaks(
+                    adata_atac, type=atac_type, num_bins=atac_bins, b=n_ctrl,
+                    peak_col='peak', layer='counts', genome_file=GENOME_FILE
+                )
+            
+            adata_atac.varm['ctrl_peaks'] = ctrl_peaks[: , : n_ctrl]
+            
+            # Get cis links
+            adata_atac.var['atac_idx'] = range(len(adata_atac.var))
+            adata_rna.var['rna_idx'] = range(len(adata_rna.var))
+            cis_links_df['atac_idx'] = cis_links_df['peak'].map(adata_atac.var['atac_idx'])
+            cis_links_df['rna_idx'] = cis_links_df['gene'].map(adata_rna.var['rna_idx'])
+            links_arr = cis_links_df[['atac_idx', 'rna_idx']]. values.T
+            
+            rna_sparse = adata_rna.layers['counts']
+            atac_sparse = adata_atac.layers['counts']
+            
+            # Determine batch range
+            if ARRAY_IDX is not None: 
+                start = ARRAY_IDX * BATCH_SIZE
+                end = min((ARRAY_IDX + 1) * BATCH_SIZE, len(cis_links_df))
+                file_suffix = f'_{ARRAY_IDX}'
+            else: 
+                start = 0
+                end = len(cis_links_df)
+                file_suffix = ''
+            
+            print(f'# Computing controls for links {start} to {end}.. .')
+            print('# Starting control links IRLS...')
+            start_time = time.time()
+            
+            ctrl_coeff_list = []
+            for i in range(start, end, BATCH_SIZE):
+                batch_end = min(i + BATCH_SIZE, end)
+                links = links_arr[:, i:batch_end]
+                ctrl_peaks_batch = adata_atac[: , links[0]].varm['ctrl_peaks']
+                rna_data = rna_sparse[:, links[1]]
+                
+                batch_ctrl_coeff = []
+                for j in range(batch_end - i):
+                    atac_j = atac_sparse[:, ctrl_peaks_batch[j]]
+                    rna_j = rna_data[:, [j]]
+                    
+                    if COVAR_FILE:
+                        _, beta, _ = ctar.method.vectorized_poisson_regression_safe_converged(
+                            atac_j, rna_j, tol=1e-3, covar_mat=covar_mat
+                        )
+                    else: 
+                        _, beta, _ = ctar.method.vectorized_poisson_regression_safe_converged(
+                            atac_j, rna_j, tol=1e-3
+                        )
+                    batch_ctrl_coeff.append(beta.flatten())
+                ctrl_coeff_list.append(np.array(batch_ctrl_coeff))
+            
+            ctrl_coeff = np.vstack(ctrl_coeff_list)
+            print('# Control links IRLS time = %0.2fs' % (time.time() - start_time))
+            
+        else:
+            # Standard binned mode
+            if ARRAY_IDX is None: 
+
+                ctrl_links_dic, atac_bins_df, rna_bins_df = ctar. method.create_ctrl_pairs(
+                    adata_atac, adata_rna, atac_bins=[n_atac_mean,n_atac_gc], rna_bins=[n_rna_mean,n_rna_var],
+                    atac_type=atac_type, rna_type=rna_type, b=n_ctrl,
+                    atac_layer='counts', rna_layer='counts', genome_file=GENOME_FILE
+                )
+
+                cis_links_df = ctar.data_loader.combine_peak_gene_bins(cis_links_df, atac_bins_df, rna_bins_df, 
+                    atac_bins=[n_atac_mean,n_atac_gc], 
+                    rna_bins=[n_rna_mean,n_rna_var]
+                )
+
+                cis_links_dic, cis_idx_dic = ctar. data_loader.groupby_combined_bins(cis_links_df, 
+                    combined_bin_col=f'combined_bin_{BIN_CONFIG.rsplit('.',1)[0]}', 
+                    return_dic=True
+                )
+
+                file_suffix = ''
+
+            else:
+
+                file_path = f'{RESULTS_PATH}/ctrl_links_dic. pkl'
+                with open(file_path, 'rb') as file:
+                    ctrl_links_dic = pickle. load(file)
+                ctrl_links_dic = dict(sorted(ctrl_links_dic.items()))
+                ctrl_links_dic = dict(list(ctrl_links_dic.items())[ARRAY_IDX*BATCH_SIZE : (ARRAY_IDX+1)*BATCH_SIZE])
+                print('# Running %d controls...' % (len(list(ctrl_links_dic.keys()))))
+
+                file_suffix = f'_{ARRAY_IDX}'
+
+            rna_sparse = adata_rna.layers['counts']
+            atac_sparse = adata_atac.layers['counts']
+
+            print('# Starting control links IRLS...')
+            print(f'# ATAC and RNA dtype: {atac_sparse.dtype}, {rna_sparse.dtype}')
+            start_time = time.time()
+
+            if COVAR_FILE:
+                ctrl_coeff_dic = ctar.parallel. multiprocess_poisson_irls_multivar(
+                        links_dict=ctrl_links_dic,
+                        atac_sparse=atac_sparse,
+                        rna_sparse=rna_sparse,
+                        covar_mat=covar_mat,
+                        batch_size=BATCH_SIZE,
+                        scheduler="threads",                
+                    )
+            else:
+                ctrl_coeff_dic = ctar.parallel.multiprocess_poisson_irls(
+                        links_dict=ctrl_links_dic,
+                        atac_sparse=atac_sparse,
+                        rna_sparse=rna_sparse,
+                        batch_size=BATCH_SIZE,
+                        scheduler="threads",
+                        flag_se=True,
+                    )
+            print('# Control links IRLS time = %0.2fs' % (time.time() - start_time))
 
         if ARRAY_IDX is None:
-
-            # if ctrl_coeff_dic[list(ctrl_coeff_dic.keys())[0]].shape[1] > 1:
-            #     raise ValueError('Inference for non-1D values (e.g. when flag_se=True) is not yet implemented !!')
-
-            # cis_coeff_dic = ctar.data_loader.map_df_to_dic(cis_links_df, 
-            #     keys_col=f'combined_bin_{BIN_CONFIG.rsplit('.',1)[0]}',
-            #     values_col='poissonb')
-
-            # mcpval_dic, ppval_dic = ctar.method.binned_mcpval(cis_coeff_dic, ctrl_coeff_dic)
-
-            # cis_links_df = ctar.data_loader.map_dic_to_df(cis_links_df, cis_idx_dic, mcpval_dic, col_name=f'{BIN_CONFIG}_mcpval')
-            # cis_links_df = ctar.data_loader.map_dic_to_df(cis_links_df, cis_idx_dic, ppval_dic, col_name=f'{BIN_CONFIG}_ppval')
-
             results_folder = f'{TARGET_PATH}/{JOB_ID}_results/'
-            
         else:
             results_folder = f'{TARGET_PATH}/'
 
         print(f'# Saving files to {results_folder}')
         os.makedirs(results_folder, exist_ok=True)
 
-        with open(f'{results_folder}ctrl_coeff_dic{file_suffix}.pkl', 'wb') as f:
-            pickle.dump(ctrl_coeff_dic, f)
+        if USE_INF_MODE:
+            np. save(f'{results_folder}ctrl_coeff{file_suffix}.npy', ctrl_coeff)
+        else:
+            with open(f'{results_folder}ctrl_coeff_dic{file_suffix}.pkl', 'wb') as f:
+                pickle. dump(ctrl_coeff_dic, f)
 
-        if ARRAY_IDX is None:
-            with open(f'{results_folder}ctrl_links_dic.pkl', 'wb') as f:
-                pickle.dump(ctrl_links_dic, f)
+            if ARRAY_IDX is None:
+                with open(f'{results_folder}ctrl_links_dic. pkl', 'wb') as f:
+                    pickle.dump(ctrl_links_dic, f)
 
-            cis_links_df.to_csv(f'{results_folder}cis_links_df.csv')
+                cis_links_df.to_csv(f'{results_folder}cis_links_df.csv')
 
 
 
@@ -509,7 +735,7 @@ def main(args):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="ctar")
 
-    parser.add_argument("--job", type=str, required=True, help="compute_cis_pairs")
+    parser.add_argument("--job", type=str, required=True, help="compute_ctar, compute_cis_only, compute_ctrl_only, generate_links, generate_controls")
     parser.add_argument("--job_id", type=str, required=False, default='1', help='job id')
     parser.add_argument("--multiome_file", type=str, required=False, default=None)
     parser.add_argument("--batch_size", type=str, required=False, default='100')
@@ -517,7 +743,7 @@ if __name__ == "__main__":
     parser.add_argument("--target_path", type=str, required=False, default=None)
     parser.add_argument("--results_path", type=str, required=False, default=None)
     parser.add_argument(
-        "--genome_file", type=str, required=False, default=None, help="GRCh38.p14.genome.fa.bgz reference"
+        "--genome_file", type=str, required=False, default=None, help="GRCh38.p14.genome.fa. bgz reference"
     )
     parser.add_argument("--covar_file", type=str, required=False, default=None)
     parser.add_argument(
@@ -525,7 +751,7 @@ if __name__ == "__main__":
         type=str,
         required=False,
         default=None,
-        help="{# ATAC mean bins}.{# ATAC GC bins}.{# RNA mean bins}.{# RNA var bins}.{# Sampled controls per bin}",
+        help="{# ATAC mean bins}. {# ATAC GC bins}.{# RNA mean bins}.{# RNA var bins}. {# Sampled controls per bin}.  Use 'inf. inf' for RNA bins to skip RNA binning",
     )
     parser.add_argument("--binning_type", type=str, required=False, default='mean_var', help='mean_var, cholesky')
     parser.add_argument("--pybedtools_path", type=str, required=False, default=None)
