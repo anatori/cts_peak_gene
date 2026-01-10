@@ -98,6 +98,26 @@ def rootogram(observed, expected, title=""):
     plt.show()
 
 
+def format_pval(p):
+    try:
+        if p is None or (isinstance(p, float) and np.isnan(p)):
+            return ""
+        p = float(p)
+    except Exception:
+        return str(p)
+    if p <= 0:
+        return "<1e-300"
+    if p < 1e-4:
+        return "<1e-4"
+    if p < 0.001:
+        return f"{p:.4f}"
+    if p < 0.01:
+        return f"{p:.3f}"
+    if p < 0.1:
+        return f"{p:.2f}"
+    return f"{p:.2f}"
+
+
 # line plot helper
 def plot_line_collection(ax, x, y, colors):
     
