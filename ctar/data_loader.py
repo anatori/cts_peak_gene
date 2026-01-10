@@ -524,3 +524,34 @@ def consolidate_null(path,startswith = 'pearsonr_ctrl_',b=101,remove_empty=True,
     print('Array shape:',consolidated_null.shape)
 
     return consolidated_null
+
+
+def load_validation_intersect_bed(path,
+    validation_cols,
+    candidate_cols=['scent','scmm','signac','ctar','peak','gene'],
+    candidate_methods_cols=['scent','scmm','signac','ctar'],
+    score_type=float,
+    flag_split=True,
+    flag_gene_match=True,
+    flag_verbose=True
+):
+    ''' Load result of bedtools intersection between candidate multiome links and validation data. Return dataframe.
+    '''
+    df = pd.read_csv(path,sep='\t',header=None)
+    df.columns = ['gt_chr','gt_start','gt_end','gt_id','chr','start','end','id','bp_overlap']
+    
+    if flag_split:
+
+        df[validation_cols] = df['gt_id'].str.split(';',expand=True).values
+        df[candidate_cols] = df['id'].str.split(';',expand=True).values
+        df[candidate_methods_cols] = df[candidate_methods_cols].replace('nan', np.nan).astype(float)
+        df['score'] = df['score'].astype(score_type)
+
+        if flag_gene_match:
+            if flag_verbose:
+                print('initial overlap',df.shape)
+            df = df[df.gt_gene == df.gene].copy()
+            if flag_verbose:
+                print('gene-matched overlap',df.shape)
+
+    return df[validation_cols + candidate_cols + ['bp_overlap']]
