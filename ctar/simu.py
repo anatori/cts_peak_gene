@@ -369,7 +369,7 @@ def compute_bootstrap_table(
             work_df[method] = work_df[method].fillna(1.0)
 
     # Point estimates on full data
-    estimates = {m: pgb_auerc(work_df, m, **auerc_kwargs) for m in methods}
+    estimates = {m: pgb_auerc(work_df, m, gold_col=gold_col, **auerc_kwargs) for m in methods}
 
     # Storage for bootstrap statistics per method
     boot_stats = {m: np.empty(n_bootstrap, dtype=float) for m in methods}
@@ -379,7 +379,7 @@ def compute_bootstrap_table(
         idx = rng.integers(0, N, size=N)  # same indices for all methods
         sample = work_df.iloc[idx].reset_index(drop=True)
         for m in methods:
-            boot_stats[m][b] = pgb_auerc(sample, m, **auerc_kwargs)
+            boot_stats[m][b] = pgb_auerc(sample, m, gold_col=gold_col, **auerc_kwargs)
 
     alpha = 1.0 - ci
 
