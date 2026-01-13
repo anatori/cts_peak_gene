@@ -12,7 +12,7 @@ from multiprocessing import cpu_count
 from typing import Union, Optional, List, Dict
 from itertools import islice
 
-from ctar.method import poisson_irls_loop, poisson_irls_loop_multi
+from ctar.method import poisson_irls_loop, poisson_irls_loop_multi, poisson_irls_loop_sparse
 
 
 
@@ -29,8 +29,9 @@ def process_sub_batch(subatch_links, atac_sparse, rna_sparse,
 ):
     """
     Worker task to process one sub-batch of links, run poisson IRLS, and save output if save_files.
+    Note: now using sparse-ware IRLS. NOT compatible with ridge.
     """
-    result = poisson_irls_loop(
+    result = poisson_irls_loop_sparse(
         atac_sparse, rna_sparse, subatch_links,
         max_iter=max_iter, tol=tol, ridge=ridge, flag_se=flag_se, flag_ll=flag_ll,
         **irls_kwargs,
