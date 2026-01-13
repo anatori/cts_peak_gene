@@ -86,6 +86,177 @@ def pearson_corr_sparse(mat_X, mat_Y, var_filter=False):
     return mat_corr
 
 
+def poisson_irls_loop_sparse(mat_x_full, mat_y_full, links=None, max_iter=100, tol=1e-3,
+                             flag_float32=True, flag_se=False, flag_ll=False, ridge=False):
+    """
+    Sparse-aware IRLS loop over link pairs.
+
+    Parameters
+    ----------
+    mat_x_full : sp.sparse.csc_matrix (cells x features)
+    mat_y_full : sp.sparse.csc_matrix (cells x features)
+    links : np.ndarray of shape (n_links, 2), rows are (x_idx, y_idx)
+    """
+    if ridge:
+        raise NotImplementedError("ridge=True not yet implemented in sparse IRLS version.")
+
+    dtype = np.float32 if flag_float32 else np.float64
+    n_cells, n_features = mat_x_full.shape
+    if links is None:
+        links = np.stack([np.arange(n_features)] * 2, axis=1)
+
+    results = np.zeros((links.shape[0], 2), dtype=dtype)
+
+    for i, (x_idx, y_idx) in enumerate(links):
+        x_col = mat_x_full.getcol(x_idx)  # CSC column
+        y_col = mat_y_full.getcol(y_idx)
+
+        res = poisson_irls_single_sparse(
+            x_col=x_col,
+            y_col=y_col,
+            n_cells=n_cells,
+            max_iter=max_iter,
+            tol=tol,
+            flag_float32=flag_float32,
+            flag_se=flag_se,
+            flag_ll=flag_ll
+        )
+        results[i, :] = res
+
+    return results
+
+
+def poisson_irls_single_sparse(x_col, y_col, n_cells, max_iter=100, tol=1e-3,
+                               flag_float32=True, flag_se=False, flag_ll=False):
+    """
+    Sparse-aware IRLS Poisson regression for a single (x, y) feature pair.
+    Works directly with sparse columns, avoiding dense materialization.
+    """
+    dtype = np.float32 if flag_float32 else np.float64
+
+    # x nonzeros
+    x_idx = x_col.indices
+    x_data = x_col.data.astype(dtype, copy=False)
+    nnz_x = x_data.size
+    n_zero_x = n_cells - nnz_x
+    x_sq = (x_data * x_data)  # precompute once
+
+    # y aggregates (constant per pair)
+    y_sum = dtype(y_col.sum())  # sum over all cells
+    # sum over overlapping nonzeros only
+    sum_xy = dtype(x_col.multiply(y_col).sum())
+
+    if flag_ll:
+        # For log-likelihood (constant term): sum gammaln(y+1) over y nonzeros; zeros contribute 0
+        sum_gammaln_all = dtype(sp.special.gammaln(y_col.data.astype(dtype, copy=False) + dtype(1.0)).sum())
+
+    beta0 = dtype(0.0)
+    beta1 = dtype(0.0)
+    MAX_EXP = dtype(80.0)
+    MAX_VAL = dtype(1e10)
+    MIN_VAL = dtype(1e-8)
+
+    for _ in range(max_iter):
+        # Group 1: x == 0
+        eta0 = np.clip(beta0, -MAX_EXP, MAX_EXP)
+        w0 = np.exp(eta0)  # scalar
+        if w0 > MAX_VAL:
+            w0 = MAX_VAL
+        sum_w0 = dtype(n_zero_x) * w0  # scalar
+        # No contributions to sum_xw or sum_xxw from zeros
+
+        # Group 2: x != 0 (operate only on nnz entries)
+        eta1 = beta0 + beta1 * x_data
+        np.clip(eta1, -MAX_EXP, MAX_EXP, out=eta1)
+        w1 = np.exp(eta1, dtype=dtype)
+        np.minimum(w1, MAX_VAL, out=w1)
+
+        sum_w1 = dtype(w1.sum())
+        sum_xw = dtype((x_data * w1).sum())
+        sum_xxw = dtype((x_sq * w1).sum())
+
+        sum_w = sum_w0 + sum_w1
+
+        # Aggregated identities avoid per-cell z:
+        # sum_y = beta1 * sum_xw + (beta0 - 1) * sum_w + sum(y)
+        sum_y = beta1 * sum_xw + (beta0 - dtype(1.0)) * sum_w + y_sum
+
+        # sum(x*w*z) = beta0 * sum_xw + beta1 * sum_xxw + sum(x*y) - sum_xw
+        sum_xwz = beta0 * sum_xw + beta1 * sum_xxw + sum_xy - sum_xw
+
+        denom = sum_xxw - (sum_xw * sum_xw) / max(sum_w, MIN_VAL)
+        denom = max(denom, MIN_VAL)
+
+        beta1_new = (sum_xwz - (sum_xw * sum_y) / max(sum_w, MIN_VAL)) / denom
+        beta0_new = (sum_y - beta1_new * sum_xw) / max(sum_w, MIN_VAL)
+
+        if abs(beta1_new - beta1) < tol and abs(beta0_new - beta0) < tol:
+            beta0, beta1 = dtype(beta0_new), dtype(beta1_new)
+            break
+
+        beta0, beta1 = dtype(beta0_new), dtype(beta1_new)
+
+    if flag_se:
+        # Recompute sums at final beta for SE
+        eta0 = np.clip(beta0, -MAX_EXP, MAX_EXP)
+        w0 = np.exp(eta0)
+        if w0 > MAX_VAL:
+            w0 = MAX_VAL
+        sum_w0 = dtype(n_zero_x) * w0
+
+        eta1 = beta0 + beta1 * x_data
+        np.clip(eta1, -MAX_EXP, MAX_EXP, out=eta1)
+        w1 = np.exp(eta1, dtype=dtype)
+        np.minimum(w1, MAX_VAL, out=w1)
+
+        sum_w1 = dtype(w1.sum())
+        sum_xw = dtype((x_data * w1).sum())
+        sum_xxw = dtype((x_sq * w1).sum())
+        sum_w = sum_w0 + sum_w1
+
+        # Var(beta1) = sum_w / (sum_w * sum_xxw - sum_xw^2)
+        denom = sum_w * sum_xxw - (sum_xw * sum_xw)
+        denom = max(denom, MIN_VAL)
+        se_beta1 = np.sqrt(sum_w / denom).astype(dtype)
+        return np.array([se_beta1, beta1], dtype=dtype)
+
+    if flag_ll:
+
+        # Nonzero-x group contributions
+        eta1 = beta0 + beta1 * x_data
+        np.clip(eta1, -MAX_EXP, MAX_EXP, out=eta1)
+        w1 = np.exp(eta1, dtype=dtype)
+        np.minimum(w1, MAX_VAL, out=w1)
+
+        # y values at x != 0 indices (dense of length nnz_x)
+        # This is only nnz_x long, not n_cells
+        y_on_x = y_col[x_idx].toarray().ravel().astype(dtype, copy=False)
+
+        ll_nonzero_x = (y_on_x * eta1 - w1 - sp.special.gammaln(y_on_x + dtype(1.0))).sum(dtype=dtype)
+
+        # Zero-x group contributions:
+        # sum over zero-x cells of y_i * beta0 - w0 - gammaln(y_i + 1)
+        # We avoid iterating by using totals:
+        y_sum_on_x = dtype(y_on_x.sum())
+        y_sum_zero_x = y_sum - y_sum_on_x
+
+        # total gammaln(y+1) - nonzero-x gammaln(y_on_x+1)
+        gammaln_on_x = dtype(sp.special.gammaln(y_on_x + dtype(1.0)).sum())
+        gammaln_zero_x = sum_gammaln_all - gammaln_on_x
+
+        eta0 = np.clip(beta0, -MAX_EXP, MAX_EXP)
+        w0 = np.exp(eta0)
+        if w0 > MAX_VAL:
+            w0 = MAX_VAL
+
+        ll_zero_x = y_sum_zero_x * beta0 - dtype(n_zero_x) * w0 - gammaln_zero_x
+
+        log_lik = dtype(ll_nonzero_x + ll_zero_x)
+        return np.array([log_lik, beta1], dtype=dtype)
+
+    return np.array([beta0, beta1], dtype=dtype)
+
+
 def poisson_irls_loop(mat_x_full, mat_y_full, links=None, max_iter=100, tol=1e-3, ridge=False, flag_float32=True, flag_se=False, flag_ll=False):
     """ Run poisson_irls_single over all link pairs sequentially on worker.
 
