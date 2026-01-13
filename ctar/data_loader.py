@@ -6,6 +6,7 @@ import pandas as pd
 import muon as mu
 import anndata as ad
 import scanpy as sc
+import pickle
 
 import os
 import re
@@ -442,49 +443,7 @@ def check_missing_bins(ctrl_path, corr_path, prefix = 'pearsonr_'):
     return missing_bins
 
 
-def consolidate_individual_nulls(path,startswith = 'pearsonr_ctrl_',b=10000,remove_empty=True,print_missing=False):
-    '''Consolidate null arrays from batch job into single numpy array file.
-
-    Parameters
-    ----------
-    path : str
-        Path containing input files.
-    startswith : str
-        Prefix for all input files.
-    b : int
-        Max length along axis 1.
-    remove_empty : bool
-        Determines whether to remove empty arrays or not.
-    
-    Returns
-    ----------
-    null : np.array
-        Array with consolidated null values.
-
-    '''
-
-    null_arrs = [x for x in os.listdir(path) if x.startswith(startswith)]
-
-    # sort the filenames based on the extracted ranges
-    sorted_filenames = sorted(null_arrs, key=lambda s: int(''.join(c for c in s if c.isdigit())))
-    
-    if print_missing:
-        missing_intervals = [print(f'Missing set {i}') for i in range(b) if f'{startswith}{i}.npy' not in sorted_filenames]
-
-    consolidated_null = []
-    for x in sorted_filenames[0:b]:
-        arr = np.load(path + x)
-        if remove_empty:
-            if arr.size == 0:
-                continue
-        consolidated_null.append(arr)
-    consolidated_null = np.vstack(consolidated_null)
-    print('Array shape:',consolidated_null.shape)
-
-    return consolidated_null
-
-
-def consolidate_null(path,startswith = 'pearsonr_ctrl_',b=101,remove_empty=True,print_missing=False):
+def consolidate_null_npy(path,startswith = 'pearsonr_ctrl_',b=101,remove_empty=True,print_missing=False):
     '''Consolidate null arrays from batch job into single numpy array file.
 
     Parameters
@@ -526,6 +485,56 @@ def consolidate_null(path,startswith = 'pearsonr_ctrl_',b=101,remove_empty=True,
     return consolidated_null
 
 
+def consolidate_null_dic(path, startswith='ctrl_coeff_dic_', remove_empty=True, print_missing=False):
+    '''Consolidate null dictionaries from batch job into single dictionary.
+
+    Parameters
+    ----------
+    path :  str
+        Path containing input files. 
+    startswith : str
+        Prefix for all input files. 
+    remove_empty : bool
+        Determines whether to skip empty dictionaries or not.
+    print_missing : bool
+        Whether to print missing intervals.
+    
+    Returns
+    ----------
+    consolidated_dic :  dict
+        Dictionary with consolidated null values from all batch files.
+
+    '''
+
+    null_dics = [x for x in os.listdir(path) if x.startswith(startswith) and x.endswith('.pkl')]
+
+    if len(null_dics) == 0:
+        raise FileNotFoundError(f"No files starting with '{startswith}' and ending with '.pkl' found in {path}")
+
+    # sort the filenames based on the extracted ranges
+    sorted_filenames = sorted(null_dics, key=extract_range)
+    
+    if print_missing:
+        missing_intervals = check_missing_intervals(sorted_filenames)
+
+    consolidated_dic = {}
+    for x in sorted_filenames:
+        file_path = os.path.join(path, x)
+        with open(file_path, 'rb') as f:
+            dic = pickle.load(f)
+        
+        if remove_empty: 
+            if len(dic) == 0:
+                continue
+        
+        # merge dictionaries; keys should be unique across batches
+        consolidated_dic.update(dic)
+    
+    print(f'Dictionary size: {len(consolidated_dic)} bins')
+
+    return consolidated_dic
+
+
 def load_validation_intersect_bed(path,
     validation_cols,
     candidate_cols=['scent','scmm','signac','ctar','peak','gene'],
@@ -545,7 +554,10 @@ def load_validation_intersect_bed(path,
         df[validation_cols] = df['gt_id'].str.split(';',expand=True).values
         df[candidate_cols] = df['id'].str.split(';',expand=True).values
         df[candidate_methods_cols] = df[candidate_methods_cols].replace('nan', np.nan).astype(float)
-        df['score'] = df['score'].astype(score_type)
+        if score_type == bool:
+            df['score'] = df['score'].map({'True':True,'False':False})
+        else:
+            df['score'] = df['score'].astype(score_type)
 
         if flag_gene_match:
             if flag_verbose:
