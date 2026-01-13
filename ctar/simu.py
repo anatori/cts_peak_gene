@@ -319,7 +319,7 @@ def pgb_auerc(df, col, min_recall = 0.0, max_recall = 1.0, ascending = True, gol
         return np.average(er["enrichment"])
 
 
-def boostrap_pgb_auerc(df, col, ci, n_bs = 1000, **auerc_kwargs):
+def boostrap_pgb_auerc(df, col, ci, n_bs = 1000, method='basic', **auerc_kwargs):
     estimate = pgb_auerc(df, col, **auerc_kwargs)
     boots = np.empty(n_bs)
     N = len(df)
@@ -328,72 +328,124 @@ def boostrap_pgb_auerc(df, col, ci, n_bs = 1000, **auerc_kwargs):
         sample = df.iloc[idx].reset_index(drop=True)
         boots[i] = pgb_auerc(sample, col, **auerc_kwargs)
     alpha = 1.0 - ci
-    lower = np.quantile(boots, alpha / 2.0)
-    upper = np.quantile(boots, 1.0 - alpha / 2.0)
+    if method == "percentile":
+        lower = np.nanquantile(boots, alpha / 2.0)
+        upper = np.nanquantile(boots, 1.0 - alpha / 2.0)
+    elif method == "basic":
+        q_low = np.nanquantile(boots, alpha / 2.0)
+        q_high = np.nanquantile(boots, 1.0 - alpha / 2.0)
+        lower = 2.0 * estimate - q_high
+        upper = 2.0 * estimate - q_low
     out = {"estimate": estimate, "ci_lower": lower, "ci_upper": upper, "bootstraps": boots}
     return out
 
 
-def compute_bootstrap_table(all_df, methods,
-                            gold_col = "label",
-                            reference_method = 'CTAR',
-                            n_bootstrap = 1000, ci = 0.95,
-                            fillna = True,
-                            **auerc_kwargs):
+def compute_bootstrap_table(
+    all_df,
+    methods,
+    gold_col="label",
+    reference_method="CTAR",
+    n_bootstrap=1000,
+    ci=0.95,
+    fillna=True,
+    random_state=None,
+    **auerc_kwargs
+):
     """
-    Compute bootstrap AUERC results for a list of methods present in all_df.
-    all_df is expected to contain rows for all methods, and column name that identifies the method.
-    We assume these are p-values so smaller == better.
+    Paired bootstrap across methods: one resample index per replicate, compute AUERC for all methods,
+    then form differences vs reference on the same replicate.
 
-    Returns a DataFrame with columns:
-      method, estimate (auerc), ci_lower, ci_upper, n_bootstrap
-    Additionally, if reference_method is provided and present, a p_value column is computed
-    testing whether difference (ref - method) > 0 using bootstrap samples (two-sided).
+    Returns DataFrame with columns:
+      method, estimate, ci_lower, ci_upper,
+      diff_estimate, diff_ci_lower, diff_ci_upper, p_value, n_bootstrap
     """
-    rows = []
-    for method in tqdm(methods):
-        all_df[method] = all_df[method].clip(1e-100)
+    rng = np.random.default_rng(random_state)
+
+    # Preprocess once
+    work_df = all_df.copy()
+    for method in methods:
+        work_df[method] = work_df[method].clip(1e-100)
         if fillna:
-            all_df[method] = all_df[method].fillna(1.0)
-        res = boostrap_pgb_auerc(all_df, method, ci,
-                                n_bs=n_bootstrap,
-                                **auerc_kwargs
-        )
+            work_df[method] = work_df[method].fillna(1.0)
+
+    # Point estimates on full data
+    estimates = {m: pgb_auerc(work_df, m, **auerc_kwargs) for m in methods}
+
+    # Storage for bootstrap statistics per method
+    boot_stats = {m: np.empty(n_bootstrap, dtype=float) for m in methods}
+
+    N = len(work_df)
+    for b in range(n_bootstrap):
+        idx = rng.integers(0, N, size=N)  # same indices for all methods
+        sample = work_df.iloc[idx].reset_index(drop=True)
+        for m in methods:
+            boot_stats[m][b] = pgb_auerc(sample, m, **auerc_kwargs)
+
+    alpha = 1.0 - ci
+
+    # Reference bootstrap and estimate
+    if reference_method not in methods:
+        raise ValueError(f"reference_method {reference_method} not in provided methods.")
+    ref_boot = boot_stats[reference_method]
+    ref_est = estimates[reference_method]
+
+    rows = []
+    for m in tqdm(methods):
+        boots = boot_stats[m]
+        # Drop NaNs safely
+        boots = boots[np.isfinite(boots)]
+        ref_boot_clean = ref_boot[np.isfinite(ref_boot)]
+        nmin = min(len(boots), len(ref_boot_clean))
+
+        # If insufficient bootstraps, return NaNs
+        if nmin == 0 or not np.isfinite(estimates[m]) or not np.isfinite(ref_est):
+            rows.append({
+                "method": m,
+                "estimate": estimates[m],
+                "ci_lower": np.nan,
+                "ci_upper": np.nan,
+                "diff_estimate": ref_est - estimates[m],
+                "diff_ci_lower": np.nan,
+                "diff_ci_upper": np.nan,
+                "p_value": np.nan,
+                "n_bootstrap": n_bootstrap
+            })
+            continue
+
+        # Individual method CI (percentile; swap for BCa if desired)
+        ci_low = np.nanquantile(boots, alpha / 2.0)
+        ci_up  = np.nanquantile(boots, 1.0 - alpha / 2.0)
+
+        # Paired differences vs reference on the same replicate indices
+        diffs = ref_boot_clean[:nmin] - boots[:nmin]
+
+        # CI for the difference (percentile)
+        d_ci_low = np.nanquantile(diffs, alpha / 2.0)
+        d_ci_up  = np.nanquantile(diffs, 1.0 - alpha / 2.0)
+
+        # Two-sided p-value from empirical CDF at 0 (strict tails; split zeros)
+        n = diffs.size
+        n_lt = np.sum(diffs < 0)
+        n_gt = np.sum(diffs > 0)
+        n_eq = n - n_lt - n_gt
+        p_lower = (n_lt + 0.5 * n_eq) / n
+        p_upper = (n_gt + 0.5 * n_eq) / n
+        pval = 2.0 * min(p_lower, p_upper)
+        pval = min(1.0, max(0.0, pval))
+
         rows.append({
-            "method": method,
-            "estimate": res["estimate"],
-            "ci_lower": res["ci_lower"],
-            "ci_upper": res["ci_upper"],
-            "n_bootstrap": n_bootstrap,
-            "bootstraps": res["bootstraps"]
+            "method": m,
+            "estimate": estimates[m],
+            "ci_lower": ci_low,
+            "ci_upper": ci_up,
+            "diff_estimate": ref_est - estimates[m],
+            "diff_ci_lower": d_ci_low,
+            "diff_ci_upper": d_ci_up,
+            "p_value": pval,
+            "n_bootstrap": n_bootstrap
         })
-    res_df = pd.DataFrame(rows)
 
-    # p-values comparing to reference method: two-sided bootstrap test on difference
-    if reference_method is not None:
-        if reference_method not in res_df["method"].values:
-            warnings.warn(f"reference_method {reference_method} not present - skipping p-values")
-        else:
-            ref_row = res_df.loc[res_df["method"] == reference_method].iloc[0]
-            ref_boot = ref_row["bootstraps"]
-            for idx, row in res_df.iterrows():
-                boots = row["bootstraps"]
-                if boots.size == 0 or ref_boot.size == 0:
-                    pval = np.nan
-                else:
-                    # align bootstrap sample sizes; if equal n_bootstrap we can subtract elementwise
-                    nmin = min(len(boots), len(ref_boot))
-                    diffs = ref_boot[:nmin] - boots[:nmin]
-                    # two-sided p-value: fraction of diffs >=0 and <=0; compute empirical two-sided
-                    p_lower = np.mean(diffs <= 0)
-                    p_upper = np.mean(diffs >= 0)
-                    pval = 2.0 * min(p_lower, p_upper)
-                    pval = min(1.0, max(0.0, pval))
-                res_df.at[idx, "p_value"] = pval
-
-    # drop bootstraps (they can be large)
-    res_df_out = res_df.drop(columns=["bootstraps"])
-    return res_df_out
+    return pd.DataFrame(rows)
 
 
 def scent_enrichment_setup(annotations_df,
