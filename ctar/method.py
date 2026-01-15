@@ -9,6 +9,7 @@ import warnings
 import random
 from tqdm import tqdm
 from Bio.SeqUtils import gc_fraction
+from pybedtools import BedTool
 import anndata as ad
 import scanpy as sc
 import muon as mu
@@ -822,6 +823,41 @@ def gc_content(adata, col='gene_ids', genome_file='GRCh38.p13.genome.fa.bgz'):
     return gc
 
 
+def compute_is_promoter_peak(peaks, genes_df, promoter_bp=2000,
+                             peak_col_name='peak', chr_prefix='chr'):
+    """
+    peaks: iterable of peak strings like 'chr1:100-200' or 'chr1-100-200'
+    genes_df: must have columns ['chr','tss'] (tss int), and ideally unique gene IDs
+    Returns: pd.Series aligned to peaks order with 0/1 promoter flag
+    """
+    peaks_df = pd.DataFrame({peak_col_name: list(peaks)})
+    # Parse peaks
+    peaks_df[['chr','start','end']] = peaks_df[peak_col_name].str.extract(r'(\w+)[-:](\d+)-(\d+)')
+    peaks_df['start'] = peaks_df['start'].astype(int)
+    peaks_df['end']   = peaks_df['end'].astype(int)
+
+    # Clean gene chrom format
+    g = genes_df.copy()
+    # Ensure chr has "chr" prefix
+    g['chr'] = g['chr'].astype(str)
+    g.loc[~g['chr'].str.startswith('chr'), 'chr'] = chr_prefix + g.loc[~g['chr'].str.startswith('chr'), 'chr']
+    g['tss'] = g['tss'].astype('Int64')
+
+    # Build BEDs: peaks and TSS windows
+    peaks_bed = BedTool.from_dataframe(peaks_df[['chr','start','end',peak_col_name]]).sort()
+    tss_df = g[['chr','tss']].dropna().drop_duplicates().copy()
+    tss_df['start'] = (tss_df['tss'] - promoter_bp).clip(lower=0)
+    tss_df['end']   = (tss_df['tss'] + promoter_bp)
+    tss_df['name']  = 'TSS'
+    tss_bed = BedTool.from_dataframe(tss_df[['chr','start','end','name']]).sort()
+
+    # Intersect: which peaks overlap any TSS window
+    hits = peaks_bed.intersect(tss_bed, u=True).to_dataframe(names=['chr','start','end',peak_col_name])
+    promoter_set = set(hits[peak_col_name].values)
+
+    return peaks_df[peak_col_name].isin(promoter_set).astype(int)
+
+
 def sub_bin(df, group_col, val_col, num_sub_bins, out_col):
     ''' Assigns nested bin labels within groups.
     ''' 
@@ -957,9 +993,21 @@ def get_value_bins(adata, num_bins=5, b=200, type='mean', col='gene_ids', layer=
     return bins
 
 
-def create_ctrl_peaks(adata,num_bins=5,b=1000,type='mean',peak_col='gene_ids',layer='atac_raw',return_bins_df=False,genome_file=None):
-
-    ''' Obtains GC and MFA bins for ATAC peaks.
+def create_ctrl_peaks(
+    adata,
+    num_bins=5,
+    b=1000,
+    type='mean',
+    peak_col='gene_ids',
+    layer='atac_raw',
+    return_bins_df=False,
+    genome_file=None,
+    add_promoter_bin=False,
+    genes_df=None,
+    promoter_bp=5000,
+):
+    """
+    Obtains GC and MFA bins for ATAC peaks. Optionally, 1/0 if promoter.
     
     Parameters
     ----------
@@ -981,35 +1029,61 @@ def create_ctrl_peaks(adata,num_bins=5,b=1000,type='mean',peak_col='gene_ids',la
     ctrl_peaks : np.ndarray
         Matrix of length (#peaks,n) where n is number of random peaks generated (1000 by default).
     
-    '''
-    
+    """
+
     if type == 'mean_value':
         bins = get_value_bins(adata, num_bins=num_bins, b=b, type=type, col=peak_col, layer=layer, genome_file=genome_file)
-        type = 'mean' # ensures compatibility for future types
+        type = 'mean'
     else:
         bins = get_bins(adata, num_bins=num_bins, type=type, col=peak_col, layer=layer, genome_file=genome_file)
+
     print('Get_bins done.')
+
+    if add_promoter_bin:
+        if genes_df is None:
+            raise ValueError("genes_df is required when add_promoter_bin=True")
+        g = genes_df.copy()
+        if 'tss' not in g.columns:
+            if 'strand' not in g.columns:
+                raise ValueError("genes_df must include 'strand' to compute TSS, or provide a precomputed 'tss' column.")
+            g = add_tss_column(g, chr_col='chr', start_col='start', end_col='end', strand_col='strand')
+
+        peaks = adata.var[peak_col].values
+        bins['prom_bin'] = compute_is_promoter_peak(peaks, g, promoter_bp=promoter_bp).values
+        print(f'Found {bins['prom_bin'].sum()} promoter-proximal peaks.')
+    else:
+        bins['prom_bin'] = 0 # single group
+
     # Group indices for rand_peaks
-    bins_grouped = bins[['ind',f'{type}_bin']].groupby([f'{type}_bin']).ind.apply(np.array)
-    
-    # Generate random peaks
-    ctrl_peaks = np.empty((len(bins),b))
+    group_cols = [f'{type}_bin', 'prom_bin']
+    bins_grouped = (
+        bins[['ind'] + group_cols]
+        .groupby(group_cols)
+        .ind
+        .apply(np.array)
+    )
+
+    # generate random peaks
+    ctrl_peaks = np.empty((len(bins), b), dtype=int)
     # iterate through each row of bins
     for i in range(len(bins)):
         peak = bins.iloc[i]
-        row_bin = bins_grouped.loc[peak[f'{type}_bin']]
-        row_bin_copy = row_bin[row_bin!=peak.ind]
+        key = tuple(peak[c] for c in group_cols)
+        row_bin = bins_grouped.loc[key]
+        row_bin_copy = row_bin[row_bin != peak.ind]
+        if len(row_bin_copy) < b:
+            print(f"Warning: Insufficient population for bin {key}. Population size: {len(row_bin_copy)}, required: {b}")
         ctrl_peaks[i] = np.random.choice(row_bin_copy, size=(b,), replace=False)
+
     print('Ctrl index array done.')
-    
-    # for duplicated peaks, simply copy these rows
+
+    # for duplicated peaks, copy rows
     # since they will be compared with different genes anyway
-    ind,_ = pd.factorize(adata.var[peak_col])
-    ctrl_peaks = ctrl_peaks[ind,:].astype(int)
+    ind, _ = pd.factorize(adata.var[peak_col])
+    ctrl_peaks = ctrl_peaks[ind, :].astype(int)
 
     if return_bins_df:
-        return ctrl_peaks,bins
-    
+        return ctrl_peaks, bins
     return ctrl_peaks
 
 

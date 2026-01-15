@@ -98,7 +98,7 @@ def peak_to_gene(peaks_df,genes_df,clean=True,split_peaks=True,distance=500000,c
     return peak_gene_links
 
 
-def add_gene_positions(row,dictionary,gene_col='gene'):
+def add_gene_positions(row,dictionary,gene_col='gene',attributes=None):
 
     ''' Add pre-loaded gene positions to desired dataframe.
     
@@ -121,22 +121,42 @@ def add_gene_positions(row,dictionary,gene_col='gene'):
     
     '''
     
+    if attributes is None:
+        attributes = ['chromosome_name', 'start_position', 'end_position']
     try:
         info = dictionary[row[gene_col]]
-    except: return [None]*3 # if the key does not exist in dict
-    chrom = info['chromosome_name']
-    if chrom.isnumeric() or (chrom=='X') or (chrom=='Y'):
-        chrom = 'chr' + chrom
-    if chrom == 'MT': # mitochondrial mapped in hg38 as chrM
-        chrom = 'chrM'
-    start = info['start_position']
-    end = info['end_position']
-    return [chrom,start,end]
+    except Exception:
+        return [None] * len(attributes)
+    out = []
+    for attr in attributes:
+        val = info.get(attr, None)
+        out.append(val)
+    return out
 
 
-def get_gene_coords(gene_df,gene_id_type='ensembl_gene_id',dataset='hsapiens_gene_ensembl',
-                    attributes=['chromosome_name','start_position','end_position'],
-                    col_names=['chr','start','end'],gene_col='gene'):
+def normalize_chr(chrom):
+    if chrom is None or (isinstance(chrom, float) and np.isnan(chrom)):
+        return None
+    chrom = str(chrom)
+    if chrom.isnumeric() or chrom in ('X','Y'):
+        return 'chr' + chrom
+    if chrom in ('MT', 'M'):
+        return 'chrM'
+    if chrom.startswith('chr'):
+        return chrom
+    return chrom
+
+
+def get_gene_coords(
+    gene_df,
+    gene_id_type='ensembl_gene_id',
+    dataset='hsapiens_gene_ensembl',
+    attributes=['chromosome_name','start_position','end_position','strand'],
+    col_names=['chr','start','end','strand'],
+    gene_col='gene',
+    add_tss=True,
+    tss_col='tss'
+):
     
     ''' Uses BioMart API to insert gene coordinates based on a given gene_id_type.
     
@@ -157,6 +177,10 @@ def get_gene_coords(gene_df,gene_id_type='ensembl_gene_id',dataset='hsapiens_gen
         Name of columns you will be adding. Length must match length of attributes.
     gene_col : str
         The column in gene_df containing the gene_id_type IDs.
+    add_tss : bool
+        Optionally add gene TSS.
+    tss_col : 'tss'
+        What to label TSS column.
 
     Returns
     -------
@@ -189,8 +213,20 @@ def get_gene_coords(gene_df,gene_id_type='ensembl_gene_id',dataset='hsapiens_gen
 
     # add attributes to dataframe
     gene_df[col_names] = gene_df.apply(add_gene_positions, axis=1, result_type='expand',
-                                              args=(gene_positions,gene_col))
-    
+                                              args=(gene_positions,gene_col,attributes))
+    gene_df['chr'] = gene_df['chr'].apply(normalize_chr)
+
+    for c in ('start','end'):
+        if c in gene_df.columns:
+            gene_df[c] = pd.to_numeric(gene_df[c], errors='coerce').astype('Int64')
+    if 'strand' in gene_df.columns:
+        gene_df['strand'] = pd.to_numeric(gene_df['strand'], errors='coerce').astype('Int64')
+
+    if add_tss:
+        if 'strand' not in gene_df.columns:
+            raise ValueError("strand is required to compute TSS. Include 'strand' in attributes.")
+        gene_df[tss_col] = gene_df['start'].where(gene_df['strand'] == 1,gene_df['end']).astype('Int64')
+
     return gene_df
 
 

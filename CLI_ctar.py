@@ -163,10 +163,11 @@ def main(args):
             adata_atac = adata_rna[:,adata_rna.var.feature_types == 'ATAC'].copy()
             adata_rna = adata_rna[:,adata_rna.var.feature_types == 'GEX'].copy()
 
-        if adata_rna.var.index.name is not None:
-            adata_rna.var.index.name = None
-        if adata_atac.var.index.name is not None:
-            adata_atac.var.index.name = None
+        print("# RNA file is shape",adata_rna.shape)
+        print("# ATAC file is shape",adata_atac.shape)
+
+        adata_rna.var.index.name = ''
+        adata_atac.var.index.name = ''
 
         adata_rna.var['gene'] = adata_rna.var.index
         adata_atac.var['peak'] = adata_atac.var.index
@@ -257,7 +258,7 @@ def main(args):
             if ctrl_coeff_files:
                 print("# Consolidating array outputs...")
                 ctrl_coeff = ctar.data_loader.consolidate_null_npy(
-                    path=RESULTS_PATH,
+                    path=f'{RESULTS_PATH}/',
                     startswith=prefix,
                     b=n_ctrl,
                     remove_empty=True,
@@ -297,7 +298,7 @@ def main(args):
 
         print("# Running --job compute_ctar")
 
-        adata_rna.var = ctar.data_loader.get_gene_coords(adata_rna.var)
+        adata_rna.var = ctar.data_loader.get_gene_coords(adata_rna.var, add_tss=True)
         cis_links_df = ctar.data_loader.peak_to_gene(adata_atac.var, adata_rna.var, split_peaks=True)
 
         if USE_INF_MODE: 
@@ -306,7 +307,8 @@ def main(args):
             # Create control peaks (not peak-gene pairs)
             ctrl_peaks = ctar.method.create_ctrl_peaks(
                 adata_atac, type=atac_type, num_bins=atac_bins, b=n_ctrl,
-                peak_col='peak', layer='counts', genome_file=GENOME_FILE
+                peak_col='peak', layer='counts', genome_file=GENOME_FILE,
+                add_promoter_bin=True, genes_df=adata_rna.var,
             )
             
             # Get cis links indices
@@ -343,6 +345,7 @@ def main(args):
                     batch_size=BATCH_SIZE,
                     scheduler="processes",
                     n_workers=n_cores,
+                    flag_se=True,
                 )
             else:
                 cis_coeff_dic = ctar.parallel.multiprocess_poisson_irls(
@@ -501,14 +504,16 @@ def main(args):
 
         print("# Running --job generate_links")
 
-        adata_rna.var = ctar.data_loader.get_gene_coords(adata_rna.var)
+        adata_rna.var = ctar.data_loader.get_gene_coords(adata_rna.var, add_tss=True)
         cis_links_df = ctar.data_loader.peak_to_gene(adata_atac.var, adata_rna.var, split_peaks=True)
 
         if USE_INF_MODE:
             print("# Using inf.inf mode - creating control peaks only")
+            print(f"# {atac_type},{atac_bins},{n_ctrl},{adata_atac.shape},{adata_rna.var.shape}")
             ctrl_peaks = ctar.method.create_ctrl_peaks(
                 adata_atac, type=atac_type, num_bins=atac_bins, b=n_ctrl,
-                peak_col='peak', layer='counts', genome_file=GENOME_FILE
+                peak_col='peak', layer='counts', genome_file=GENOME_FILE,
+                add_promoter_bin=True, genes_df=adata_rna.var,
             )
             
             results_folder = f'{TARGET_PATH}/{JOB_ID}_results'
@@ -554,7 +559,8 @@ def main(args):
             print("# Using inf.inf mode - creating control peaks only")
             ctrl_peaks = ctar.method.create_ctrl_peaks(
                 adata_atac, type=atac_type, num_bins=atac_bins, b=n_ctrl,
-                peak_col='peak', layer='counts', genome_file=GENOME_FILE
+                peak_col='peak', layer='counts', genome_file=GENOME_FILE,
+                add_promoter_bin=True, genes_df=adata_rna.var,
             )
             
             results_folder = f'{TARGET_PATH}/{JOB_ID}_results'
@@ -596,7 +602,7 @@ def main(args):
 
         if not RESULTS_PATH: 
 
-            adata_rna.var = ctar.data_loader.get_gene_coords(adata_rna.var)
+            adata_rna.var = ctar.data_loader.get_gene_coords(adata_rna.var, add_tss=True)
             cis_links_df = ctar.data_loader.peak_to_gene(adata_atac.var, adata_rna.var, split_peaks=True)
 
             if not USE_INF_MODE: 
@@ -620,11 +626,18 @@ def main(args):
             adata_rna.var['rna_idx'] = range(len(adata_rna.var))
             cis_links_df['atac_idx'] = cis_links_df['peak'].map(adata_atac.var['atac_idx'])
             cis_links_df['rna_idx'] = cis_links_df['gene'].map(adata_rna.var['rna_idx'])
-            
+            cis_links_array = cis_links_df[['atac_idx', 'rna_idx']].to_numpy()
+
             # Create cis links dictionary
-            cis_links_dic = {}
-            for idx, row in cis_links_df.iterrows():
-                cis_links_dic[idx] = np.array([[row['atac_idx'], row['rna_idx']]])
+            dic_batch_size = 512
+            cis_links_dic = {
+                i: cis_links_array[i * dic_batch_size: (i + 1) * dic_batch_size]
+                for i in range((len(cis_links_array) + dic_batch_size - 1) // dic_batch_size)
+            }
+            cis_idx_map = {
+                i: list(range(i * dic_batch_size, min((i + 1) * dic_batch_size, len(cis_links_array))))
+                for i in cis_links_dic.keys()
+            }
             
             rna_sparse = adata_rna.layers['counts']
             atac_sparse = adata_atac.layers['counts']
@@ -653,10 +666,14 @@ def main(args):
                     flag_se=True,
                 )
             print('# Cis-links IRLS time = %0.2fs' % (time.time() - start_time))
-            
-            # Convert dictionary to array
-            cis_coeff = np.array([cis_coeff_dic[idx][0] for idx in sorted(cis_coeff_dic.keys())])
-            
+
+            cis_coeff = np.empty((len(cis_links_array), 2), dtype=np.float32)
+            for batch_key, coeffs in cis_coeff_dic.items():
+                # Use cis_idx_map to restore coefficients and SE to the correct positions
+                for i, idx in enumerate(cis_idx_map[batch_key]):
+                    cis_coeff[idx, 0] = coeffs[i][0]
+                    cis_coeff[idx, 1] = coeffs[i][1]
+                
         else:
             
             # Standard binned mode
@@ -739,12 +756,14 @@ def main(args):
                 else:
                     ctrl_peaks = ctar.method.create_ctrl_peaks(
                         adata_atac, type=atac_type, num_bins=atac_bins, b=n_ctrl,
-                        peak_col='peak', layer='counts', genome_file=GENOME_FILE
+                        peak_col='peak', layer='counts', genome_file=GENOME_FILE,
+                        add_promoter_bin=True, genes_df=adata_rna.var,
                     )
             else:
                 ctrl_peaks = ctar.method.create_ctrl_peaks(
                     adata_atac, type=atac_type, num_bins=atac_bins, b=n_ctrl,
-                    peak_col='peak', layer='counts', genome_file=GENOME_FILE
+                    peak_col='peak', layer='counts', genome_file=GENOME_FILE,
+                    add_promoter_bin=True, genes_df=adata_rna.var,
                 )
             
             # Get cis links indices
@@ -766,12 +785,24 @@ def main(args):
             print(f'# Computing controls for {len(cis_links_subset)} links...')
             
             # Create control links dictionary
-            ctrl_links_dic = {}
-            for idx, row in cis_links_subset.iterrows():
+            ctrl_links_array = []
+            for idx, row in cis_links_df.iterrows():
                 atac_idx = row['atac_idx']
                 rna_idx = row['rna_idx']
-                ctrl_peak_indices = ctrl_peaks[atac_idx, : n_ctrl]
-                ctrl_links_dic[idx] = np.column_stack([ctrl_peak_indices, np.full(n_ctrl, rna_idx)])
+                ctrl_peak_indices = ctrl_peaks[atac_idx, :n_ctrl]
+                ctrl_links_array.extend([[peak_idx, rna_idx] for peak_idx in ctrl_peak_indices])
+            ctrl_links_array = np.array(ctrl_links_array)
+            
+            # Chunk the control links array into batches
+            dic_batch_size = 512
+            ctrl_links_dic = {
+                i: ctrl_links_array[i * dic_batch_size: (i + 1) * dic_batch_size]
+                for i in range((len(ctrl_links_array) + dic_batch_size - 1) // dic_batch_size)
+            }
+            ctrl_idx_map = {
+                i: list(range(i * dic_batch_size, min((i + 1) * dic_batch_size, len(ctrl_links_array))))
+                for i in ctrl_links_dic.keys()
+            }
             
             rna_sparse = adata_rna.layers['counts']
             atac_sparse = adata_atac.layers['counts']
@@ -786,7 +817,7 @@ def main(args):
                     atac_sparse=atac_sparse,
                     rna_sparse=rna_sparse,
                     covar_mat=covar_mat,
-                    batch_size=(BATCH_SIZE//10)+1,
+                    batch_size=BATCH_SIZE,
                     scheduler="processes",
                     n_workers=n_cores,
                 )
@@ -795,15 +826,19 @@ def main(args):
                     links_dict=ctrl_links_dic,
                     atac_sparse=atac_sparse,
                     rna_sparse=rna_sparse,
-                    batch_size=(BATCH_SIZE//10)+1,
+                    batch_size=BATCH_SIZE,
                     scheduler="processes",
                     n_workers=n_cores,
                     flag_se=True,
                 )
             print('# Control links IRLS time = %0.2fs' % (time.time() - start_time))
             
-            # Convert dictionary to array
-            ctrl_coeff = np.array([ctrl_coeff_dic[idx] for idx in sorted(ctrl_coeff_dic.keys())])
+            # Map coefficients back to their original indices
+            ctrl_coeff = np.empty((len(ctrl_links_array), 2), dtype=np.float32)
+            for batch_key, coeffs in ctrl_coeff_dic.items():
+                for i, idx in enumerate(ctrl_idx_map[batch_key]):
+                    ctrl_coeff[idx, 0] = coeffs[i][0]
+                    ctrl_coeff[idx, 1] = coeffs[i][1]
             
         else:
             
@@ -885,7 +920,7 @@ def main(args):
                 pickle.dump(ctrl_coeff_dic, f)
 
             if ARRAY_IDX is None:
-                with open(f'{results_folder}ctrl_links_dic.pkl', 'wb') as f:
+                with open(f'{results_folder}/ctrl_links_dic.pkl', 'wb') as f:
                     pickle.dump(ctrl_links_dic, f)
                 cis_links_df.to_csv(f'{results_folder}cis_links_df.csv')
 

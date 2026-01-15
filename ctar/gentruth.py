@@ -359,6 +359,108 @@ def add_gene_distances(query_df, gene_df, gene_col='gene'):
     return intersect_df
 
 
+def find_gene_tss():
+    """
+    Fetch gene coordinates + strand from Ensembl BioMart and compute TSS.
+
+    Returns
+    -------
+    gene_df : pd.DataFrame
+        Columns: ['gene', 'gene_chr', 'tss', 'gene_start', 'gene_end', 'strand']
+    """
+    server = BiomartServer("http://www.ensembl.org/biomart")
+    dataset = server.datasets['hsapiens_gene_ensembl']
+
+    # More robust than relying on transcription_start_site attribute
+    attributes = [
+        'ensembl_gene_id',
+        'chromosome_name',
+        'start_position',
+        'end_position',
+        'strand'
+    ]
+
+    response = dataset.search({'attributes': attributes})
+    text = response.raw.data.decode('ascii')
+
+    rows = []
+    for line in text.splitlines():
+        ensg, chrom, start, end, strand = line.split('\t')
+        # Skip weird contigs / missing
+        if chrom in ["", "CHR_HSCHR6_MHC_QBL_CTG1", "HSCHR6_MHC_COX_CTG1", "HSCHR6_MHC_DBB_CTG1"]:
+            continue
+        rows.append((ensg, chrom, start, end, strand))
+
+    gene_df = pd.DataFrame(rows, columns=["gene", "chromosome_name", "gene_start", "gene_end", "strand"])
+
+    # Coerce types
+    gene_df["gene_start"] = pd.to_numeric(gene_df["gene_start"], errors="coerce")
+    gene_df["gene_end"]   = pd.to_numeric(gene_df["gene_end"], errors="coerce")
+    gene_df["strand"]     = pd.to_numeric(gene_df["strand"], errors="coerce")
+
+    gene_df = gene_df.dropna(subset=["gene_start", "gene_end", "strand"]).copy()
+
+    # Add chr prefix (and drop non-standard chromosomes if you want)
+    gene_df["gene_chr"] = "chr" + gene_df["chromosome_name"].astype(str)
+
+    # Compute TSS from strand
+    gene_df["tss"] = gene_df["gene_start"].where(gene_df["strand"] == 1, gene_df["gene_end"]).astype("Int64")
+
+    # Keep only useful columns
+    gene_df = gene_df[["gene", "gene_chr", "tss", "gene_start", "gene_end", "strand"]].copy()
+
+    return gene_df
+
+
+def add_tss_distances(query_df, gene_df, gene_col="gene"):
+    """
+    Adds gene TSS and calculates distance from query interval to TSS.
+
+    Parameters
+    ----------
+    query_df : pd.DataFrame
+        Must contain columns ['chr', 'start', 'end', gene_col] (end optional; will be created).
+
+    gene_df : pd.DataFrame
+        Output of find_gene_tss() containing columns ['gene','gene_chr','tss'] at minimum.
+
+    Returns
+    -------
+    out : pd.DataFrame
+        Adds columns: gene_chr, tss, same_chr, distance (signed), abs_distance
+    """
+    out = query_df.copy()
+    if "end" not in out.columns:
+        out["end"] = out["start"]
+
+    out = out.merge(gene_df[["gene", "gene_chr", "tss"]], how="left", left_on=gene_col, right_on="gene")
+
+    # same chromosome?
+    out["same_chr"] = out["gene_chr"] == out["chr"]
+
+    # distance from interval to point (TSS)
+    # If TSS is inside [start,end], distance = 0
+    # Else distance is signed to the nearest boundary:
+    #   positive if peak is downstream of TSS, negative if upstream (based on genomic coordinate)
+    out["start"] = pd.to_numeric(out["start"], errors="coerce")
+    out["end"]   = pd.to_numeric(out["end"], errors="coerce")
+    out["tss"]   = pd.to_numeric(out["tss"], errors="coerce")
+
+    # signed distance: choose boundary that is closest to the point, with sign
+    # Cases:
+    #   end < tss  => peak entirely left of TSS => distance = end - tss (negative)
+    #   start > tss => peak entirely right of TSS => distance = start - tss (positive)
+    #   otherwise overlap => 0
+    out["distance"] = np.where(
+        out["end"] < out["tss"], out["end"] - out["tss"],
+        np.where(out["start"] > out["tss"], out["start"] - out["tss"], 0)
+    )
+
+    out["abs_distance"] = np.abs(out["distance"])
+
+    return out
+
+
 def add_pli(query_df, pli_dict, gene_col='gene'):
     ''' Maps genes with pLI. pli_dict should be in format {'gene': pLI}.
     '''
