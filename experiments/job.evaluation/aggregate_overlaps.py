@@ -9,7 +9,7 @@ def main(args):
     BED_PATH = args.bed_path
     RES_PATH = args.res_path
     DATASET_NAME = args.dataset_name
-    METHOD_COLS = args.method_cols
+    METHOD_COLS = [m.strip() for m in args.method_cols.split(",")]
     CAND_COLS = METHOD_COLS + ['peak','gene']
 
     cols_dict = {
@@ -24,13 +24,15 @@ def main(args):
     eval_df_dict = dict.fromkeys(cols_dict.keys(), [])
     for file in os.listdir(BED_PATH):
         label = [k for k in cols_dict.keys() if k in file][0]
+        filename = file.split('.')[0]
+        print(f'{filename}, {label}')
         score_type = bool if label == 'crispr' else float
-        eval_df_dict[label] = ctar.data_loader.load_validation_intersect_bed(f'{BED_PATH}/{label}_{DATASET_NAME}.bed',
+        eval_df_dict[filename] = ctar.data_loader.load_validation_intersect_bed(f'{BED_PATH}/{file}',
                                                                              cols_dict[label],
                                                                              candidate_cols=CAND_COLS,
                                                                              candidate_methods_cols=METHOD_COLS,
                                                                              score_type=score_type)
-        eval_df_dict[label].to_csv(f'{RES_PATH}/{file.split('.')[0]}.csv',index=False)
+        eval_df_dict[filename].to_csv(f'{RES_PATH}/{filename}.csv',index=False)
 
 
 if __name__ == "__main__":
@@ -39,7 +41,7 @@ if __name__ == "__main__":
     parser.add_argument("--bed_path", type=str, default='/projects/zhanglab/users/ana/bedtools2/ana_bedfiles/validation/overlap/neat')
     parser.add_argument("--res_path", type=str, default='/projects/zhanglab/users/ana/multiome/validation/neat')
     parser.add_argument("--dataset_name", type=str, default='neat')
-    parser.add_argument("--method_cols", type=list, default=['scent','scmm','signac','ctar','ctar_z','ctar_filt_z','ctar_filt'])
+    parser.add_argument("--method_cols", type=str, default='scent,scmm,signac,ctar_z,ctar,ctar_filt_z,ctar_filt')
 
     args = parser.parse_args()
     main(args)

@@ -17,11 +17,10 @@ def canonicalize_peak(s: pd.Series) -> pd.Series:
     def _canon(x: str) -> str:
         m = peak_regex.match(x)
         if not m:
-            # Leave as-is; downstream will error if truly unparsable
             return x
         chrom = m.group("chr").upper()
         if chrom in {"X", "Y", "MT"}:
-            chrom = chrom.lower()  # keep common lowercases for special chromosomes
+            chrom = chrom.lower()
         return f"chr{chrom}:{m.group('start')}-{m.group('end')}"
     return s.map(_canon)
 
@@ -29,12 +28,12 @@ def canonicalize_peak(s: pd.Series) -> pd.Series:
 def load_indexed_series(file_path: str, metric_specs: list[tuple[str, str]]) -> dict[str, pd.Series]:
     """
     Load a file and return a dict of Series indexed by canonical 'peak;gene'.
-    Preserves multiplicity (no dedupe) to match notebook concat behavior.
+    If duplicates exist for the same 'peak;gene', reduce by taking max.
     """
     if not os.path.isfile(file_path):
         return {}
 
-    df = pd.read_csv(file_path,index_col=0)
+    df = pd.read_csv(file_path, sep=None, engine='python')
 
     # Ensure required keys exist
     for required in ["peak", "gene"]:
@@ -54,9 +53,27 @@ def load_indexed_series(file_path: str, metric_specs: list[tuple[str, str]]) -> 
             s = df[source_col].copy()
             s.index = idx
             s.name = out_label
+
+            # Deduplicate by taking max per 'peak;gene'
+            if s.index.has_duplicates:
+                # coerce to numeric to ensure proper max behavior for pvals/z-scores
+                s_numeric = pd.to_numeric(s, errors="coerce")
+                s = s_numeric.groupby(level=0).max()
+                s.name = out_label
+
             out[out_label] = s
 
     return out
+
+
+def _opt_none(x: str | None) -> str | None:
+    """
+    Return None for empty/none-like strings, otherwise the original string.
+    """
+    if x is None:
+        return None
+    s = str(x).strip().lower()
+    return None if s in {"", "none", "null", "na"} else x
 
 
 def main(args):
@@ -67,26 +84,36 @@ def main(args):
     CTAR_FILE = args.ctar_file
     CTAR_FILT_FILE = args.ctar_filt_file
 
-    SCENT_COL = args.scent_col
-    SCMM_COL = args.scmm_col
-    SIGNAC_COL = args.signac_col
-    CTAR_COL_Z = args.ctar_col_z
-    CTAR_COL = args.ctar_col
-    CTAR_FILT_COL_Z = args.ctar_filt_col_z
-    CTAR_FILT_COL = args.ctar_filt_col
+    SCENT_COL = _opt_none(args.scent_col)
+    SCMM_COL = _opt_none(args.scmm_col)
+    SIGNAC_COL = _opt_none(args.signac_col)
+    CTAR_COL_Z = _opt_none(args.ctar_col_z)
+    CTAR_COL = _opt_none(args.ctar_col)
+    CTAR_FILT_COL_Z = _opt_none(args.ctar_filt_col_z)
+    CTAR_FILT_COL = _opt_none(args.ctar_filt_col)
 
     BED_PATH = args.bed_path
     DATASET_NAME = args.dataset_name
 
-    metric_order = ["scent", "scmm", "signac", "ctar_z", "ctar", "ctar_filt_z", "ctar_filt"]
+    if args.method_cols:
+        METHOD_COLS = [m.strip() for m in args.method_cols.split(",") if m.strip()]
+    else:
+        METHOD_COLS = ["scent", "scmm", "signac", "ctar_z", "ctar", "ctar_filt_z", "ctar_filt"]
 
-    source_configs = [
-        (SCENT_FILE, [("scent", SCENT_COL)]),
-        (SCMM_FILE, [("scmm", SCMM_COL)]),
-        (SIGNAC_FILE, [("signac", SIGNAC_COL)]),
-        (CTAR_FILE, [("ctar_z", CTAR_COL_Z), ("ctar", CTAR_COL)]),
-        (CTAR_FILT_FILE, [("ctar_filt_z", CTAR_FILT_COL_Z), ("ctar_filt", CTAR_FILT_COL)]),
-    ]
+    # Build source configs only with provided columns
+    source_configs: list[tuple[str, list[tuple[str, str]]]] = []
+
+    def add_source(file_path: str | None, pairs: list[tuple[str, str | None]]):
+        if not file_path:
+            return
+        specs = [(label, col) for (label, col) in pairs if col]  # keep only non-empty columns
+        if specs:
+            source_configs.append((file_path, specs))
+    add_source(SCENT_FILE, [("scent", SCENT_COL)])
+    add_source(SCMM_FILE, [("scmm", SCMM_COL)])
+    add_source(SIGNAC_FILE, [("signac", SIGNAC_COL)])
+    add_source(CTAR_FILE, [("ctar_z", CTAR_COL_Z), ("ctar", CTAR_COL)])
+    add_source(CTAR_FILT_FILE, [("ctar_filt_z", CTAR_FILT_COL_Z), ("ctar_filt", CTAR_FILT_COL)])
 
     # Build dict of Series
     dfs: "OrderedDict[str, pd.Series]" = OrderedDict()
@@ -134,7 +161,7 @@ def main(args):
     links_df["gene"] = idx_split[1].values
 
     # Parse chr, start, end from canonical peak
-    peak_parts = links_df["peak"].str.extract(r"^chr(?P<chr>[0-9xy mt]+):(?P<start>\d+)-(?P<end>\d+)$", flags=re.IGNORECASE)
+    peak_parts = links_df["peak"].str.extract(r"^(?P<chr>chr(?:[0-9XYMT]+)):(?P<start>\d+)-(?P<end>\d+)$", flags=re.IGNORECASE)
     if peak_parts.isnull().any().any():
         bad = links_df.loc[peak_parts.isnull().any(axis=1), "peak"].unique()[:5]
         raise RuntimeError(f"Some peaks are malformed and could not be parsed, e.g.: {bad}")
@@ -143,7 +170,10 @@ def main(args):
     links_df[["start", "end"]] = links_df[["start", "end"]].astype(int)
 
     # Build final_col in canonical metric order, only including present metrics
-    present_metric_cols = [c for c in metric_order if c in links_df.columns]
+    present_metric_cols = [c for c in METHOD_COLS if c in links_df.columns]
+    missing = [c for c in METHOD_COLS if c not in links_df.columns]
+    if missing:
+        print(f"Warning! Missing metrics in merged dataframe: {missing}")
     final_components = present_metric_cols + ["peak", "gene"]
     links_df["final_col"] = links_df[final_components].astype(str).agg(";".join, axis=1)
 
@@ -161,8 +191,8 @@ if __name__ == "__main__":
     parser.add_argument("--scent_file", type=str, default="/projects/zhanglab/users/ana/multiome/results/scent/myscent_neatseq.txt")
     parser.add_argument("--scmm_file", type=str, default="/projects/zhanglab/users/ana/multiome/results/scmultimap/scmultimap_neat_cis.csv")
     parser.add_argument("--signac_file", type=str, default="/projects/zhanglab/users/ana/multiome/results/signac/signac_neatseq_links.csv")
-    parser.add_argument("--ctar_file", type=str, default="/projects/zhanglab/users/ana/multiome/results/ctar/final_eval/5189428_results/cis_links_df.csv")
-    parser.add_argument("--ctar_filt_file", type=str, default="/projects/zhanglab/users/ana/multiome/results/ctar/final_eval/5189596_results/cis_links_df.csv")
+    parser.add_argument("--ctar_file", type=str, default="/projects/zhanglab/users/ana/multiome/results/ctar/final_eval/neat/neat_unfiltered_5.5.5.5.1000/cis_links_df.csv")
+    parser.add_argument("--ctar_filt_file", type=str, default="/projects/zhanglab/users/ana/multiome/results/ctar/final_eval/neat/neat_filtered_5.5.5.5.1000/cis_links_df.csv")
 
     parser.add_argument("--scent_col", type=str, default="boot_basic_p")
     parser.add_argument("--scmm_col", type=str, default="pval")
@@ -174,6 +204,9 @@ if __name__ == "__main__":
 
     parser.add_argument("--bed_path", type=str, default="/projects/zhanglab/users/ana/bedtools2/ana_bedfiles/validation/union_links")
     parser.add_argument("--dataset_name", type=str, default="neat")
+
+    parser.add_argument("--method_cols", type=str, default=None,
+                        help="Comma-separated list of metric column names to order final_col, e.g. 'scent,scmm,signac,ctar_filt_z,ctar_filt'")
 
     args = parser.parse_args()
     main(args)

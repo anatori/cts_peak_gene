@@ -2,6 +2,12 @@ import argparse
 import os
 import pandas as pd
 
+
+'''
+TODO:
+- tissue matching for hic
+'''
+
 def main(args):
 
 	EVAL_FILE_PATH = args.eval_file_path
@@ -48,29 +54,14 @@ def main(args):
 	hic_df[['start','end']] = hic_df[['start','end']].astype(int)
 	print('Post-merge shape:',hic_df.shape)
 
-
-
-	###########################################################################################
-	######                               Max across tissues                              ######
-	###########################################################################################
-
-	# take max across tissues
-	gtex_df = gtex_df.sort_values('pip',ascending=False).drop_duplicates(subset='variant_hg38').copy()
-	abc_df = abc_df.sort_values('Score',ascending=False).drop_duplicates(subset=['cCRE ID','Gene ID']).copy()
-	crispr_df = crispr_df.sort_values('Regulated',ascending=False).drop_duplicates('name').copy()
-
-	# separate out hic assays and take max
+	# split up hic assays
 	rnachia_df = hic_df[hic_df['Assay Type'] == 'RNAPII-ChIAPET'].copy()
-	rnachia_df = rnachia_df.sort_values('Score').drop_duplicates(subset=['cCRE ID','Gene ID']).copy()
 	ctcfchia_df = hic_df[hic_df['Assay Type'] == 'CTCF-ChIAPET'].copy()
-	ctcfchia_df = ctcfchia_df.sort_values('Score').drop_duplicates(subset=['cCRE ID','Gene ID']).copy()
 	intact_df = hic_df[hic_df['Assay Type'] == 'Intact-HiC'].copy()
-	intact_df = intact_df.sort_values('Score').drop_duplicates(subset=['cCRE ID','Gene ID']).copy()
-
 
 
 	###########################################################################################
-	######                                  Save bedfiles                                ######
+	######                                  Clean for bed                                ######
 	###########################################################################################
 
 	# gtex
@@ -80,25 +71,125 @@ def main(args):
 	gtex_df['start'] = gtex_df['end'] - 1
 	gtex_df[['start','end']] = gtex_df[['start','end']].astype(int)
 	gtex_df['final_col'] = gtex_df['variant_hg38'] + ';' + gtex_df['pip'].astype(str) + ';' + gtex_df['gene_standard']
-	gtex_df[['chr','start','end','final_col']].to_csv(f'{BED_PATH}/gtex.bed',header=False,index=False,sep='\t')
 
 	# abc
 	abc_df[['chr','start','end']] = abc_df['Location'].str.split('_',expand=True)
 	abc_df[['start','end']] = abc_df[['start','end']].astype(int)
 	abc_df['final_col'] = abc_df['cCRE ID'] + ';' + abc_df['Experiment ID'] + ';' + abc_df['Assay Type'] + ';' + abc_df['Score'].astype(str) + ';' + abc_df['Gene ID'].astype(str)
-	abc_df[['chr','start','end','final_col']].to_csv(f'{BED_PATH}/abc.bed',header=False,index=False,sep='\t')
 
 	# crispr
 	crispr_df[['chromStart','chromEnd']] = crispr_df[['chromStart','chromEnd']].astype(int)
 	crispr_df['final_col'] = crispr_df['name'] + ';' + crispr_df['Regulated'].astype(str) + ';' + crispr_df['measuredGeneEnsemblId']
-	crispr_df[['chrom','chromStart','chromEnd','final_col']].to_csv(f'{BED_PATH}/crispr.bed',header=False,index=False,sep='\t')
 
 	# hic
 	rnachia_df['final_col'] = rnachia_df['cCRE ID'] + ';' + rnachia_df['Experiment ID'] + ';' + rnachia_df['Score'].astype(str) + ';' + rnachia_df['Gene ID']
-	rnachia_df[['chr','start','end','final_col']].to_csv(f'{BED_PATH}/rnap2_chiapet.bed',header=False,index=False,sep='\t')
 	ctcfchia_df['final_col'] = ctcfchia_df['cCRE ID'] + ';' + ctcfchia_df['Experiment ID']  + ';' + ctcfchia_df['Score'].astype(str) + ';' + ctcfchia_df['Gene ID']
-	ctcfchia_df[['chr','start','end','final_col']].to_csv(f'{BED_PATH}/ctcf_chiapet.bed',header=False,index=False,sep='\t')
 	intact_df['final_col'] = intact_df['cCRE ID'] + ';' + intact_df['Experiment ID'] + ';' + intact_df['P-value'].astype(str) + ';' + intact_df['Score'].astype(str) + ';' + intact_df['Gene ID'].astype(str)
+
+
+
+	###########################################################################################
+	######                       Max within matched tissues                              ######
+	###########################################################################################
+
+	# tissue matching
+	neat_gtex = ["Whole_Blood","Cells_EBV-transformed_lymphocytes","Spleen"] # bmmc and neat have same tissue matches
+	brain_gtex = ["Brain_Cerebellum","Brain_Cerebellar_Hemisphere"]
+
+	neat_abc = [
+	    "CD4-positive,_alpha-beta_T_cell",
+	    "CD4-positive,_alpha-beta_memory_T_cell",
+	    "activated_CD4-positive,_alpha-beta_T_cell",
+	    "activated_CD4-positive,_alpha-beta_memory_T_cell",
+	    "activated_naive_CD4-positive,_alpha-beta_T_cell",
+	    "stimulated_activated_CD4-positive,_alpha-beta_T_cell",
+	    "activated_effector_memory_CD4-positive,_alpha-beta_T_cell",
+	    "central_memory_CD4-positive,_alpha-beta_T_cell",
+	    "effector_memory_CD4-positive,_alpha-beta_T_cell",
+	    "T-cell",
+	    "activated_T-cell",
+	    "T-helper_1_cell",
+	    "T-helper_2_cell",
+	    "T-helper_17_cell",
+	    "T_follicular_helper_cell"
+	]
+
+	brain_abc = [
+	    "cerebellum",
+	    "cerebellar_cortex",
+	    "astrocyte_of_the_cerebellum"
+	]
+
+	bmmc_abc = [
+		"hematopoietic_multipotent_progenitor_cell",
+	    "common_myeloid_progenitor,_CD34-positive",
+	    "stromal_cell_of_bone_marrow",
+	]
+
+	# take max across tissues
+	print('deduplicating...')
+	print('gtex_df total',gtex_df.shape)
+	gtex_neat_df = gtex_df[gtex_df["tissue"].isin(neat_gtex)].copy()
+	print('gtex_neat_df before',gtex_neat_df.shape)
+	gtex_neat_df = gtex_neat_df.sort_values('pip',ascending=False).drop_duplicates(subset='variant_hg38').copy()
+	print('gtex_neat_df after',gtex_neat_df.shape)
+	gtex_brain_df = gtex_df[gtex_df["tissue"].isin(brain_gtex)].copy()
+	print('gtex_brain_df before',gtex_brain_df.shape)
+	gtex_brain_df = gtex_brain_df.sort_values('pip',ascending=False).drop_duplicates(subset='variant_hg38').copy()
+	print('gtex_brain_df after',gtex_brain_df.shape)
+	print('')
+
+	print('abc_df total',abc_df.shape)
+	abc_neat_df = abc_df[abc_df["Biosample"].isin(neat_abc)].copy()
+	print('abc_neat_df before',abc_neat_df.shape)
+	abc_neat_df = abc_neat_df.sort_values('Score',ascending=False).drop_duplicates(subset=['cCRE ID','Gene ID']).copy()
+	print('abc_neat_df after',abc_neat_df.shape)
+	abc_brain_df = abc_df[abc_df["Biosample"].isin(brain_abc)].copy()
+	print('abc_brain_df before',abc_brain_df.shape)
+	abc_brain_df = abc_brain_df.sort_values('Score',ascending=False).drop_duplicates(subset=['cCRE ID','Gene ID']).copy()
+	print('abc_brain_df after',abc_brain_df.shape)
+	abc_bmmc_df = abc_df[abc_df["Biosample"].isin(bmmc_abc)].copy()
+	print('abc_bmmc_df before',abc_bmmc_df.shape)
+	abc_bmmc_df = abc_bmmc_df.sort_values('Score',ascending=False).drop_duplicates(subset=['cCRE ID','Gene ID']).copy()
+	print('abc_bmmc_df after',abc_bmmc_df.shape)
+	print('')
+
+	# there should be no duplicates in crispr	
+	# separate out hic assays and take max
+	print('rnachia_df before',rnachia_df.shape)
+	rnachia_df = rnachia_df.sort_values('Score').drop_duplicates(subset=['cCRE ID','Gene ID']).copy()
+	print('rnachia_df after',rnachia_df.shape)
+	print('ctcfchia_df before',ctcfchia_df.shape)
+	ctcfchia_df = ctcfchia_df.sort_values('Score').drop_duplicates(subset=['cCRE ID','Gene ID']).copy()
+	print('ctcfchia_df after',ctcfchia_df.shape)
+	print('intact_df before',intact_df.shape)
+	intact_df = intact_df.sort_values('Score').drop_duplicates(subset=['cCRE ID','Gene ID']).copy()
+	print('intact_df after',intact_df.shape)
+
+
+
+	###########################################################################################
+	######                                  Save bedfiles                                ######
+	###########################################################################################
+
+	# gtex
+	gtex_neat_df[['chr','start','end','final_col']].to_csv(f'{BED_PATH}/gtex_neat.bed',header=False,index=False,sep='\t')
+	gtex_neat_df[['chr','start','end','final_col']].to_csv(f'{BED_PATH}/gtex_bmmc.bed',header=False,index=False,sep='\t')
+	gtex_brain_df[['chr','start','end','final_col']].to_csv(f'{BED_PATH}/gtex_brain.bed',header=False,index=False,sep='\t')
+
+	# abc
+	abc_neat_df[['chr','start','end','final_col']].to_csv(f'{BED_PATH}/abc_neat.bed',header=False,index=False,sep='\t')
+	abc_brain_df[['chr','start','end','final_col']].to_csv(f'{BED_PATH}/abc_brain.bed',header=False,index=False,sep='\t')
+	abc_bmmc_df[['chr','start','end','final_col']].to_csv(f'{BED_PATH}/abc_bmmc.bed',header=False,index=False,sep='\t')
+
+	# crispr - save bulk and per celltype
+	crispr_df[['chrom','chromStart','chromEnd','final_col']].to_csv(f'{BED_PATH}/crispr.bed',header=False,index=False,sep='\t')
+	for ct in crispr_df.CellType.unique():
+		crispr_df.loc[(crispr_df.CellType == ct),['chrom','chromStart','chromEnd','final_col']].to_csv(f'{BED_PATH}/crispr_{ct}.bed',header=False,index=False,sep='\t')
+
+	# hic
+	rnachia_df[['chr','start','end','final_col']].to_csv(f'{BED_PATH}/rnap2_chiapet.bed',header=False,index=False,sep='\t')
+	ctcfchia_df[['chr','start','end','final_col']].to_csv(f'{BED_PATH}/ctcf_chiapet.bed',header=False,index=False,sep='\t')
 	intact_df[['chr','start','end','final_col']].to_csv(f'{BED_PATH}/intact_hic.bed',header=False,index=False,sep='\t')
 
 
