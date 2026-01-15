@@ -1,4 +1,3 @@
-
 # Importing libraries
 import numpy as np
 import pandas as pd 
@@ -11,6 +10,8 @@ import matplotlib.patches as mpatches
 import matplotlib as mpl
 from scipy.stats import poisson, nbinom
 from matplotlib.container import BarContainer
+import math
+from matplotlib.ticker import ScalarFormatter
 
 
 # custom func from https://stackoverflow.com/questions/7404116/defining-the-midpoint-of-a-colormap-in-matplotlib
@@ -710,3 +711,228 @@ def add_sig_vs_multiple_references_staggered_global_fdr(
         return []
 
 
+def _ensure_method_column_inplace(df):
+    """Ensure a 'method' column exists, even if it's currently the index."""
+    if 'method' not in df.columns:
+        # If index has a name, use it; otherwise use the generic 'index'
+        idx_name = df.index.name if df.index.name else 'index'
+        df.reset_index(inplace=True)
+        df.rename(columns={idx_name: 'method'}, inplace=True)
+    df['method'] = df['method'].astype(str)
+    return df
+
+
+def _format_p(p):
+    if pd.isna(p): return ""
+    p = float(p)
+    if p < 1e-4: return "p < 1e-4"
+    elif p < 0.001: return f"p = {p:.1e}"
+    elif p < 0.1: return f"p = {p:.3g}"
+    else: return f"p = {p:.2f}"
+
+
+def forest_plot_multiple_labels(
+    res_dic,
+    labels,
+    methods_order=None,
+    estimate_col="estimate",
+    ci_lower_col="ci_lower",
+    ci_upper_col="ci_upper",
+    pval_col="p_value",
+    use_log_x=True,
+    jitter=0.12,
+    cmap_name="tab10",
+    title=None,
+    x_label=None,
+    pval_label=None,         
+    pval_position="by_point",
+    pval_fontsize=9,
+    figsize=(5,3),
+    ax=None,
+    add_legend=True,
+    tight_layout=None,
+    right_base_mult=1.02,
+):
+    # decide figure/axes
+    created_fig = False
+    if ax is None:
+        fig, ax = plt.subplots(figsize=figsize)
+        created_fig = True
+    else:
+        fig = ax.figure
+
+    if tight_layout is None:
+        tight_layout = created_fig
+
+    # ensure labels exist
+    missing = [lbl for lbl in labels if lbl not in res_dic]
+    if missing:
+        raise KeyError(f"Labels not found in res_dic: {missing}")
+
+    # infer methods order from first label if not provided
+    first_df = res_dic[labels[0]].copy()
+    _ensure_method_column_inplace(first_df)
+    if methods_order is None:
+        methods_order = first_df['method'].astype(str).tolist()
+
+    # base y positions
+    y_base = np.arange(len(methods_order))[::-1]
+
+    # colors per label
+    cmap = plt.get_cmap(cmap_name)
+    colors = {lbl: cmap(i % cmap.N) for i, lbl in enumerate(labels)}
+
+    # y-axis
+    ax.set_yticks(y_base)
+    ax.set_yticklabels(methods_order)
+    ax.invert_yaxis()
+
+    # track global CI bounds to set x scale/ticks
+    ci_mins = []
+    ci_maxs = []
+
+    # center offsets
+    n_lbl = len(labels)
+    center = (n_lbl - 1) / 2.0
+
+    # keep plotted positions to place p-values later
+    plotted = {}  # lbl -> dict(x, y, pvals_series)
+    for j, lbl in enumerate(labels):
+        df = res_dic[lbl].copy()
+        _ensure_method_column_inplace(df)
+        df = df[df['method'].isin(methods_order)]
+        df = df.set_index('method').reindex(methods_order)
+
+        # values
+        for col in (estimate_col, ci_lower_col, ci_upper_col):
+            if col not in df.columns:
+                raise KeyError(f"Column '{col}' not found in '{lbl}'. Columns: {list(df.columns)}")
+
+        x = df[estimate_col].astype(float).to_numpy()
+        ci_low = df[ci_lower_col].astype(float).to_numpy()
+        ci_up = df[ci_upper_col].astype(float).to_numpy()
+
+        # error bars
+        left_err = x - ci_low
+        right_err = ci_up - x
+        left_err = np.where(np.isfinite(left_err) & (left_err >= 0), left_err, 0.0)
+        right_err = np.where(np.isfinite(right_err) & (right_err >= 0), right_err, 0.0)
+
+        # vertical offset for this label
+        y = y_base + (j - center) * jitter
+
+        ax.errorbar(
+            x, y, xerr=[left_err, right_err],
+            fmt='o', color=colors[lbl], ecolor=colors[lbl],
+            capsize=4, markersize=6, linewidth=1.5,
+            label=lbl
+        )
+
+        plotted[lbl] = {
+            "x": x,
+            "y": y,
+            "pvals": df[pval_col] if pval_col in df.columns else None
+        }
+
+        # collect CI bounds
+        finite_low = ci_low[np.isfinite(ci_low)]
+        finite_up = ci_up[np.isfinite(ci_up)]
+        if finite_low.size:
+            ci_mins.append(np.nanmin(finite_low))
+        if finite_up.size:
+            ci_maxs.append(np.nanmax(finite_up))
+
+    # reference line
+    ax.axvline(1.0, color='k', linestyle='--', linewidth=1)
+
+    # labels/title
+    if x_label is None:
+        x_label = "Average enrichment (95% CI)" if use_log_x else "Estimate (95% CI)"
+    ax.set_xlabel(x_label)
+    if title:
+        ax.set_title(title)
+
+    # x-scale formatting
+    if use_log_x:
+        ax.set_xscale('log')
+        if ci_mins and ci_maxs:
+            xmin = np.nanmin([v for v in ci_mins if np.isfinite(v) and v > 0])
+            xmax = np.nanmax([v for v in ci_maxs if np.isfinite(v)])
+            if np.isfinite(xmin) and xmin > 0 and np.isfinite(xmax):
+                ex_min = math.floor(math.log2(max(xmin, 2**-8)))
+                ex_max = math.ceil(math.log2(max(xmax, 1)))
+                ticks = [2**e for e in range(ex_min, ex_max + 1)]
+                if 1 not in ticks:
+                    ticks.append(1)
+                ax.set_xticks(sorted(set(ticks)))
+        ax.get_xaxis().set_major_formatter(ScalarFormatter())
+        ax.ticklabel_format(axis='x', style='plain')
+    else:
+        if ci_mins and ci_maxs:
+            left = np.nanmin(ci_mins)
+            right = np.nanmax(ci_maxs)
+            if np.isfinite(left) and np.isfinite(right):
+                pad = 0.05 * (right - left)
+                ax.set_xlim(max(0.0, left - pad), right + pad)
+
+    # p-value annotations
+    labels_to_annotate = [pval_label] if pval_label in labels else (labels if pval_label is None else [])
+    if labels_to_annotate:
+        xlim = ax.get_xlim()
+        # spacing in data units for text placement
+        if use_log_x:
+            right_base = xlim[1]
+            col_scale = 0.06  # separation between right-side columns (multiplicative)
+        else:
+            span = xlim[1] - xlim[0]
+            pad = 0.02 * span
+            right_base = xlim[1] + pad
+            col_offset = 0.08 * span  # separation between right-side columns
+
+        for k, lbl in enumerate(labels_to_annotate):
+            info = plotted.get(lbl)
+            if info is None or info["pvals"] is None:
+                continue
+
+            xs = info["x"]
+            ys = info["y"]
+            pvals = info["pvals"].to_numpy()
+
+            if pval_position == "by_point":
+                # annotate near each point
+                for xi, yi, pv in zip(xs, ys, pvals):
+                    if not np.isfinite(xi):
+                        continue
+                    if use_log_x:
+                        # place 3% to the right multiplicatively
+                        x_text = xi * 1.03 if xi > 0 else right_base * right_base_mult
+                    else:
+                        x_text = xi + pad
+                    txt = _format_p(pv)
+                    if txt:
+                        ax.text(
+                            x_text, yi, txt,
+                            va='center', ha='left',
+                            fontsize=pval_fontsize, color=colors[lbl], family='monospace'
+                        )
+            elif pval_position == "right":
+                for yi, pv in zip(ys, pvals):
+                    txt = _format_p(pv)
+                    if txt:
+                        ax.text(
+                            right_base * right_base_mult, yi, txt,
+                            va='center', ha='left',
+                            fontsize=pval_fontsize, color=colors[lbl], family='monospace'
+                        )
+                # add margin for right columns (use this figure, not global plt)
+                fig.subplots_adjust(right=0.82)
+
+    ax.grid(axis='x', linestyle=':', linewidth=0.6, alpha=0.6)
+
+    if add_legend:
+        ax.legend(loc='upper center', bbox_to_anchor=(0.5, -0.15), frameon=False, ncol=len(labels))
+
+    if tight_layout:
+        fig.tight_layout()
+
+    return ax
