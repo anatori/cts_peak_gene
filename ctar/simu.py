@@ -265,7 +265,7 @@ def pgb_enrichment_recall(df, col, min_recall, max_recall, ascending=True,
     tmp = tmp.sort_values(by=col, ascending=ascending).reset_index(drop=True)
     
     # CHANGED: Check .notna() in addition to > 0
-    tmp["linked"] = 1 * (tmp[col]. notna() & (tmp[col] > 0))
+    tmp["linked"] = 1 * (tmp[col].notna() & (tmp[col] > 0))
     tmp["linked_cum"] = tmp["linked"].cumsum()
     
     # CHANGED: Only count gold in linked items (multiply by "linked" mask)
@@ -279,7 +279,7 @@ def pgb_enrichment_recall(df, col, min_recall, max_recall, ascending=True,
     # CHANGED: Use total_gold / total_length instead of tmp["gold_cum"].max() / len(tmp)
     # Enrichment denom = average "gold density" across all items
     enrich_denom = total_gold / total_length
-    tmp["enrichment"] = (tmp["gold_cum"]. divide(tmp["linked_cum"])) / enrich_denom
+    tmp["enrichment"] = (tmp["gold_cum"].divide(tmp["linked_cum"])) / enrich_denom
     
     # CHANGED:  Identify unscored as NaN or <= 0 using .notna() check
     unscored = tmp[~(tmp[col].notna() & (tmp[col] > 0))].reset_index(drop=True)
@@ -298,13 +298,13 @@ def pgb_enrichment_recall(df, col, min_recall, max_recall, ascending=True,
         # CHANGED: Use (i + 1) instead of i for consistency with new_recall
         new_enrichment = [last_enrichment - (enrichment_increment * (i + 1)) for i in range(num_new_points)]
         
-        extrapolated_er = pd. DataFrame({"recall": new_recall, "enrichment": new_enrichment})
+        extrapolated_er = pd.DataFrame({"recall": new_recall, "enrichment": new_enrichment})
         tmp = pd.concat([tmp, extrapolated_er], ignore_index=True)
     
     tmp = tmp[(tmp["recall"] <= max_recall) & (tmp["recall"] >= min_recall)]
     
     if full_info:
-        return tmp. drop_duplicates(subset=["recall"], keep="first")
+        return tmp.drop_duplicates(subset=["recall"], keep="first")
     else:
         return tmp[["recall", "enrichment"]].drop_duplicates(subset=["recall"], keep="first")
     
@@ -314,9 +314,36 @@ def pgb_auerc(df, col, min_recall = 0.0, max_recall = 1.0, ascending = True, gol
     '''
     er = pgb_enrichment_recall(df, col, min_recall, max_recall, ascending = ascending, extrapolate = extrapolate, gold_col=gold_col)
     if weighted == True:
-        return np.average(er["enrichment"], weights = 1 - er["recall"])
+        try:
+            return np.average(er["enrichment"], weights = 1 - er["recall"])
+        except:
+            return np.nan
     else:
         return np.average(er["enrichment"])
+
+
+def pgb_effective_auerc(df, col, gold_col="label", effective_alpha=1.0, **auerc_kwargs):
+    """
+    Conditional AUERC on covered links, times coverage^alpha.
+
+    Returns dict with:
+      coverage, auerc_conditional, effective
+    """
+    scored = (df[col].notna() & (df[col] > 0))
+    coverage = float(scored.mean())
+    if coverage == 0.0:
+        return {"coverage": 0.0, "auerc_conditional": np.nan, "effective": 0.0}
+    sub = df.loc[scored].copy()
+    
+    # If the scored subset has no gold mass, conditional AUERC isn't meaningful.
+    # Penalize by returning effective=0 (conservative).
+    if sub[gold_col].sum() == 0:
+        return {"coverage": coverage, "auerc_conditional": np.nan, "effective": 0.0}
+
+    auerc_cond = pgb_auerc(sub, col, gold_col=gold_col, **auerc_kwargs)
+    eff = float(auerc_cond) * (coverage ** effective_alpha)
+
+    return {"coverage": coverage, "auerc_conditional": float(auerc_cond), "effective": eff}
 
 
 def boostrap_pgb_auerc(df, col, ci, n_bs = 1000, method='basic', **auerc_kwargs):
@@ -349,6 +376,8 @@ def compute_bootstrap_table(
     ci=0.95,
     fillna=True,
     random_state=None,
+    effective_score=False,
+    effective_alpha=1.0, 
     **auerc_kwargs
 ):
     """
@@ -361,6 +390,8 @@ def compute_bootstrap_table(
     """
     rng = np.random.default_rng(random_state)
 
+    raw_df = all_df.copy()
+
     # Preprocess once
     work_df = all_df.copy()
     for method in methods:
@@ -370,9 +401,22 @@ def compute_bootstrap_table(
 
     # Point estimates on full data
     estimates = {m: pgb_auerc(work_df, m, gold_col=gold_col, **auerc_kwargs) for m in methods}
+    if effective_score:
+        eff_point = {}
+        for m in methods:
+            eff_point[m] = pgb_effective_auerc(
+                raw_df, m, gold_col=gold_col, effective_alpha=effective_alpha, **auerc_kwargs
+            )
+        # convenience
+        eff_estimates = {m: eff_point[m]["effective"] for m in methods}
+        cov_estimates = {m: eff_point[m]["coverage"] for m in methods}
+        auerc_cond_estimates = {m: eff_point[m]["auerc_conditional"] for m in methods}
 
     # Storage for bootstrap statistics per method
     boot_stats = {m: np.empty(n_bootstrap, dtype=float) for m in methods}
+    if effective_score:
+        eff_boot = {m: np.empty(n_bootstrap, dtype=float) for m in methods}
+        cov_boot = {m: np.empty(n_bootstrap, dtype=float) for m in methods}
 
     N = len(work_df)
     for b in range(n_bootstrap):
@@ -380,6 +424,15 @@ def compute_bootstrap_table(
         sample = work_df.iloc[idx].reset_index(drop=True)
         for m in methods:
             boot_stats[m][b] = pgb_auerc(sample, m, gold_col=gold_col, **auerc_kwargs)
+        
+        if effective_score:
+            raw_sample = raw_df.iloc[idx].reset_index(drop=True)
+            for m in methods:
+                out = pgb_effective_auerc(
+                    raw_sample, m, gold_col=gold_col, effective_alpha=effective_alpha, **auerc_kwargs
+                )
+                eff_boot[m][b] = out["effective"]
+                cov_boot[m][b] = out["coverage"]
 
     alpha = 1.0 - ci
 
@@ -388,62 +441,78 @@ def compute_bootstrap_table(
         raise ValueError(f"reference_method {reference_method} not in provided methods.")
     ref_boot = boot_stats[reference_method]
     ref_est = estimates[reference_method]
+    if effective_score:
+        ref_eff_boot = eff_boot[reference_method]
+        ref_eff_est = eff_estimates[reference_method]
 
     rows = []
     for m in tqdm(methods):
         boots = boot_stats[m]
-        # Drop NaNs safely
         boots = boots[np.isfinite(boots)]
         ref_boot_clean = ref_boot[np.isfinite(ref_boot)]
         nmin = min(len(boots), len(ref_boot_clean))
 
-        # If insufficient bootstraps, return NaNs
-        if nmin == 0 or not np.isfinite(estimates[m]) or not np.isfinite(ref_est):
-            rows.append({
-                "method": m,
-                "estimate": estimates[m],
-                "ci_lower": np.nan,
-                "ci_upper": np.nan,
-                "diff_estimate": ref_est - estimates[m],
-                "diff_ci_lower": np.nan,
-                "diff_ci_upper": np.nan,
-                "p_value": np.nan,
-                "n_bootstrap": n_bootstrap
-            })
-            continue
-
-        # Individual method CI (percentile; swap for BCa if desired)
-        ci_low = np.nanquantile(boots, alpha / 2.0)
-        ci_up  = np.nanquantile(boots, 1.0 - alpha / 2.0)
-
-        # Paired differences vs reference on the same replicate indices
-        diffs = ref_boot_clean[:nmin] - boots[:nmin]
-
-        # CI for the difference (percentile)
-        d_ci_low = np.nanquantile(diffs, alpha / 2.0)
-        d_ci_up  = np.nanquantile(diffs, 1.0 - alpha / 2.0)
-
-        # Two-sided p-value from empirical CDF at 0 (strict tails; split zeros)
-        n = diffs.size
-        n_lt = np.sum(diffs < 0)
-        n_gt = np.sum(diffs > 0)
-        n_eq = n - n_lt - n_gt
-        p_lower = (n_lt + 0.5 * n_eq) / n
-        p_upper = (n_gt + 0.5 * n_eq) / n
-        pval = 2.0 * min(p_lower, p_upper)
-        pval = min(1.0, max(0.0, pval))
-
-        rows.append({
+        # Base row (existing AUERC)
+        row = {
             "method": m,
             "estimate": estimates[m],
-            "ci_lower": ci_low,
-            "ci_upper": ci_up,
+            "ci_lower": np.nanquantile(boots, alpha / 2.0) if boots.size else np.nan,
+            "ci_upper": np.nanquantile(boots, 1.0 - alpha / 2.0) if boots.size else np.nan,
             "diff_estimate": ref_est - estimates[m],
-            "diff_ci_lower": d_ci_low,
-            "diff_ci_upper": d_ci_up,
-            "p_value": pval,
-            "n_bootstrap": n_bootstrap
-        })
+            "diff_ci_lower": np.nan,
+            "diff_ci_upper": np.nan,
+            "p_value": np.nan,
+            "n_bootstrap": n_bootstrap,
+        }
+
+        if nmin > 0 and np.isfinite(estimates[m]) and np.isfinite(ref_est):
+            diffs = ref_boot_clean[:nmin] - boots[:nmin]
+            row["diff_ci_lower"] = np.nanquantile(diffs, alpha / 2.0)
+            row["diff_ci_upper"] = np.nanquantile(diffs, 1.0 - alpha / 2.0)
+
+            n = diffs.size
+            n_lt = np.sum(diffs < 0)
+            n_gt = np.sum(diffs > 0)
+            n_eq = n - n_lt - n_gt
+            p_lower = (n_lt + 0.5 * n_eq) / n
+            p_upper = (n_gt + 0.5 * n_eq) / n
+            pval = 2.0 * min(p_lower, p_upper)
+            row["p_value"] = min(1.0, max(0.0, pval))
+
+        # Add effective metrics
+        if effective_score:
+            row["coverage"] = cov_estimates[m]
+            row["auerc_conditional"] = auerc_cond_estimates[m]
+            row["effective_estimate"] = eff_estimates[m]
+            row["effective_alpha"] = effective_alpha
+
+            eboots = eff_boot[m]
+            eboots = eboots[np.isfinite(eboots)]
+            ref_e = ref_eff_boot[np.isfinite(ref_eff_boot)]
+            nmin_e = min(len(eboots), len(ref_e))
+
+            row["effective_ci_lower"] = np.nanquantile(eboots, alpha / 2.0) if eboots.size else np.nan
+            row["effective_ci_upper"] = np.nanquantile(eboots, 1.0 - alpha / 2.0) if eboots.size else np.nan
+            row["effective_diff_estimate"] = ref_eff_est - eff_estimates[m]
+            row["effective_diff_ci_lower"] = np.nan
+            row["effective_diff_ci_upper"] = np.nan
+            row["effective_p_value"] = np.nan
+
+            if nmin_e > 0 and np.isfinite(eff_estimates[m]) and np.isfinite(ref_eff_est):
+                ediffs = ref_e[:nmin_e] - eboots[:nmin_e]
+                row["effective_diff_ci_lower"] = np.nanquantile(ediffs, alpha / 2.0)
+                row["effective_diff_ci_upper"] = np.nanquantile(ediffs, 1.0 - alpha / 2.0)
+
+                n2 = ediffs.size
+                n_lt = np.sum(ediffs < 0)
+                n_gt = np.sum(ediffs > 0)
+                n_eq = n2 - n_lt - n_gt
+                p_lower = (n_lt + 0.5 * n_eq) / n2
+                p_upper = (n_gt + 0.5 * n_eq) / n2
+                ep = 2.0 * min(p_lower, p_upper)
+                row["effective_p_value"] = min(1.0, max(0.0, ep))
+
+        rows.append(row)
 
     return pd.DataFrame(rows)
 
