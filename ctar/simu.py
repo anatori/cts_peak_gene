@@ -322,30 +322,6 @@ def pgb_auerc(df, col, min_recall = 0.0, max_recall = 1.0, ascending = True, gol
         return np.average(er["enrichment"])
 
 
-def pgb_effective_auerc(df, col, gold_col="label", effective_alpha=1.0, **auerc_kwargs):
-    """
-    Conditional AUERC on covered links, times coverage^alpha.
-
-    Returns dict with:
-      coverage, auerc_conditional, effective
-    """
-    scored = (df[col].notna() & (df[col] > 0))
-    coverage = float(scored.mean())
-    if coverage == 0.0:
-        return {"coverage": 0.0, "auerc_conditional": np.nan, "effective": 0.0}
-    sub = df.loc[scored].copy()
-    
-    # If the scored subset has no gold mass, conditional AUERC isn't meaningful.
-    # Penalize by returning effective=0 (conservative).
-    if sub[gold_col].sum() == 0:
-        return {"coverage": coverage, "auerc_conditional": np.nan, "effective": 0.0}
-
-    auerc_cond = pgb_auerc(sub, col, gold_col=gold_col, **auerc_kwargs)
-    eff = float(auerc_cond) * (coverage ** effective_alpha)
-
-    return {"coverage": coverage, "auerc_conditional": float(auerc_cond), "effective": eff}
-
-
 def boostrap_pgb_auerc(df, col, ci, n_bs = 1000, method='basic', **auerc_kwargs):
     estimate = pgb_auerc(df, col, **auerc_kwargs)
     boots = np.empty(n_bs)
@@ -463,22 +439,8 @@ def compute_bootstrap_table(
 
     # Point estimates on full data
     estimates = {m: pgb_auerc(work_df, m, gold_col=gold_col, **auerc_kwargs) for m in methods}
-    if effective_score:
-        eff_point = {}
-        for m in methods:
-            eff_point[m] = pgb_effective_auerc(
-                raw_df, m, gold_col=gold_col, effective_alpha=effective_alpha, **auerc_kwargs
-            )
-        # convenience
-        eff_estimates = {m: eff_point[m]["effective"] for m in methods}
-        cov_estimates = {m: eff_point[m]["coverage"] for m in methods}
-        auerc_cond_estimates = {m: eff_point[m]["auerc_conditional"] for m in methods}
-
     # Storage for bootstrap statistics per method
     boot_stats = {m: np.empty(n_bootstrap, dtype=float) for m in methods}
-    if effective_score:
-        eff_boot = {m: np.empty(n_bootstrap, dtype=float) for m in methods}
-        cov_boot = {m: np.empty(n_bootstrap, dtype=float) for m in methods}
 
     N = len(work_df)
     for b in range(n_bootstrap):
@@ -486,16 +448,6 @@ def compute_bootstrap_table(
         sample = work_df.iloc[idx].reset_index(drop=True)
         for m in methods:
             boot_stats[m][b] = pgb_auerc(sample, m, gold_col=gold_col, **auerc_kwargs)
-        
-        if effective_score:
-            raw_sample = raw_df.iloc[idx].reset_index(drop=True)
-            for m in methods:
-                out = pgb_effective_auerc(
-                    raw_sample, m, gold_col=gold_col, effective_alpha=effective_alpha, **auerc_kwargs
-                )
-                eff_boot[m][b] = out["effective"]
-                cov_boot[m][b] = out["coverage"]
-
     alpha = 1.0 - ci
 
     # Reference bootstrap and estimate
@@ -503,9 +455,6 @@ def compute_bootstrap_table(
         raise ValueError(f"reference_method {reference_method} not in provided methods.")
     ref_boot = boot_stats[reference_method]
     ref_est = estimates[reference_method]
-    if effective_score:
-        ref_eff_boot = eff_boot[reference_method]
-        ref_eff_est = eff_estimates[reference_method]
 
     rows = []
     for m in tqdm(methods):
@@ -540,39 +489,6 @@ def compute_bootstrap_table(
             p_upper = (n_gt + 0.5 * n_eq) / n
             pval = 2.0 * min(p_lower, p_upper)
             row["p_value"] = min(1.0, max(0.0, pval))
-
-        # Add effective metrics
-        if effective_score:
-            row["coverage"] = cov_estimates[m]
-            row["auerc_conditional"] = auerc_cond_estimates[m]
-            row["effective_estimate"] = eff_estimates[m]
-            row["effective_alpha"] = effective_alpha
-
-            eboots = eff_boot[m]
-            eboots = eboots[np.isfinite(eboots)]
-            ref_e = ref_eff_boot[np.isfinite(ref_eff_boot)]
-            nmin_e = min(len(eboots), len(ref_e))
-
-            row["effective_ci_lower"] = np.nanquantile(eboots, alpha / 2.0) if eboots.size else np.nan
-            row["effective_ci_upper"] = np.nanquantile(eboots, 1.0 - alpha / 2.0) if eboots.size else np.nan
-            row["effective_diff_estimate"] = ref_eff_est - eff_estimates[m]
-            row["effective_diff_ci_lower"] = np.nan
-            row["effective_diff_ci_upper"] = np.nan
-            row["effective_p_value"] = np.nan
-
-            if nmin_e > 0 and np.isfinite(eff_estimates[m]) and np.isfinite(ref_eff_est):
-                ediffs = ref_e[:nmin_e] - eboots[:nmin_e]
-                row["effective_diff_ci_lower"] = np.nanquantile(ediffs, alpha / 2.0)
-                row["effective_diff_ci_upper"] = np.nanquantile(ediffs, 1.0 - alpha / 2.0)
-
-                n2 = ediffs.size
-                n_lt = np.sum(ediffs < 0)
-                n_gt = np.sum(ediffs > 0)
-                n_eq = n2 - n_lt - n_gt
-                p_lower = (n_lt + 0.5 * n_eq) / n2
-                p_upper = (n_gt + 0.5 * n_eq) / n2
-                ep = 2.0 * min(p_lower, p_upper)
-                row["effective_p_value"] = min(1.0, max(0.0, ep))
 
         rows.append(row)
 
@@ -816,161 +732,6 @@ def scent_enrichment(causal_var_in_annot,
     per_gene_series = pd.Series(included_enrichments, index=included_genes)
 
     return overall_enrichment, per_gene_series
-
-
-def scent_enrichment_toplinks(causal_var_in_annot,
-                              common_var_in_annot,
-                              annotations_df,
-                              ref_df,
-                              genomes_df,
-                              windows_df,
-                              method_col,
-                              prefixes=None,
-                              top_n_mode=True,
-                              flag_debug=False):
-    """
-    Compute scent-style enrichment for many top-k prefixes efficiently.
-
-    - causal_var_in_annot: DataFrame with rows corresponding to candidate links and columns:
-      eQTL_GENE, GENE_ANN, eQTL_PROB, and method_col (score small=better).
-      It should be the same DF you used to compute annotations; we only use rows where
-      eQTL_GENE == GENE_ANN (candidates that can contribute).
-    - prefixes: iterable of ints (k values for top-k). If None and top_n_mode True,
-      we will use k = 1..n_scored (all prefixes).
-
-    Returns:
-      DataFrame with columns ['k','enrichment'] for each prefix in input order.
-    """
-
-    genes_eQTL = ref_df['GENE'].astype(str).unique()
-    genes_ANN  = annotations_df['gene'].astype(str).unique()
-    genes = np.intersect1d(genes_eQTL, genes_ANN)
-    G = len(genes)
-    gene_to_idx = {g: i for i, g in enumerate(genes)}
-
-    pip_total_ser = ref_df.groupby('GENE')['Probability'].sum()
-    pip_total = pip_total_ser.reindex(genes).fillna(0).to_numpy(dtype=float)
-
-    n_common_annot_ser = common_var_in_annot.groupby('GENE_ANN').size()
-    n_common_annot = n_common_annot_ser.reindex(genes).fillna(0).to_numpy(dtype=int)
-
-    # compute n_common_cis with per-chromosome searchsorted
-    genomes_local = genomes_df.copy()
-    genomes_local['START'] = genomes_local['START'].astype(int)
-    genomes_grouped = {chrom: arr['START'].to_numpy(dtype=int) for chrom, arr in genomes_local.groupby('CHROM')}
-    for chrom in genomes_grouped:
-        genomes_grouped[chrom].sort()
-
-    w = windows_df[windows_df['gene'].astype(str).isin(genes)].copy()
-    if 'chr' in w.columns:
-        chrom_col = 'chr'
-    elif 'CHROM' in w.columns:
-        chrom_col = 'CHROM'
-    else:
-        raise KeyError("windows_df must contain a 'chr' or 'CHROM' column")
-    w[chrom_col] = w[chrom_col].astype(str)
-
-    n_common_cis = np.zeros(G, dtype=int)
-    for chrom, grp in w.groupby(chrom_col):
-        starts = genomes_grouped.get(chrom)
-        if starts is None or starts.size == 0:
-            for _, row in grp.iterrows():
-                n_common_cis[gene_to_idx[str(row['gene'])]] = 0
-            continue
-        cis_starts = grp['CIS_START'].to_numpy(dtype=int)
-        cis_ends   = grp['CIS_END'].to_numpy(dtype=int)
-        left_idx  = np.searchsorted(starts, cis_starts, side='left')
-        right_idx = np.searchsorted(starts, cis_ends, side='right')
-        counts = (right_idx - left_idx).astype(int)
-        for gene_name, cnt in zip(grp['gene'].astype(str).tolist(), counts.tolist()):
-            n_common_cis[gene_to_idx[gene_name]] = int(cnt)
-
-    # candidate rows that can contribute to numerator (same-gene)
-    same_mask = causal_var_in_annot['eQTL_GENE'].astype(str).to_numpy() == causal_var_in_annot['GENE_ANN'].astype(str).to_numpy()
-    cv = causal_var_in_annot.loc[same_mask].reset_index(drop=True)
-    if cv.shape[0] == 0:
-        # nothing to do
-        return pd.DataFrame(columns=['k','enrichment'])
-
-    # prepare ordered rows by score (ascending: smaller is better)
-    scores = cv[method_col].to_numpy()
-    scores_clean = np.where(np.isfinite(scores), scores, np.inf)
-    order = np.argsort(scores_clean)  # ascending
-
-    probs = cv['eQTL_PROB'].to_numpy(dtype=float)
-    gene_ids = cv['eQTL_GENE'].astype(str).to_numpy()
-    gene_idx = np.array([gene_to_idx[g] for g in gene_ids], dtype=int)
-
-    # default prefixes: top-1..top-N
-    n_rows = len(scores_clean)
-    if prefixes is None and top_n_mode:
-        prefixes = np.arange(1, n_rows+1, dtype=int)
-    else:
-        prefixes = np.asarray(prefixes, dtype=int)
-
-    # sanity: restrict prefixes to [1, n_rows]
-    prefixes = prefixes[(prefixes >= 1) & (prefixes <= n_rows)]
-    if prefixes.size == 0:
-        return pd.DataFrame(columns=['k','enrichment'])
-
-    # Decide method: dense matrix (fast) or bincount loop (memory conservative)
-    N = n_rows
-    K = prefixes.size
-
-    if flag_debug:
-        print(f"genes G={G}, rows N={N}, prefixes K={K}")
-
-    # Build dense (G x N) array, fill per-position probabilities, cumsum across axis=1
-    A = np.zeros((G, N), dtype=np.float64)
-    # fill: for each position i, gene = gene_idx[i], A[gene, i] = probs[i]
-    A[gene_idx, np.arange(N)] = probs # vectorized fancy-indexing fill
-    A_cum = A.cumsum(axis=1) # shape (G, N): pip_in_annot per gene for top-(i+1)
-    # extract columns for requested prefixes (prefix k -> column k-1)
-    cols = prefixes - 1
-    pip_in_annot_per_prefix = A_cum[:, cols] # shape (G, K)
-
-    # compute enrichment per prefix vectorized:
-    # For each prefix j we have numerator vector = pip_in_annot_per_prefix[:, j]
-    # Denominator per gene = (pip_total / n_common_cis) (precomputed), numerator per gene must be divided by n_common_annot.
-    denom_annot = n_common_annot.astype(float)
-    denom_cis = n_common_cis.astype(float)
-    pip_total_arr = pip_total.astype(float)
-
-    # precompute denominator per gene where valid
-    denom_per_gene = np.full(G, np.nan, dtype=float)
-    mask_valid_denom = (denom_cis > 0) & (pip_total_arr >= 0)
-    denom_per_gene[mask_valid_denom] = pip_total_arr[mask_valid_denom] / denom_cis[mask_valid_denom]
-
-    # prepare output list
-    out_rows = []
-    for j, k in enumerate(prefixes):
-        numer = pip_in_annot_per_prefix[:, j]
-        # compute numerator per gene = numer / n_common_annot (or 0 where n_common_annot==0)
-        numer_div = np.zeros_like(numer)
-        nz_annot = denom_annot > 0
-        numer_div[nz_annot] = numer[nz_annot] / denom_annot[nz_annot].astype(float)
-
-        # compute enrichment per gene:
-        enr = np.full(G, np.nan, dtype=float)
-        # case A pip_total==0 -> enrichment 0 include
-        mask_pip0 = (pip_total_arr == 0.0)
-        enr[mask_pip0] = 0.0
-        # case B pip_total>0 & n_common_annot==0 -> 0 include
-        mask_annot0 = (~mask_pip0) & (denom_annot == 0)
-        enr[mask_annot0] = 0.0
-        # compute for valid denom_per_gene
-        mask_compute = (~mask_pip0) & (denom_annot > 0) & (denom_cis > 0)
-        # avoid division by zero
-        with np.errstate(divide='ignore', invalid='ignore'):
-            block = numer_div[mask_compute] / denom_per_gene[mask_compute]
-        enr[mask_compute] = np.where(np.isfinite(block), block, np.nan)
-        # included genes are those in mask_pip0 | mask_annot0 | mask_compute
-        included = mask_pip0 | mask_annot0 | mask_compute
-        included_vals = enr[included]
-        overall = float(np.nanmean(included_vals)) if included_vals.size > 0 else float('nan')
-        out_rows.append({'k': int(k), 'enrichment': overall})
-
-    return pd.DataFrame(out_rows).sort_values('k').reset_index(drop=True)
 
     
 def test_overlap(list1, list2, list_background):
