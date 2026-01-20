@@ -479,8 +479,10 @@ def check_missing_bins(ctrl_path, corr_path, prefix = 'pearsonr_'):
     return missing_bins
 
 
-def consolidate_null_npy(path,startswith = 'pearsonr_ctrl_',b=101,remove_empty=True,print_missing=False):
-    '''Consolidate null arrays from batch job into single numpy array file.
+def consolidate_ranged_npy(path, startswith, re=r".*_(\d+)_(\d+)\.npy$", allow_pickle=False, require_contiguous=True):
+    """
+    Loads all npy files in `path` starting with `startswith` and ending with _{start}_{end}.npy,
+    sorts them by (start, end), and concatenates along axis 0.
 
     Parameters
     ----------
@@ -488,37 +490,47 @@ def consolidate_null_npy(path,startswith = 'pearsonr_ctrl_',b=101,remove_empty=T
         Path containing input files.
     startswith : str
         Prefix for all input files.
-    b : int
-        Max length along axis 1.
-    remove_empty : bool
-        Determines whether to remove empty arrays or not.
-    
+
     Returns
-    ----------
-    null : np.array
-        Array with consolidated null values.
+    -------
+    arr : np.ndarray
+        Concatenated array.
+    ranges : list[tuple[int,int,str]]
+        (start, end, filename) for each chunk, in concatenation order.
+    """
+    _RANGE_RE = re.compile(r".*_(\d+)_(\d+)\.npy$")
 
-    '''
+    files = [f for f in os.listdir(path) if f.startswith(startswith) and f.endswith(".npy")]
+    ranged = []
+    for f in files:
+        m = _RANGE_RE.match(f)
+        if not m:
+            continue
+        s, e = int(m.group(1)), int(m.group(2))
+        ranged.append((s, e, f))
 
-    null_arrs = [x for x in os.listdir(path) if x.startswith(startswith)]
+    if not ranged:
+        raise FileNotFoundError(f"No ranged files found for prefix {startswith} in {path}")
 
-    # sort the filenames based on the extracted ranges
-    sorted_filenames = sorted(null_arrs, key=extract_range)
-    
-    if print_missing:
-        missing_intervals = check_missing_intervals(sorted_filenames)
+    ranged.sort(key=lambda x: (x[0], x[1]))
 
-    consolidated_null = []
-    for x in sorted_filenames[0:b]:
-        arr = np.load(path + x)
-        if remove_empty:
-            if arr.size == 0:
-                continue
-        consolidated_null.append(arr)
-    consolidated_null = np.vstack(consolidated_null)
-    print('Array shape:',consolidated_null.shape)
+    # enforce contiguous, non-overlapping, increasing ranges
+    if require_contiguous:
+        for (s1, e1, f1), (s2, e2, f2) in zip(ranged[:-1], ranged[1:]):
+            if e1 != s2:
+                raise ValueError(f"Non-contiguous ranges: {f1} ends at {e1}, next {f2} starts at {s2}")
 
-    return consolidated_null
+    arrays = []
+    for s, e, f in ranged:
+        arr = np.load(os.path.join(path, f), allow_pickle=allow_pickle)
+        arrays.append(arr)
+
+        # sanity check: first dimension should match (end-start)
+        if arr.shape[0] != (e - s):
+            raise ValueError(f"Chunk {f} has shape[0]={arr.shape[0]} but expected {e-s} from range {s}_{e}")
+
+    out = np.concatenate(arrays, axis=0)
+    return out, ranged
 
 
 def consolidate_null_dic(path, startswith='ctrl_coeff_dic_', remove_empty=True, print_missing=False):
