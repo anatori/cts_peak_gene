@@ -246,7 +246,7 @@ def pgb_enrichment_recall(df, col, min_recall, max_recall, ascending=True,
     Supports both binary labels (0/1) and continuous scores (0.0-1.0) in gold_col.
     For continuous scores:  a value of 0.5 contributes 0.5 to cumulative gold. 
     
-    CHANGES from original:
+    Changes from original:
     - Added total_gold and total_length calculation before filtering (handles NaN)
     - Modified "linked" calculation to check . notna() in addition to > 0
     - Modified "gold_cum" to only count gold items that are linked
@@ -257,31 +257,31 @@ def pgb_enrichment_recall(df, col, min_recall, max_recall, ascending=True,
     '''
     tmp = df[[col, gold_col]].copy()
     
-    # CHANGED: Store totals from original df BEFORE filtering (to handle NaN correctly)
+    # Store totals from original df BEFORE filtering (to handle NaN correctly)
     # Works with continuous gold_col values (sums the total "gold mass")
     total_gold = tmp[gold_col].sum()
     total_length = len(tmp)
     
     tmp = tmp.sort_values(by=col, ascending=ascending).reset_index(drop=True)
     
-    # CHANGED: Check .notna() in addition to > 0
+    # Check .notna() in addition to > 0
     tmp["linked"] = 1 * (tmp[col].notna() & (tmp[col] > 0))
     tmp["linked_cum"] = tmp["linked"].cumsum()
     
-    # CHANGED: Only count gold in linked items (multiply by "linked" mask)
+    # Only count gold in linked items (multiply by "linked" mask)
     # For continuous scores:  this accumulates the weighted "gold mass"
     tmp["gold_cum"] = (tmp[gold_col] * tmp["linked"]).cumsum()
     
-    # CHANGED: Use total_gold instead of tmp["gold_cum"].max()
+    # Use total_gold instead of tmp["gold_cum"].max()
     # Recall = fraction of total "gold mass" recovered
     tmp["recall"] = tmp["gold_cum"] / total_gold
     
-    # CHANGED: Use total_gold / total_length instead of tmp["gold_cum"].max() / len(tmp)
+    # Use total_gold / total_length instead of tmp["gold_cum"].max() / len(tmp)
     # Enrichment denom = average "gold density" across all items
     enrich_denom = total_gold / total_length
     tmp["enrichment"] = (tmp["gold_cum"].divide(tmp["linked_cum"])) / enrich_denom
     
-    # CHANGED:  Identify unscored as NaN or <= 0 using .notna() check
+    # Identify unscored as NaN or <= 0 using .notna() check
     unscored = tmp[~(tmp[col].notna() & (tmp[col] > 0))].reset_index(drop=True)
     tmp = tmp[tmp[col].notna() & (tmp[col] > 0)][["recall", "enrichment"]]
     
@@ -294,8 +294,6 @@ def pgb_enrichment_recall(df, col, min_recall, max_recall, ascending=True,
         recall_increment = (1 - last_recall) / num_new_points
         enrichment_increment = (last_enrichment - 1) / num_new_points
         new_recall = [last_recall + (recall_increment * (i + 1)) for i in range(num_new_points)]
-        
-        # CHANGED: Use (i + 1) instead of i for consistency with new_recall
         new_enrichment = [last_enrichment - (enrichment_increment * (i + 1)) for i in range(num_new_points)]
         
         extrapolated_er = pd.DataFrame({"recall": new_recall, "enrichment": new_enrichment})
