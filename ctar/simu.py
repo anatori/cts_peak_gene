@@ -367,6 +367,52 @@ def boostrap_pgb_auerc(df, col, ci, n_bs = 1000, method='basic', **auerc_kwargs)
     return out
 
 
+def dedup_df(
+    work_df,
+    key_cols, # list/tuple of columns to group by (e.g. ["peak_id", "gene_id"])
+    gold_col="label",
+    score_cols=None,
+    handle_dup="any",
+    tie="zero",
+    methods_agg="min"
+):
+    assert key_cols is not None and len(key_cols) > 0, "Provide key_cols for grouping."
+
+    def any_positive(x):
+        return float((x.astype(float) > 0).any())
+
+    def consensus_majority(x):
+        x = x.astype(float)
+        pos = (x > 0).sum()
+        neg = len(x) - pos
+        if pos > neg:
+            return 1.0
+        elif pos < neg:
+            return 0.0
+        else:
+            return {"zero": 0.0, "half": 0.5, "prefer_positive": 1.0, "prefer_negative": 0.0}[tie]
+
+    def proportion_positive(x):
+        x = x.astype(float)
+        return float((x > 0).mean())
+
+    if handle_dup == "any":
+        label_agg = any_positive
+    elif handle_dup == "consensus":
+        label_agg = consensus_majority
+    elif handle_dup == "proportion":
+        label_agg = proportion_positive
+    else:
+        raise ValueError("handle_dup must be one of: 'any', 'consensus', 'proportion'")
+
+    agg_dic = {gold_col: label_agg}
+    if score_cols:
+        for sc in score_cols:
+            agg_dic[sc] = methods_agg
+
+    return work_df.groupby(list(key_cols), as_index=False).agg(agg_dic)
+
+
 def compute_bootstrap_table(
     all_df,
     methods,
@@ -378,6 +424,10 @@ def compute_bootstrap_table(
     random_state=None,
     effective_score=False,
     effective_alpha=1.0, 
+    handle_dup=None,
+    dup_key_cols=None,
+    methods_agg=None,
+    tie='zero',
     **auerc_kwargs
 ):
     """
@@ -398,6 +448,18 @@ def compute_bootstrap_table(
         work_df[method] = work_df[method].clip(1e-100)
         if fillna:
             work_df[method] = work_df[method].fillna(1.0)
+
+    if handle_dup:
+        print("Deduplicating..")
+        work_df = dedup_df(
+            work_df,
+            key_cols=dup_key_cols,
+            handle_dup=handle_dup,
+            tie=tie,
+            gold_col=gold_col,
+            score_cols=methods,
+            methods_agg=methods_agg,
+        )
 
     # Point estimates on full data
     estimates = {m: pgb_auerc(work_df, m, gold_col=gold_col, **auerc_kwargs) for m in methods}
