@@ -353,9 +353,19 @@ def map_df_to_dic(links_df, keys_col='combined_bin', values_col='poissonb'):
 
 
 def read_to_frag(x):
+    ''' Convert reads to fragments (Martens Nat Meth 2024).
+    '''
     # round to nearest even: np.round(x/2) * 2
     # then divide by 2: np.round(x/2) * 2 / 2
-    return np.round(x / 2) 
+    return np.round(x / 2).astype(int)
+
+
+def filter_sparsity(adata, sparsity=0.01):
+    ''' Filter by sparsity.
+    '''
+    adata.var['sparsity'] = adata.X.getnnz(axis=0) / adata.shape[0]
+    mask = (adata.var['sparsity'] < sparsity)
+    return adata[:,~mask].copy()
 
 
 def preprocess_mu(mdata,
@@ -366,7 +376,9 @@ def preprocess_mu(mdata,
     n_genes_by_counts_min = 2000,
     n_genes_by_counts_max = 15000,
     total_counts_min = 4000,
-    total_counts_max = 40000
+    total_counts_max = 40000,
+    sparsity=0.01,
+    convert_read_to_frag=True,
     ):
 
     '''Preprocess MuData. Adapted from ./experiments/job.mz/explore.ipynb
@@ -387,34 +399,34 @@ def preprocess_mu(mdata,
 
     # Raw adata_rna & adata_atac
     adata_rna = mdata.mod['rna'].copy()
-    adata_rna.X = adata_rna.X.astype(np.float32) # float32 to reduce memory cost
+    adata_rna.X = adata_rna.X.astype(np.int32) # int32 to reduce memory cost
     adata_atac = mdata.mod['atac'].copy()
-    adata_atac.X = adata_atac.X.astype(np.float32) # float32 to reduce memory cost
+    adata_atac.X = adata_atac.X.astype(np.int32) # int32 to reduce memory cost
     print('Raw, adata_rna', adata_rna.shape, 'adata_atac', adata_atac.shape)
 
-    # Filtering & normalization of RNA (using scanpy) (in log scale)
+    # Filtering of RNA (using scanpy)
     sc.pp.filter_cells(adata_rna, min_genes = min_genes)
     sc.pp.filter_genes(adata_rna, min_cells = min_cells)
-    # save raw data
-    adata_rna.X.raw = adata_rna.X
-    # normalize
-    sc.pp.normalize_per_cell(adata_rna, counts_per_cell_after = counts_per_cell_after)
-    sc.pp.log1p(adata_rna)
-    print('Filtering & normalization of RNA', adata_rna.shape)
+    print('Filtering RNA', adata_rna.shape)
+    if sparsity:
+        adata_rna = filter_sparsity(adata_rna, sparsity=sparsity)
+        print('Sparsity filter RNA', adata_rna.shape)
 
-    # Filtering & normalization of ATAC (using mu) (in log scale)
+
+    # Filtering of ATAC (using mu)
     # Following tutorial https://muon-tutorials.readthedocs.io/en/latest/
     # single-cell-rna-atac/pbmc10k/2-Chromatin-Accessibility-Processing.html
     sc.pp.calculate_qc_metrics(adata_atac, percent_top=None, log1p=False, inplace=True)
     mu.pp.filter_var(adata_atac, 'n_cells_by_counts', lambda x: x >= n_cells_by_counts)
     mu.pp.filter_obs(adata_atac, 'n_genes_by_counts', lambda x: (x >= n_genes_by_counts_min) & (x <= n_genes_by_counts_max))
     mu.pp.filter_obs(adata_atac, 'total_counts', lambda x: (x >= total_counts_min) & (x <= total_counts_max))
-    # save raw data
-    adata_atac.X.raw = adata_atac.X
-    # normalize
-    sc.pp.normalize_per_cell(adata_atac, counts_per_cell_after = counts_per_cell_after)
-    sc.pp.log1p(adata_atac)
-    print('Filtering & normalization of ATAC', adata_atac.shape)
+    print('Filtering ATAC', adata_atac.shape)
+    if sparsity:
+        adata_atac = filter_sparsity(adata_atac, sparsity=sparsity)
+        print('Sparsity filter ATAC', adata_atac.shape)
+    if convert_read_to_frag:
+        adata_atac.X = read_to_frag(adata_atac.X)
+        print('Converted reads to fragments')
 
     # Align cells
     cell_list = [x for x in adata_rna.obs_names if x in set(adata_atac.obs_names)]
