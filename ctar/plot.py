@@ -725,10 +725,10 @@ def _ensure_method_column_inplace(df):
 def _format_p(p):
     if pd.isna(p): return ""
     p = float(p)
-    if p < 1e-4: return "p < 1e-4"
-    elif p < 0.001: return f"p = {p:.1e}"
-    elif p < 0.1: return f"p = {p:.3g}"
-    else: return f"p = {p:.2f}"
+    if p < 1e-4: return "p<1e-4"
+    elif p < 0.001: return f"p={p:.1e}"
+    elif p < 0.1: return f"p={p:.3g}"
+    else: return f"p={p:.2f}"
 
 
 def forest_plot_multiple_labels(
@@ -933,6 +933,358 @@ def forest_plot_multiple_labels(
         ax.legend(loc='upper center', bbox_to_anchor=(0.5, -0.15), frameon=False, ncol=len(labels))
 
     if tight_layout:
+        fig.tight_layout()
+
+    return ax
+
+
+def _stars(p, alpha=0.05):
+    if p is None:
+        return ""
+    try:
+        p = float(p)
+    except Exception:
+        return ""
+    if not np.isfinite(p):
+        return ""
+    if p < 0.001:
+        return "***"
+    elif p < 0.01:
+        return "**"
+    elif p < alpha:
+        return "*"
+    return ""
+
+
+def _draw_sig_bracket(ax, x1, x2, y, h, text, color='k', fontsize=9, lw=1.2):
+    if ax.get_yscale() == 'log':
+        y_top = y * (1.0 + h)
+        ax.plot([x1, x1, x2, x2], [y, y_top, y_top, y], color=color, lw=lw)
+        if text:
+            ax.text((x1 + x2) / 2.0, y_top, text, ha='center', va='bottom', color=color, fontsize=fontsize)
+    else:
+        y_top = y + h
+        ax.plot([x1, x1, x2, x2], [y, y_top, y_top, y], color=color, lw=lw)
+        if text:
+            ax.text((x1 + x2) / 2.0, y_top, text, ha='center', va='bottom', color=color, fontsize=fontsize)
+
+
+def _normalize_pairwise_pvals(pairwise_pvals, method_renames):
+    if pairwise_pvals is None:
+        return None
+    inverse_names = {}
+    if method_renames:
+        for internal, display in method_renames.items():
+            if display != internal:
+                inverse_names[display] = internal
+    normalized = {}
+    for lbl, pairs in pairwise_pvals.items():
+        out = {}
+        for key, p in pairs.items():
+            if not isinstance(key, (tuple, list)) or len(key) != 2:
+                continue
+            a, b = key
+            a_norm = inverse_names.get(a, a)
+            b_norm = inverse_names.get(b, b)
+            pair_norm = tuple(sorted((a_norm, b_norm)))
+            if pair_norm in out:
+                try:
+                    out[pair_norm] = min(out[pair_norm], p)
+                except Exception:
+                    out[pair_norm] = p
+            else:
+                out[pair_norm] = p
+        normalized[lbl] = out
+    return normalized
+
+
+def _normalize_vs_ref(pairwise_vs_ref, reference_method, method_renames):
+    """
+    pairwise_vs_ref format (per dataset), keys can be internal or display:
+      { 'datasetA': {'scent': 0.01, 'scmm': 0.02, 'ctar_filt': None }, ... }
+    reference_method can be internal or display; normalized to internal using method_renames.
+    """
+    if pairwise_vs_ref is None:
+        return None
+
+    # Build display->internal map
+    inverse_names = {}
+    if method_renames:
+        for internal, display in method_renames.items():
+            if display != internal:
+                inverse_names[display] = internal
+
+    # Normalize reference name
+    ref_internal = inverse_names.get(reference_method, reference_method)
+
+    normalized = {}
+    for lbl, mp in pairwise_vs_ref.items():
+        out = {}
+        for m_key, p in mp.items():
+            internal_m = inverse_names.get(m_key, m_key)
+            if internal_m == ref_internal:
+                continue  # skip self
+            pair = tuple(sorted((internal_m, ref_internal)))
+            out[pair] = p
+        normalized[lbl] = out
+    return normalized
+
+
+def _map_to_internal(name, method_renames):
+    if not method_renames:
+        return name
+    inv = {v: k for k, v in method_renames.items() if v != k}
+    return inv.get(name, name)
+
+
+def barplot_grouped_with_sig(
+    res_dic,
+    labels,
+    methods_order=None,
+    estimate_col="estimate",
+    ci_lower_col="ci_lower",
+    ci_upper_col="ci_upper",
+    # Significance: read vs-reference p-values from a column in res_dic[label]
+    pval_vs_ref_col=None,     # e.g., "p_value_vs_ctar_filt"
+    reference_method="ctar_filt",
+    alpha=0.05,
+    bracket_text="p",         # 'p', 'stars', or 'none'
+    use_log_y=True,
+    # Coloring
+    method_colors=None,       # dict {internal_method -> color}
+    palette=None,             # list-like (e.g., sns.color_palette('deep', n_colors=5))
+    cmap_name="tab10",
+    # Display renames
+    label_renames=None,       # dict {original_label -> display_label}
+    method_renames=None,      # dict {internal_method -> display_name}
+    # Layout
+    bar_width=0.18,
+    bar_spacing_mult=1,
+    group_pad=0.8,
+    # Bracket spacing controls
+    bracket_base_pad=0.04,    # start brackets this far above group max (fractional on log; fraction of max on linear)
+    bracket_step=0.08,        # vertical step between brackets (fractional on log; fraction of max on linear)
+    bracket_height=0.6,       # bracket height as a fraction of step
+    title=None,
+    y_label=None,
+    figsize=(6,4),
+    ax=None,
+    add_legend=True,
+    asterisk_fontsize=9,      # used only if bracket_text='stars'
+    bracket_fontsize=9,
+    bracket_linewidth=1.2,
+):
+    """
+    Grouped bar plot of 'estimate' with CI error bars, colored by method, grouped by dataset label.
+    Draws significance brackets per dataset between each method and the reference method, using p-values
+    sourced from a column in res_dic[label] (pval_vs_ref_col).
+
+    Bracket spacing:
+      - On log scale: base = group_max * (1 + bracket_base_pad), each level y = base * (1 + level * bracket_step), height = bracket_step * bracket_height
+      - On linear scale: base = group_max + bracket_base_pad * group_max, each level y = base + level * (bracket_step * group_max), height = (bracket_step * group_max) * bracket_height
+    Increase bracket_step or bracket_base_pad to add space; reduce bracket_height to shrink bracket size.
+    """
+
+    created_fig = False
+    if ax is None:
+        fig, ax = plt.subplots(figsize=figsize)
+        created_fig = True
+    else:
+        fig = ax.figure
+
+    # Validate labels
+    missing = [lbl for lbl in labels if lbl not in res_dic]
+    if missing:
+        raise KeyError(f"Labels not found in res_dic: {missing}")
+
+    # Methods order
+    first_df = res_dic[labels[0]].copy()
+    _ensure_method_column_inplace(first_df)
+    if methods_order is None:
+        methods_order = first_df['method'].astype(str).tolist()
+    M = len(methods_order)
+
+    # Colors per method
+    if method_colors is None:
+        if palette is None:
+            try:
+                palette = list(sns.color_palette('deep', n_colors=max(M, 5)))
+            except Exception:
+                cmap = plt.get_cmap(cmap_name)
+                palette = [cmap(i % cmap.N) for i in range(M)]
+        else:
+            palette = list(palette)
+        method_colors = {m: palette[i % len(palette)] for i, m in enumerate(methods_order)}
+    else:
+        for i, m in enumerate(methods_order):
+            if m not in method_colors:
+                if palette is not None:
+                    method_colors[m] = list(palette)[i % len(palette)]
+                else:
+                    cmap = plt.get_cmap(cmap_name)
+                    method_colors[m] = cmap(i % cmap.N)
+
+    # Normalize reference method to internal name if display provided
+    ref_internal = _map_to_internal(reference_method, method_renames)
+
+    # Positions
+    bar_spacing = bar_width * bar_spacing_mult
+    group_centers = np.arange(len(labels)) * group_pad
+    within_offsets = np.array([(j - (M - 1) / 2.0) * bar_spacing for j in range(M)])
+
+    positions = {}
+    heights = {}
+    err_up = {}
+    err_low = {}
+
+    # For reading per-dataset p-values vs reference from column
+    per_label_vs_ref = {}  # lbl -> dict {internal_method -> pvalue_vs_ref}
+
+    max_y_for_limits = []
+    for i, lbl in enumerate(labels):
+        df = res_dic[lbl].copy()
+        _ensure_method_column_inplace(df)
+        df = df[df['method'].isin(methods_order)]
+        df = df.set_index('method').reindex(methods_order)
+
+        # Validate columns
+        for col in (estimate_col, ci_lower_col, ci_upper_col):
+            if col not in df.columns:
+                raise KeyError(f"Column '{col}' not found in '{lbl}'. Columns: {list(df.columns)}")
+
+        # Read p-values vs reference, if column provided
+        if pval_vs_ref_col is not None and pval_vs_ref_col in df.columns:
+            per_label_vs_ref[lbl] = df[pval_vs_ref_col].to_dict()
+        elif pval_vs_ref_col is not None and pval_vs_ref_col not in df.columns:
+            raise KeyError(f"Column '{pval_vs_ref_col}' not found in '{lbl}'. Available: {list(df.columns)}")
+
+        est = df[estimate_col].astype(float).to_numpy()
+        lo  = df[ci_lower_col].astype(float).to_numpy()
+        hi  = df[ci_upper_col].astype(float).to_numpy()
+
+        e_low = np.clip(est - lo, 0, np.inf)
+        e_up  = np.clip(hi - est, 0, np.inf)
+
+        x_group = group_centers[i]
+        xs = x_group + within_offsets
+
+        for j, m in enumerate(methods_order):
+            x = xs[j]
+            y = est[j]
+            positions[(lbl, m)] = x
+            heights[(lbl, m)] = y
+            err_up[(lbl, m)] = e_up[j]
+            err_low[(lbl, m)] = e_low[j]
+
+            color = method_colors[m]
+            ax.bar(x, y, width=bar_width, color=color, edgecolor='none', alpha=0.9)
+            ax.errorbar(x, y, yerr=[[e_low[j]], [e_up[j]]], fmt='none', ecolor=color, elinewidth=1.2, capsize=4)
+
+            max_y_for_limits.append(y + e_up[j])
+
+    # X axis: dataset labels (renamed for display if provided)
+    ax.set_xticks(group_centers)
+    label_renames = label_renames or {}
+    display_labels = [label_renames.get(lbl, lbl) for lbl in labels]
+    ax.set_xticklabels(display_labels, rotation=0)
+
+    # Y axis
+    if use_log_y:
+        ax.set_yscale('log')
+        ax.get_yaxis().set_major_formatter(ScalarFormatter())
+        ax.ticklabel_format(axis='y', style='plain')
+
+    # Reference baseline line (enrichment = 1.0)
+    ax.axhline(1.0, color='k', linestyle='--', linewidth=1)
+
+    # Labels/title
+    if y_label is None:
+        y_label = "Weighted average enrichment (95% CI)"
+    ax.set_ylabel(y_label)
+    if title:
+        ax.set_title(title)
+
+    # Legend: method display names
+    if add_legend:
+        handles = []
+        labels_legend = []
+        for m in methods_order:
+            patch = plt.Line2D([0], [0], marker='s', color='w',
+                               markerfacecolor=method_colors[m], markersize=10, linestyle='None')
+            handles.append(patch)
+            disp = method_renames.get(m, m) if method_renames else m
+            labels_legend.append(disp)
+        ax.legend(handles, labels_legend, loc='upper center', bbox_to_anchor=(0.5, -0.1),
+                  frameon=False, ncol=min(len(methods_order), 4))
+
+    # Draw brackets vs reference using column-based p-values
+    if per_label_vs_ref:
+        for i, lbl in enumerate(labels):
+            pmap = per_label_vs_ref.get(lbl, {})
+            if not pmap:
+                continue
+
+            # Ensure reference method is present in positions
+            if (lbl, ref_internal) not in positions:
+                continue
+
+            group_max = max(heights[(lbl, m)] + err_up[(lbl, m)]
+                            for m in methods_order if (lbl, m) in heights)
+
+            # Compute base, step, height with scale-aware semantics
+            if ax.get_yscale() == 'log':
+                base = group_max * (1.0 + bracket_base_pad)
+                step_val = bracket_step
+                height_val = step_val * bracket_height
+            else:
+                scale = max(group_max, 1.0)
+                base = group_max + bracket_base_pad * scale
+                step_val = bracket_step * scale
+                height_val = step_val * bracket_height
+
+            # Build pairs: every method vs reference (skip reference itself)
+            pairs = []
+            for m in methods_order:
+                if m == ref_internal:
+                    continue
+                p = pmap.get(m, None)
+                if p is None:
+                    continue
+                pairs.append(((m, ref_internal), p))
+
+            # Sort by horizontal span to reduce overlap
+            def span_len(pair):
+                (m1, m2), _ = pair
+                return abs(positions[(lbl, m1)] - positions[(lbl, m2)])
+            pairs = sorted(pairs, key=span_len)
+
+            level = 0
+            for (m1, m2), p in pairs:
+                if (lbl, m1) not in positions or (lbl, m2) not in positions:
+                    continue
+                x1 = positions[(lbl, m1)]
+                x2 = positions[(lbl, m2)]
+
+                if ax.get_yscale() == 'log':
+                    y = base * (1.0 + level * step_val)
+                    h = height_val
+                else:
+                    y = base + level * step_val
+                    h = height_val
+
+                if bracket_text == "p":
+                    txt = _format_p(p)
+                elif bracket_text == "stars":
+                    txt = _stars(p, alpha=alpha)
+                else:
+                    txt = ""
+
+                _draw_sig_bracket(ax, x1, x2, y, h, txt, color='k', fontsize=bracket_fontsize, lw=bracket_linewidth)
+                level += 1
+
+    ax.grid(axis='y', linestyle=':', linewidth=0.6, alpha=0.6)
+
+    if created_fig:
         fig.tight_layout()
 
     return ax
