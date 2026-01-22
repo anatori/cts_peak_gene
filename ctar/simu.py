@@ -348,7 +348,6 @@ def dedup_df(
     score_cols=None,
     handle_dup="any",
     tie="zero",
-    methods_agg="min"
 ):
     assert key_cols is not None and len(key_cols) > 0, "Provide key_cols for grouping."
 
@@ -382,7 +381,7 @@ def dedup_df(
     agg_dic = {gold_col: label_agg}
     if score_cols:
         for sc in score_cols:
-            agg_dic[sc] = methods_agg
+            agg_dic[sc] = "min"
 
     return work_df.groupby(list(key_cols), as_index=False).agg(agg_dic)
 
@@ -400,7 +399,6 @@ def compute_bootstrap_table(
     effective_alpha=1.0, 
     handle_dup=None,
     dup_key_cols=None,
-    methods_agg=None,
     tie='zero',
     **auerc_kwargs
 ):
@@ -432,7 +430,6 @@ def compute_bootstrap_table(
             tie=tie,
             gold_col=gold_col,
             score_cols=methods,
-            methods_agg=methods_agg,
         )
 
     # Point estimates on full data
