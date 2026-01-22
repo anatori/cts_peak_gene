@@ -9,7 +9,7 @@ LOG_DIR="${LOG_DIR:-/projects/zhanglab/users/ana/logs}"
 CONDA_ENV="${CONDA_ENV:-ctar}"
 
 # Dataset name used consistently across steps
-DATASET_NAME="${DATASET_NAME:-neat}"
+DATASET_NAME="${DATASET_NAME:-pbmc}"
 
 # Paths (match repository defaults in scripts)
 REPO_ROOT="${REPO_ROOT:-/projects/zhanglab/users/ana/cts_peak_gene}"
@@ -17,21 +17,21 @@ SCRIPTS_DIR="${SCRIPTS_DIR:-${REPO_ROOT}/experiments/job.evaluation}"
 
 # Make union output directory (used by make_union_bed.py)
 UNION_DIR="${UNION_DIR:-/projects/zhanglab/users/ana/bedtools2/ana_bedfiles/validation/union_links}"
-SCENT_FILE="${SCENT_FILE:-/projects/zhanglab/users/ana/multiome/results/scent/myscent_neatseq.txt}"
-SCMM_FILE="${SCMM_FILE:-/projects/zhanglab/users/ana/multiome/results/scmultimap/scmultimap_neat_cis.csv}"
-SIGNAC_FILE="${SIGNAC_FILE:-/projects/zhanglab/users/ana/multiome/results/signac/signac_neatseq_links.csv}"
-CTAR_FILE="${CTAR_FILE:-/projects/zhanglab/users/ana/multiome/results/ctar/final_eval/neat/neat_unfiltered_5.5.5.5.1000/cis_links_df.csv}"
-CTAR_FILT_FILE="${CTAR_FILT_FILE:-/projects/zhanglab/users/ana/multiome/results/ctar/final_eval/neat/neat_filtered_5.5.5.5.1000/cis_links_df.csv}"
+SCENT_FILE="${SCENT_FILE:-}"
+SCMM_FILE="${SCMM_FILE:-/projects/zhanglab/users/ana/multiome/results/scmultimap/scmultimap_pbmc_cis.csv}"
+SIGNAC_FILE="${SIGNAC_FILE:-/projects/zhanglab/users/ana/multiome/results/signac/signac_pbmc_links.csv}"
+CTAR_FILE="${CTAR_FILE:-}"
+CTAR_FILT_FILE="${CTAR_FILT_FILE:-/projects/zhanglab/users/ana/multiome/results/ctar/final_eval/pbmc/pbmc_filtered_5.5.5.5.1000/cis_links_df.csv}"
 
-SCENT_COL="${SCENT_COL:-boot_basic_p}"
+SCENT_COL="${SCENT_COL:-}"
 SCMM_COL="${SCMM_COL:-pval}"
 SIGNAC_COL="${SIGNAC_COL:-pvalue}"
-CTAR_COL_Z="${CTAR_COL_Z:-5.5.5.5.1000_mcpval_z}"
-CTAR_COL="${CTAR_COL:-5.5.5.5.1000_mcpval}"
+CTAR_COL_Z="${CTAR_COL_Z:-}"
+CTAR_COL="${CTAR_COL:-}"
 CTAR_FILT_COL_Z="${CTAR_FILT_COL_Z:-5.5.5.5.1000_mcpval_z}"
 CTAR_FILT_COL="${CTAR_FILT_COL:-5.5.5.5.1000_mcpval}"
 
-METHOD_COLS="${METHOD_COLS:-scent,scmm,signac,ctar_z,ctar,ctar_filt_z,ctar_filt}"
+METHOD_COLS="${METHOD_COLS:-scmm,signac,ctar_filt_z,ctar_filt}"
 
 # Intersect inputs/outputs
 EVAL_DIR="${EVAL_DIR:-/projects/zhanglab/users/ana/bedtools2/ana_bedfiles/validation/tissue_max}"
@@ -110,7 +110,7 @@ AURC_JOB_ID=$(submit \
   --wrap "source ~/.bashrc && conda activate ${CONDA_ENV} && \
           mkdir -p '${AURC_DIR}' && \
           python ${SCRIPTS_DIR}/calculate_auerc.py \
-            --overlap_path '${AGG_DIR}' \
+            --agg_path '${AGG_DIR}' \
             --res_path '${AURC_DIR}' \
             --dataset_name '${DATASET_NAME}' \
             --n_bootstrap '${N_BOOTSTRAP}' \

@@ -11,7 +11,7 @@ TODO
 
 def main(args):
 
-	OVERLAP_PATH = args.overlap_path
+	AGG_PATH = args.agg_path
 	GTEX_SCORE_THRES = float(args.gtex_score_thres)
 	ABC_SCORE_THRES = float(args.abc_score_thres)
 	METHOD_COLS = [m.strip() for m in args.method_cols.split(",")]
@@ -23,17 +23,19 @@ def main(args):
 	DATASET_NAME = args.dataset_name
 
 	os.makedirs(RES_PATH,exist_ok=True)
-	files = [f for f in os.listdir(OVERLAP_PATH) if os.path.isfile(f'{OVERLAP_PATH}/{f}')]
-	print('Using overlap files:',files)
+	files = [f for f in os.listdir(AGG_PATH) if os.path.isfile(f'{AGG_PATH}/{f}')]
+	print('Using agg files:',files)
 	print('With methods:',METHOD_COLS)
 
 	for file in files:
-		overlap_df = pd.read_csv(f'{OVERLAP_PATH}/{file}',index_col=0)
+		agg_df = pd.read_csv(f'{AGG_PATH}/{file}')
 		label = os.path.basename(file).rsplit('.',maxsplit=1)[0].rsplit('_',maxsplit=1)[0]
-		if label.startswith("gtex"):
-		    overlap_df['label'] = overlap_df.score >= GTEX_SCORE_THRES
+		if label.startswith("gtex") or label.startswith("onek1k"):
+		    agg_df['label'] = agg_df.score >= GTEX_SCORE_THRES
 		if label.startswith("abc"):
-		    overlap_df['label'] = overlap_df.score >= ABC_SCORE_THRES
+		    agg_df['label'] = agg_df.score >= ABC_SCORE_THRES
+		if label.startswith("crispr"):
+		    agg_df['label'] = agg_df.score
 
 		# skipping hic for now
 		if label in ['ctcf_chiapet','rnap2_chiapet','intact_hic']:
@@ -41,12 +43,16 @@ def main(args):
 
 		# computing auerc
 		print(f'Computing AUERC for {label}...')
-		res_df = ctar.simu.compute_bootstrap_table(overlap_df, METHOD_COLS, 
-	                                  gold_col = GOLD_COL, 
-	                                  n_bootstrap = N_BOOTSTRAP, 
-	                                  fillna = FILLNA, 
+		agg_df['pg_pair'] = agg_df['peak'] + ';' + agg_df['gene']
+		res_df = ctar.simu.compute_bootstrap_table(agg_df, METHOD_COLS, 
+	                                  gold_col=GOLD_COL, 
+	                                  handle_dup='consensus',
+	                                  dup_key_cols=['pg_pair'],
+	                                  tie='zero',
+	                                  n_bootstrap=N_BOOTSTRAP, 
+	                                  fillna=FILLNA, 
 	                                  reference_method=REFERENCE_METHOD, 
-	                                  extrapolate=False, 
+	                                  extrapolate=True, 
 	                                  weighted=True,
 	                                  ascending=True)
 		res_df.to_csv(f'{RES_PATH}/{label}_{DATASET_NAME}_auerc.csv')
@@ -55,13 +61,13 @@ def main(args):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
 
-    parser.add_argument("--overlap_path", type=str, default='/projects/zhanglab/users/ana/multiome/validation/neat')
-    parser.add_argument("--res_path", type=str, default='/projects/zhanglab/users/ana/multiome/validation/tables/neat')
-    parser.add_argument("--dataset_name", type=str, default='neat')
+    parser.add_argument("--agg_path", type=str, default='/projects/zhanglab/users/ana/multiome/validation/bmmc')
+    parser.add_argument("--res_path", type=str, default='/projects/zhanglab/users/ana/multiome/validation/tables/bmmc')
+    parser.add_argument("--dataset_name", type=str, default='bmmc')
 
-    parser.add_argument("--method_cols", type=str, default='scent,scmm,signac,ctar_z,ctar,ctar_filt_z,ctar_filt')
-    parser.add_argument("--gold_col", type=str, default='score')
-    parser.add_argument("--reference_method", type=str, default='ctar')
+    parser.add_argument("--method_cols", type=str, default='scent,scmm,signac,ctar_filt_z,ctar_filt')
+    parser.add_argument("--gold_col", type=str, default='label')
+    parser.add_argument("--reference_method", type=str, default='ctar_filt')
     parser.add_argument("--fillna", type=str, default='True')
     parser.add_argument("--n_bootstrap", type=str, default='1000')
 

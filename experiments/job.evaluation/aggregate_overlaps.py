@@ -13,6 +13,7 @@ def main(args):
     CAND_COLS = METHOD_COLS + ['peak','gene']
 
     cols_dict = {
+        'onek1k':['onek1k_id','score','gt_gene'],
         'gtex':['gtex_id','score','gt_gene'],
         'abc':['abc_id','exp_id','assay_type','score','gt_gene'],
         'crispr':['crispr_id','score','gt_gene'],

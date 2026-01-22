@@ -52,7 +52,7 @@ for A_FILE in "${EVAL_DIR}"/*.bed; do
   out="${OVERLAP_DIR}/${base}_${DATASET_NAME}.bed"
 
   # GTEx: variant overlaps (no fraction requirement)
-  if [[ "${base}" == gtex_* ]]; then
+  if [[ "${base}" == gtex_* || "${base}" == onek1k_* ]]; then
     "${BEDTOOLS_BIN}" -wo \
       -a "${A_FILE}" \
       -b "${UNION_BED}" \

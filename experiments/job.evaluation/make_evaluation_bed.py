@@ -19,6 +19,11 @@ def main(args):
 	######                                  Data Loading                                 ######
 	###########################################################################################
 
+	# onek1k
+	onek1k_path = EVAL_FILE_PATH + '/susie_finemap_onek1k'
+	onek1k_df = pd.read_csv(f'{onek1k_path}/susie_onek1k_allcells.tsv',sep='\t')
+	print('OneK1K shape:',onek1k_df.shape)
+
 	# gtex
 	gtex_path = EVAL_FILE_PATH + '/gtex_v8_susie'
 	gtex_df = pd.read_csv(f'{gtex_path}/GTEx_49tissues_release1.tsv.bgz',compression='gzip',sep='\t')
@@ -64,6 +69,12 @@ def main(args):
 	######                                  Clean for bed                                ######
 	###########################################################################################
 
+	# onek1k
+	onek1k_df['end'] = onek1k_df['pos'].astype(int)
+	onek1k_df['start'] = onek1k_df['end'].astype(int) - 1
+	onek1k_df[['start','end']] = onek1k_df[['start','end']].astype(int)
+	onek1k_df['final_col'] = onek1k_df['snp'] + ';' + onek1k_df['pip'].astype(str) + ';' + onek1k_df['gene']
+
 	# gtex
 	gtex_df['gene_standard'] = gtex_df['gene'].str.split('.').str[0]
 	gtex_df[['chr','end']] = gtex_df['variant_hg38'].str.split('_',expand=True)[[0,1]]
@@ -87,7 +98,6 @@ def main(args):
 	intact_df['final_col'] = intact_df['cCRE ID'] + ';' + intact_df['Experiment ID'] + ';' + intact_df['P-value'].astype(str) + ';' + intact_df['Score'].astype(str) + ';' + intact_df['Gene ID'].astype(str)
 
 
-
 	###########################################################################################
 	######                       Max within matched tissues                              ######
 	###########################################################################################
@@ -95,6 +105,7 @@ def main(args):
 	# tissue matching
 	neat_gtex = ["Whole_Blood","Cells_EBV-transformed_lymphocytes","Spleen"] # bmmc and neat have same tissue matches
 	brain_gtex = ["Brain_Cerebellum","Brain_Cerebellar_Hemisphere"]
+	pbmc_gtex = ["Whole_Blood"]
 
 	neat_abc = [
 	    "CD4-positive,_alpha-beta_T_cell",
@@ -126,8 +137,25 @@ def main(args):
 	    "stromal_cell_of_bone_marrow",
 	]
 
+	pbmc_abc = neat_abc + [
+		'B_cell',
+		'naive_B_cell',
+		'memory_B_cell',
+		'activated_B_cell',
+		'stimulated_activated_naive_B_cell',
+		'natural_killer_cell',
+		'immature_natural_killer_cell',
+		'CD14-positive_monocyte',
+		'CD1c-positive_myeloid_dendritic_cell',
+	]
+
 	# take max across tissues
 	print('deduplicating...')
+	print('onek1k_df total',onek1k_df.shape)
+	onek1k_df = onek1k_df.sort_values('pip',ascending=False).drop_duplicates(subset='snp').copy()
+	print('onek1k_df after',onek1k_df.shape)
+	print('')
+
 	print('gtex_df total',gtex_df.shape)
 	gtex_neat_df = gtex_df[gtex_df["tissue"].isin(neat_gtex)].copy()
 	print('gtex_neat_df before',gtex_neat_df.shape)
@@ -137,6 +165,10 @@ def main(args):
 	print('gtex_brain_df before',gtex_brain_df.shape)
 	gtex_brain_df = gtex_brain_df.sort_values('pip',ascending=False).drop_duplicates(subset='variant_hg38').copy()
 	print('gtex_brain_df after',gtex_brain_df.shape)
+	gtex_pbmc_df = gtex_df[gtex_df["tissue"].isin(pbmc_gtex)].copy()
+	print('gtex_pbmc_df before',gtex_brain_df.shape)
+	gtex_pbmc_df = gtex_pbmc_df.sort_values('pip',ascending=False).drop_duplicates(subset='variant_hg38').copy()
+	print('gtex_pbmc_df after',gtex_pbmc_df.shape)
 	print('')
 
 	print('abc_df total',abc_df.shape)
@@ -152,6 +184,10 @@ def main(args):
 	print('abc_bmmc_df before',abc_bmmc_df.shape)
 	abc_bmmc_df = abc_bmmc_df.sort_values('Score',ascending=False).drop_duplicates(subset=['cCRE ID','Gene ID']).copy()
 	print('abc_bmmc_df after',abc_bmmc_df.shape)
+	abc_pbmc_df = abc_df[abc_df["Biosample"].isin(pbmc_abc)].copy()
+	print('abc_pbmc_df before',abc_pbmc_df.shape)
+	abc_pbmc_df = abc_pbmc_df.sort_values('Score',ascending=False).drop_duplicates(subset=['cCRE ID','Gene ID']).copy()
+	print('abc_pbmc_df after',abc_pbmc_df.shape)
 	print('')
 
 	# there should be no duplicates in crispr	
@@ -172,15 +208,20 @@ def main(args):
 	######                                  Save bedfiles                                ######
 	###########################################################################################
 
+	# onek1k
+	onek1k_df[['chrom','start','end','final_col']].to_csv(f'{BED_PATH}/onek1k_pbmc.bed',header=False,index=False,sep='\t')
+
 	# gtex
 	gtex_neat_df[['chr','start','end','final_col']].to_csv(f'{BED_PATH}/gtex_neat.bed',header=False,index=False,sep='\t')
 	gtex_neat_df[['chr','start','end','final_col']].to_csv(f'{BED_PATH}/gtex_bmmc.bed',header=False,index=False,sep='\t')
 	gtex_brain_df[['chr','start','end','final_col']].to_csv(f'{BED_PATH}/gtex_brain.bed',header=False,index=False,sep='\t')
+	gtex_pbmc_df[['chr','start','end','final_col']].to_csv(f'{BED_PATH}/gtex_pbmc.bed',header=False,index=False,sep='\t')
 
 	# abc
 	abc_neat_df[['chr','start','end','final_col']].to_csv(f'{BED_PATH}/abc_neat.bed',header=False,index=False,sep='\t')
 	abc_brain_df[['chr','start','end','final_col']].to_csv(f'{BED_PATH}/abc_brain.bed',header=False,index=False,sep='\t')
 	abc_bmmc_df[['chr','start','end','final_col']].to_csv(f'{BED_PATH}/abc_bmmc.bed',header=False,index=False,sep='\t')
+	abc_pbmc_df[['chr','start','end','final_col']].to_csv(f'{BED_PATH}/abc_pbmc.bed',header=False,index=False,sep='\t')
 
 	# crispr - save bulk and per celltype
 	crispr_df[['chrom','chromStart','chromEnd','final_col']].to_csv(f'{BED_PATH}/crispr.bed',header=False,index=False,sep='\t')
