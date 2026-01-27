@@ -3,7 +3,6 @@ import pandas as pd
 import scipy as sp
 import matplotlib.pyplot as plt
 import statsmodels.api as sm
-from statsmodels.discrete.discrete_model import NegativeBinomial
 from statsmodels.stats.multitest import multipletests
 from tqdm import tqdm
 from sklearn import metrics
@@ -13,6 +12,8 @@ from typing import Optional, Tuple, Dict, Any
 import pybedtools
 import seaborn as sns
 from ctar.data_loader import get_gene_coords
+from statsmodels.stats.contingency_tables import Table2x2
+
 
 
 def null_peak_gene_pairs(rna, atac):
@@ -186,6 +187,47 @@ def contingency(link_list_sig, link_list_all, link_list_true):
         link_list_all,
     )
     return enrich, pvalue, oddsratio, or_ub, or_lb
+
+
+def odds_ratio_with_ci(y_bool, label_arr, ci=0.95, smoothed=True, correction=0.5, fn_cap=None):
+    """
+    y_bool: boolean predictions (e.g., pval <= alpha)
+    label_arr: 0/1 ground truth labels
+    Returns: (or_stat, fisher_p, ci_low, ci_high, table)
+    """
+    y_bool = np.asarray(y_bool, dtype=bool)
+    label_arr = np.asarray(label_arr)
+
+    tp = np.sum((label_arr == 1) & y_bool)
+    fp = np.sum((label_arr == 0) & y_bool)
+    fn = np.sum((label_arr == 1) & ~y_bool)
+    tn = np.sum((label_arr == 0) & ~y_bool)
+
+    table = np.array([[tp, fp],
+                      [fn, tn]], dtype=float)
+
+    # Fisher exact on raw integer counts
+    fisher_or, fisher_p = sp.stats.fisher_exact([[tp, fp], [fn, tn]])
+
+    if fn_cap is not None and fn < fn_cap:
+        return np.nan, fisher_p, np.nan, np.nan, table
+
+    # CI: Table2x2 can fail / be inf with zeros; use Haldane-Anscombe if smoothed
+    table_for_ci = table.copy()
+    if smoothed:
+        table_for_ci = table_for_ci + correction
+
+    try:
+        t22 = Table2x2(table_for_ci,shift_zeros=smoothed)
+        or_stat = t22.oddsratio
+        alpha = 1.0 - ci
+        ci_low, ci_high = t22.oddsratio_confint(alpha=alpha)
+    except Exception:
+        # Fallback: keep fisher OR but no CI
+        or_stat = fisher_or
+        ci_low, ci_high = np.nan, np.nan
+
+    return or_stat, fisher_p, ci_low, ci_high, table
 
 
 def auprc_enrichment(y_true, y_scores):
@@ -395,26 +437,29 @@ def compute_bootstrap_table(
     ci=0.95,
     fillna=True,
     random_state=None,
-    effective_score=False,
-    effective_alpha=1.0, 
     handle_dup=None,
     dup_key_cols=None,
     tie='zero',
+    or_alpha=0.05,
+    or_smoothed=True,
+    or_correction=0.5,
+    or_fn_cap=None,
+    or_multiple_testing=True,
     **auerc_kwargs
 ):
     """
-    Paired bootstrap across methods: one resample index per replicate, compute AUERC for all methods,
-    then form differences vs reference on the same replicate.
+    Paired bootstrap across methods: one resample index per replicate, compute AUERC (and OR) for all methods,
+    then form paired differences vs reference on the same replicate.
 
     Returns DataFrame with columns:
-      method, estimate, ci_lower, ci_upper,
-      diff_estimate, diff_ci_lower, diff_ci_upper, p_value, n_bootstrap
+      method,
+      estimate, ci_lower, ci_upper,
+      diff_estimate, diff_ci_lower, diff_ci_upper, p_value,
+      odds_ratio, or_ci_lower, or_ci_upper, fisher_p,
+      n_bootstrap
     """
     rng = np.random.default_rng(random_state)
 
-    raw_df = all_df.copy()
-
-    # Preprocess once
     work_df = all_df.copy()
     for method in methods:
         work_df[method] = work_df[method].clip(1e-100)
@@ -432,50 +477,101 @@ def compute_bootstrap_table(
             score_cols=methods,
         )
 
-    # Point estimates on full data
-    estimates = {m: pgb_auerc(work_df, m, gold_col=gold_col, **auerc_kwargs) for m in methods}
-    # Storage for bootstrap statistics per method
-    boot_stats = {m: np.empty(n_bootstrap, dtype=float) for m in methods}
-
-    N = len(work_df)
-    for b in range(n_bootstrap):
-        idx = rng.integers(0, N, size=N)  # same indices for all methods
-        sample = work_df.iloc[idx].reset_index(drop=True)
-        for m in methods:
-            boot_stats[m][b] = pgb_auerc(sample, m, gold_col=gold_col, **auerc_kwargs)
-    alpha = 1.0 - ci
-
-    # Reference bootstrap and estimate
     if reference_method not in methods:
         raise ValueError(f"reference_method {reference_method} not in provided methods.")
-    ref_boot = boot_stats[reference_method]
-    ref_est = estimates[reference_method]
+
+    alpha = 1.0 - ci
+    N = len(work_df)
+
+    # Point estimates on full data (AUERC)
+    auerc_est = {m: pgb_auerc(work_df, m, gold_col=gold_col, **auerc_kwargs) for m in methods}
+
+    # Point estimates on full data (OR)
+    or_est = {}
+    or_fisher_p = {}
+    or_ci = {}
+    for m in methods:
+        p = work_df[m].to_numpy()
+        if or_multiple_testing:
+            pval_corrected = np.empty(p.shape)
+            pval_corrected.fill(np.nan)
+            mask = np.isfinite(p)
+            pval_corrected[mask] = multipletests(p[mask],method='fdr_bh')[1]
+        else:
+            pval_corrected = p
+        y_bool = (pval_corrected <= or_alpha)
+        print(m, y_bool.sum())
+        or_stat, fisher_p, ci_low, ci_high, _ = odds_ratio_with_ci(
+            y_bool=y_bool,
+            label_arr=work_df[gold_col].to_numpy(),
+            ci=ci,
+            smoothed=or_smoothed,
+            correction=or_correction,
+            fn_cap=or_fn_cap,
+        )
+        or_est[m] = or_stat
+        or_fisher_p[m] = fisher_p
+        or_ci[m] = (ci_low, ci_high)
+
+    # Bootstrap storage
+    boot_auerc = {m: np.empty(n_bootstrap, dtype=float) for m in methods}
+    boot_or = {m: np.empty(n_bootstrap, dtype=float) for m in methods}
+
+    for b in range(n_bootstrap):
+        idx = rng.integers(0, N, size=N)
+        sample = work_df.iloc[idx].reset_index(drop=True)
+
+        labels = sample[gold_col].to_numpy()
+        for m in methods:
+            # AUERC
+            boot_auerc[m][b] = pgb_auerc(sample, m, gold_col=gold_col, **auerc_kwargs)
+            # OR
+            yb = (sample[m].to_numpy() <= or_alpha)
+            or_stat_b, _, _, _, _ = odds_ratio_with_ci(
+                y_bool=yb,
+                label_arr=labels,
+                ci=ci,
+                smoothed=or_smoothed,
+                correction=or_correction,
+                fn_cap=or_fn_cap,
+            )
+            boot_or[m][b] = or_stat_b
+
+    ref_auerc_boot = boot_auerc[reference_method]
+    ref_auerc_est = auerc_est[reference_method]
 
     rows = []
     for m in tqdm(methods):
-        boots = boot_stats[m]
-        boots = boots[np.isfinite(boots)]
-        ref_boot_clean = ref_boot[np.isfinite(ref_boot)]
-        nmin = min(len(boots), len(ref_boot_clean))
+        # AUERC
+        mboot = boot_auerc[m]
+        pair_mask = np.isfinite(mboot) & np.isfinite(ref_auerc_boot)
+        mboot_p = mboot[pair_mask]
+        refboot_p = ref_auerc_boot[pair_mask]
 
-        # Base row (existing AUERC)
         row = {
             "method": m,
-            "estimate": estimates[m],
-            "ci_lower": np.nanquantile(boots, alpha / 2.0) if boots.size else np.nan,
-            "ci_upper": np.nanquantile(boots, 1.0 - alpha / 2.0) if boots.size else np.nan,
-            "diff_estimate": ref_est - estimates[m],
+            "estimate": auerc_est[m],
+            "ci_lower": np.nanquantile(mboot[np.isfinite(mboot)], alpha / 2.0) if np.isfinite(mboot).any() else np.nan,
+            "ci_upper": np.nanquantile(mboot[np.isfinite(mboot)], 1.0 - alpha / 2.0) if np.isfinite(mboot).any() else np.nan,
+            "diff_estimate": ref_auerc_est - auerc_est[m],
             "diff_ci_lower": np.nan,
             "diff_ci_upper": np.nan,
             "p_value": np.nan,
+            # OR
+            "odds_ratio": or_est[m],
+            "or_ci_lower": or_ci[m][0],
+            "or_ci_upper": or_ci[m][1],
+            "fisher_p": or_fisher_p[m],
+
             "n_bootstrap": n_bootstrap,
         }
 
-        if nmin > 0 and np.isfinite(estimates[m]) and np.isfinite(ref_est):
-            diffs = ref_boot_clean[:nmin] - boots[:nmin]
+        if mboot_p.size > 0 and np.isfinite(auerc_est[m]) and np.isfinite(ref_auerc_est):
+            diffs = refboot_p - mboot_p
             row["diff_ci_lower"] = np.nanquantile(diffs, alpha / 2.0)
             row["diff_ci_upper"] = np.nanquantile(diffs, 1.0 - alpha / 2.0)
 
+            # two-sided sign test style p-value
             n = diffs.size
             n_lt = np.sum(diffs < 0)
             n_gt = np.sum(diffs > 0)
@@ -484,6 +580,12 @@ def compute_bootstrap_table(
             p_upper = (n_gt + 0.5 * n_eq) / n
             pval = 2.0 * min(p_lower, p_upper)
             row["p_value"] = min(1.0, max(0.0, pval))
+
+        # OR boostrap CI
+        ob = boot_or[m]
+        ob = ob[np.isfinite(ob)]
+        row["or_ci_lower"] = np.nanquantile(ob, alpha / 2.0) if ob.size else np.nan
+        row["or_ci_upper"] = np.nanquantile(ob, 1.0 - alpha / 2.0) if ob.size else np.nan
 
         rows.append(row)
 
