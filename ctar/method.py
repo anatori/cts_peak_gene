@@ -777,6 +777,65 @@ def poisson_irls_sparse_dense_multi_ridge(X_sparse, X_dense, y, max_iter=100, to
     return beta0, betas
 
 
+def ll_reduced_intercept_only(y_col, 
+    n_cells, 
+    eps=1e-12,
+    flag_float32=True, 
+    clip=True,
+    MAX_EXP=80.0, 
+    MAX_VAL=1e10
+):
+    """
+    Fast Poisson intercept-only log-likelihood (reduced model).
+
+    Model: y_i ~ Poisson(mu), log(mu) = beta0  (no covariates, no offset)
+    MLE:   beta0 = log(mean(y))
+
+    Inputs
+    ------
+    y_col   : sparse column vector (e.g., CSR/CSC slice) of length n_cells
+              Must support .sum() and have .data containing nonzeros.
+    n_cells : int
+
+    Returns
+    -------
+    ll_red  : float (or np.float32 if flag_float32)
+    beta0   : float (or np.float32 if flag_float32)
+    """
+    dtype = np.float32 if flag_float32 else np.float64
+
+    # Sum of y over all cells
+    y_sum = dtype(y_col.sum())
+
+    # Constant term: sum log(y_i!) over all cells; zeros contribute 0
+    # i.e., sum gammaln(y_i + 1) over nonzero y entries
+    y_data = y_col.data
+    if y_data is None or len(y_data) == 0:
+        sum_gammaln_all = dtype(0.0)
+    else:
+        sum_gammaln_all = dtype(
+            sp.special.gammaln(y_data.astype(dtype, copy=False) + dtype(1.0)).sum()
+        )
+
+    # beta0 MLE (handle y_sum == 0)
+    y_bar = y_sum / dtype(n_cells)
+    beta0 = dtype(np.log(max(float(y_bar), eps)))
+
+    # For consistency with full-model likelihood
+    if clip:
+        eta0 = dtype(np.clip(beta0, -MAX_EXP, MAX_EXP))
+        mu0 = dtype(np.exp(eta0))
+        if mu0 > MAX_VAL:
+            mu0 = dtype(MAX_VAL)
+        ll_red = y_sum * eta0 - dtype(n_cells) * mu0 - sum_gammaln_all
+        return dtype(ll_red), dtype(beta0)
+
+    # Unclipped exact reduced LL at MLE:
+    # ll = y_sum * beta0 - n_cells * exp(beta0) - sum log(y!)
+    mu0 = dtype(np.exp(beta0))
+    ll_red = y_sum * beta0 - dtype(n_cells) * mu0 - sum_gammaln_all
+    return dtype(ll_red), dtype(beta0)
+
 
 ######################### generate null #########################
 
@@ -1102,6 +1161,8 @@ def create_ctrl_pairs(
     gene_col = 'gene',
     return_bins_df = True,
     flag_combine_bin = False,
+    add_promoter_bin = False,
+    promoter_bp = 5000,
 ):
 
     ''' Obtain b control pairs for each permutation of bin features.
@@ -1165,7 +1226,6 @@ def create_ctrl_pairs(
     pairs = [(i, j) for i in atac_bins_df[f'{atac_type}_bin'].unique() for j in rna_bins_df[f'{rna_type}_bin'].unique()]
     atac_bins_grouped = atac_bins_df[['ind',f'{atac_type}_bin']].groupby([f'{atac_type}_bin']).ind.apply(np.array)
     rna_bins_grouped = rna_bins_df[['ind',f'{rna_type}_bin']].groupby([f'{rna_type}_bin']).ind.apply(np.array)
-
     
     # Generate random pairs
     ctrl_dic = {}
@@ -1421,11 +1481,21 @@ def cauchy_combination(p_values1, p_values2):
     return combined_p_value
 
 
+def basic_mcinterp(ctrl_corr,corr):
+    ctrl_corr_sort = np.sort(ctrl_corr)
+    n = len(ctrl_corr_sort)
+    k = np.searchsorted(ctrl_corr_sort, corr, side="right")
+    F_hat = k / n
+    p_interp = 1 - F_hat
+    return p_interp
+
+
 def binned_mcpval(
     cis_pairs_dic, 
     ctrl_pairs_dic,
     b=None,
-    flag_corrected=False,
+    flag_interp=False,
+    flag_zp=False,
 ):
     '''
     Compute p-values for binned evaluation data using Monte Carlo method.
@@ -1462,20 +1532,17 @@ def binned_mcpval(
 
     for bin_key in bin_keys:
 
-        if flag_corrected:
-            coeffs = cis_pairs_dic[bin_key][:,1]
-            ctrl_coeffs = ctrl_pairs_dic[bin_key][:,1][:b]
-            ctrl_se = ctrl_pairs_dic[bin_key][:,0][:b]
+        coeffs = cis_pairs_dic[bin_key]
+        ctrl_coeffs = ctrl_pairs_dic[bin_key].ravel()[:b]
+        
+        if flag_interp:
+            mcpval_dic[bin_key] = basic_mcinterp(ctrl_coeffs, coeffs)
+        if flag_zp:
+            mcpval_dic[bin_key] = basic_zpval(ctrl_coeffs, coeffs)
         else:
-            coeffs = cis_pairs_dic[bin_key]
-            ctrl_coeffs = ctrl_pairs_dic[bin_key].ravel()[:b]
+            mcpval_dic[bin_key] = basic_mcpval(ctrl_coeffs, coeffs)
+        centered_ctrls, centered_cis = center_ctrls(ctrl_coeffs,coeffs,axis=0)
 
-        mcpval_dic[bin_key] = basic_mcpval(ctrl_coeffs, coeffs)
-
-        if flag_corrected:
-            centered_ctrls, centered_cis = center_ctrls_corrected(ctrl_coeffs,ctrl_se,coeffs,axis=0)
-        else:
-            centered_ctrls, centered_cis = center_ctrls(ctrl_coeffs,coeffs,axis=0)
         centered_ctrl_ls.append(centered_ctrls)
         centered_cis_ls.append(centered_cis)
 
@@ -1492,71 +1559,6 @@ def binned_mcpval(
         start += bin_size
 
     return mcpval_dic, ppval_dic
-
-
-def binned_mcpval_from_disk(
-    path, 
-    eval_df, 
-    coeffs, 
-    bin_label = 'combined_bin_5.20.20.20', 
-    startswith='poiss_ctrl_', 
-    pattern = r'[\d]+.[\d]+_[\d]+.[\d]+'
-):
-    '''
-    Compute p-values for binned evaluation data using Monte Carlo method.
-
-    Parameters
-    ----------
-    path : str
-        Path to the directory containing control files.
-    eval_df : pd.DataFrame
-        Evaluation DataFrame with coefficients.
-    coeffs : np.array
-        Original Poisson coefficients (assumed global).
-    bin_label : str 
-        Column name to group bins.
-    pattern : str
-        Regex pattern to identify control files.
-
-    Returns
-    ----------
-    tuple : (bin_mcpvals, centered_pvals)
-
-    '''
-
-    poiss_grp_files = [f for f in os.listdir(path) if re.search(startswith + pattern + '.npy', f)]
-    
-    # create dictionary for controls
-    poiss_grp_dic = {
-        re.findall(pattern, f)[0]: np.load(os.path.join(path, f))
-        for f in tqdm(poiss_grp_files)
-    }
-
-    gt_bins = eval_df.copy()
-    gt_bins['ind'] = range(len(gt_bins))
-    grouped_bins = gt_bins.groupby(bin_label)['ind'].agg(list)
-
-    n = len(gt_bins)
-    bin_mcpvals = np.ones(n)
-    centered_coeffs = np.ones(n)
-    all_centered_ctrls = []
-
-    for bin_i in tqdm(grouped_bins.index):
-        
-        indices = grouped_bins.loc[bin_i]
-        bin_coeffs = coeffs[indices]
-        bin_ctrls = poiss_grp_dic[bin_i].flatten()
-
-        bin_mcpvals[indices] = basic_mcpval(bin_ctrls,bin_coeffs)
-
-        centered_ctrl, centered_coeff = center_ctrls(bin_ctrls,bin_coeffs,axis=0)
-        centered_coeffs[indices] = centered_coeff
-        all_centered_ctrls.append(centered_ctrl)
-
-    all_centered_ctrls = np.concatenate(all_centered_ctrls)
-    centered_pvals = basic_mcpval(all_centered_ctrls, centered_coeffs)
-
-    return bin_mcpvals, centered_pvals
 
 
 ######################### clustering #########################
