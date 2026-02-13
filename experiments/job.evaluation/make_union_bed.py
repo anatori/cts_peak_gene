@@ -2,6 +2,7 @@ import argparse
 import os
 import pandas as pd
 from collections import OrderedDict
+from typing import Optional
 import re
 
 
@@ -19,17 +20,23 @@ def canonicalize_peak(s: pd.Series) -> pd.Series:
         if not m:
             return x
         chrom = m.group("chr").upper()
-        if chrom in {"X", "Y", "MT"}:
-            chrom = chrom.lower()
         return f"chr{chrom}:{m.group('start')}-{m.group('end')}"
     return s.map(_canon)
 
 
-def load_indexed_series(file_path: str, metric_specs: list[tuple[str, str]]) -> dict[str, pd.Series]:
+def load_indexed_series(
+    file_path: str, 
+    metric_specs: list[tuple[str, str]],
+    deduplicate: bool,
+    deduplicate_type: Optional[str] = None,
+) -> dict[str, pd.Series]:
     """
     Load a file and return a dict of Series indexed by canonical 'peak;gene'.
-    If duplicates exist for the same 'peak;gene', reduce by taking max.
+    If duplicates exist for the same 'peak;gene', reduce by taking min.
     """
+    if deduplicate:
+        assert deduplicate_type is not None, "deduplicate_type required when deduplicate=True"
+
     if not os.path.isfile(file_path):
         return {}
 
@@ -54,11 +61,13 @@ def load_indexed_series(file_path: str, metric_specs: list[tuple[str, str]]) -> 
             s.index = idx
             s.name = out_label
 
-            # Deduplicate by taking max per 'peak;gene'
-            if s.index.has_duplicates:
-                # coerce to numeric to ensure proper max behavior for pvals/z-scores
+            # Deduplicate by taking min per 'peak;gene'
+            if deduplicate and s.index.has_duplicates:
+                if deduplicate_type not in ("min", "max", "median", "mean"):
+                    raise ValueError(f"Unsupported deduplicate_type={deduplicate_type}")
+                # coerce to numeric to ensure proper behavior for pvals/z-scores
                 s_numeric = pd.to_numeric(s, errors="coerce")
-                s = s_numeric.groupby(level=0).max()
+                s = s_numeric.groupby(level=0).agg(deduplicate_type)
                 s.name = out_label
 
             out[out_label] = s
@@ -92,6 +101,9 @@ def main(args):
     CTAR_FILT_COL_Z = _opt_none(args.ctar_filt_col_z)
     CTAR_FILT_COL = _opt_none(args.ctar_filt_col)
 
+    DEDUPLICATE = (args.deduplicate == 'True')
+    DEDUPLICATE_TYPE = args.deduplicate_type
+
     BED_PATH = args.bed_path
     DATASET_NAME = args.dataset_name
 
@@ -121,7 +133,7 @@ def main(args):
 
     for file_path, specs in source_configs:
         try:
-            series_dict = load_indexed_series(file_path, specs)
+            series_dict = load_indexed_series(file_path, specs, deduplicate=DEDUPLICATE, deduplicate_type=DEDUPLICATE_TYPE)
         except Exception as e:
             raise RuntimeError(f"Error processing '{file_path}': {e}") from e
 
@@ -205,6 +217,9 @@ if __name__ == "__main__":
     parser.add_argument("--bed_path", type=str, default="/projects/zhanglab/users/ana/bedtools2/ana_bedfiles/validation/union_links")
     parser.add_argument("--dataset_name", type=str, default="neat")
 
+    parser.add_argument("--deduplicate", type=str, default="True")
+    parser.add_argument("--deduplicate_type", type=str, default="min",
+                        help='Deduplication type to feed into pandas agg, e.g. min or max')
     parser.add_argument("--method_cols", type=str, default=None,
                         help="Comma-separated list of metric column names to order final_col, e.g. 'scent,scmm,signac,ctar_filt_z,ctar_filt'")
 
