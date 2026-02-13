@@ -7,6 +7,7 @@ import muon as mu
 import anndata as ad
 import scanpy as sc
 import pickle
+import re
 
 import os
 import re
@@ -491,7 +492,7 @@ def check_missing_bins(ctrl_path, corr_path, prefix = 'pearsonr_'):
     return missing_bins
 
 
-def consolidate_ranged_npy(path, startswith, re=r".*_(\d+)_(\d+)\.npy$", allow_pickle=False, require_contiguous=True):
+def consolidate_ranged_npy(path, startswith, reg=r".*_(\d+)_(\d+)\.npy$", allow_pickle=False, require_contiguous=True):
     """
     Loads all npy files in `path` starting with `startswith` and ending with _{start}_{end}.npy,
     sorts them by (start, end), and concatenates along axis 0.
@@ -510,7 +511,7 @@ def consolidate_ranged_npy(path, startswith, re=r".*_(\d+)_(\d+)\.npy$", allow_p
     ranges : list[tuple[int,int,str]]
         (start, end, filename) for each chunk, in concatenation order.
     """
-    _RANGE_RE = re.compile(r".*_(\d+)_(\d+)\.npy$")
+    _RANGE_RE = re.compile(reg)
 
     files = [f for f in os.listdir(path) if f.startswith(startswith) and f.endswith(".npy")]
     ranged = []
