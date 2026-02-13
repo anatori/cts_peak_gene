@@ -39,10 +39,10 @@ def main(args):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
 
-    parser.add_argument("--bed_path", type=str, default='/projects/zhanglab/users/ana/bedtools2/ana_bedfiles/validation/overlap/neat')
-    parser.add_argument("--res_path", type=str, default='/projects/zhanglab/users/ana/multiome/validation/neat')
-    parser.add_argument("--dataset_name", type=str, default='neat')
-    parser.add_argument("--method_cols", type=str, default='scent,scmm,signac,ctar_z,ctar,ctar_filt_z,ctar_filt')
+    parser.add_argument("--bed_path", type=str, default='/projects/zhanglab/users/ana/bedtools2/ana_bedfiles/validation/overlap/brain')
+    parser.add_argument("--res_path", type=str, default='/projects/zhanglab/users/ana/multiome/validation/brain')
+    parser.add_argument("--dataset_name", type=str, default='brain')
+    parser.add_argument("--method_cols", type=str, default='scent,scmm,signac,ctar_filt_z,ctar_filt')
 
     args = parser.parse_args()
     main(args)
