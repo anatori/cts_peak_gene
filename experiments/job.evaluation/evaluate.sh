@@ -31,6 +31,8 @@ CTAR_COL="${CTAR_COL:-}"
 CTAR_FILT_COL_Z="${CTAR_FILT_COL_Z:-5.5.5.5.1000_mcpval_z}"
 CTAR_FILT_COL="${CTAR_FILT_COL:-5.5.5.5.1000_mcpval}"
 
+DEDUPLICATE="True"
+DEDUPLICATE_TYPE="min"
 METHOD_COLS="${METHOD_COLS:-scmm,signac,ctar_filt_z,ctar_filt}"
 
 # Intersect inputs/outputs
@@ -83,6 +85,8 @@ INTERSECT_JOB_ID=$(submit \
            --eval-dir '${EVAL_DIR}' \
            --union-dir '${UNION_DIR}' \
            --overlap-dir '${OVERLAP_DIR}' \
+           --deduplicate '${DEDUPLICATE}' \
+           --deduplciate_type '${DEDUPLICATE_TYPE}' \
            --bedtools-bin '${BEDTOOLS_BIN}'")
 echo "INTERSECT_JOB_ID=${INTERSECT_JOB_ID}"
 
