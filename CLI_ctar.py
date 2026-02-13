@@ -68,6 +68,8 @@ def main(args):
     PYBEDTOOLS_PATH = args.pybedtools_path
     COVAR_FILE = args.covar_file
     ARRAY_IDX = args.array_idx
+    FLAG_SE = (args.flag_se == 'True')
+    FLAG_LL = (args.flag_ll == 'True')
 
     # Parse and check arguments
     LEGAL_JOB_LIST = [
@@ -117,6 +119,8 @@ def main(args):
     header += "--pybedtools_path %s\\\n" % PYBEDTOOLS_PATH
     header += "--covar_file %s\\\n" % COVAR_FILE
     header += "--array_idx %s\\\n" % ARRAY_IDX
+    header += "--flag_se %s\\\n" % FLAG_SE
+    header += "--flag_ll %s\\\n" % FLAG_LL
     print(header)
 
     ###########################################################################################
@@ -181,10 +185,16 @@ def main(args):
             adata_rna.layers['counts'] = adata_rna.X
             adata_atac.layers['counts'] = adata_atac.X
 
-        # Preferentially use gene_id
+        # Preferentially use ENSEMBL ID
         if 'gene_id' in adata_rna.var.columns:
             adata_rna.var['gene'] = adata_rna.var.gene_id
-            adata_rna.var.index = adata_rna.var.gene_id 
+            adata_rna.var.index = adata_rna.var.gene_id
+            print("# Using gene_id columns for RNA genes...")
+        elif 'gene_ids' in adata_rna.var.columns:
+            adata_rna.var['gene'] = adata_rna.var.gene_ids
+            adata_rna.var.index = adata_rna.var.gene_ids
+            print("# Using gene_ids columns for RNA genes...")
+        assert adata_rna.var.gene.str.startswith('ENSG').all(), "Must use ENSEMBL IDs for genes"
 
         # Setting atac bin type
         if (n_atac_gc == 1) and (n_atac_mean > 1):
@@ -207,6 +217,14 @@ def main(args):
 
         if ARRAY_IDX:
             ARRAY_IDX = int(ARRAY_IDX)
+
+        if RESULTS_PATH: 
+            results_folder = RESULTS_PATH
+        elif ARRAY_IDX is None:
+            results_folder = f'{TARGET_PATH}/{JOB_ID}_results'
+        else:
+            results_folder = f'{TARGET_PATH}'
+        print(f"# Setting results_folder to {results_folder}")
 
     if RESULTS_PATH and JOB in ["compute_cis_only", "compute_ctrl_only", "generate_controls", "compute_pval"]: 
 
@@ -257,13 +275,34 @@ def main(args):
         if USE_INF_MODE: 
             if ctrl_coeff_files:
                 print("# Consolidating array outputs...")
-                ctrl_coeff = ctar.data_loader.consolidate_null_npy(
-                    path=f'{RESULTS_PATH}/',
-                    startswith=prefix,
-                    b=n_ctrl,
-                    remove_empty=True,
-                    print_missing=False
+                # consolidate ctrl chunks + ids chunks using the SAME ordering
+                ctrl_coeff, coeff_ranges = ctar.data_loader.consolidate_ranged_npy(
+                    RESULTS_PATH, startswith=prefix, allow_pickle=False
                 )
+
+                # load ids if present
+                cis_ids_path = os.path.join(RESULTS_PATH, 'cis_link_ids.npy')
+                if os.path.exists(cis_ids_path):
+                    cis_ids = np.load(cis_ids_path, allow_pickle=True)
+                    ctrl_ids, id_ranges = ctar.data_loader.consolidate_ranged_npy(
+                        RESULTS_PATH, startswith="ctrl_link_ids_", allow_pickle=True)
+
+                    assert len(coeff_ranges) == len(id_ranges), "Different number of ctrl coeff vs id chunks"
+                    assert [r[:2] for r in coeff_ranges] == [r[:2] for r in id_ranges], "Coeff/id ranges mismatch"
+                    assert ctrl_coeff.shape[0] == ctrl_ids.shape[0], "ctrl coeff rows != ctrl id rows"
+                    assert cis_coeff.shape[0] == cis_ids.shape[0], "cis coeff rows != cis id rows"
+                    assert ctrl_ids.shape[0] == cis_ids.shape[0], "ctrl links != cis links"
+                    assert np.array_equal(ctrl_ids, cis_ids), "CIS/CTRL link order mismatch"
+
+                    # enforce df order to match arrays
+                    cis_links_df = cis_links_df.loc[cis_ids]
+
+                else:
+                    print("WARNING: link id files not found; alignment not guaranteed.")
+
+                assert ctrl_coeff.ndim == 3 and ctrl_coeff.shape[1] == n_ctrl, f"ctrl_coeff shape unexpected: {ctrl_coeff.shape}"
+                assert cis_coeff.shape[0] == ctrl_coeff.shape[0], "cis/ctrl link count mismatch"
+
             else:
                 ctrl_coeff_file = os.path.join(RESULTS_PATH, 'ctrl_coeff.npy')
                 if not os.path.exists(ctrl_coeff_file):
@@ -298,8 +337,8 @@ def main(args):
 
         print("# Running --job compute_ctar")
 
-        adata_rna.var = ctar.data_loader.get_gene_coords(adata_rna.var, add_tss=True)
-        cis_links_df = ctar.data_loader.peak_to_gene(adata_atac.var, adata_rna.var, split_peaks=True)
+        adata_rna.var = ctar.data_loader.get_gene_coords(adata_rna.var, add_tss=False)
+        cis_links_df = ctar.data_loader.peak_to_gene(adata_atac.var, adata_rna.var, clean=True, split_peaks=True)
 
         if USE_INF_MODE: 
             print("# Using inf.inf mode - creating control peaks only")
@@ -308,7 +347,7 @@ def main(args):
             ctrl_peaks = ctar.method.create_ctrl_peaks(
                 adata_atac, type=atac_type, num_bins=atac_bins, b=n_ctrl,
                 peak_col='peak', layer='counts', genome_file=GENOME_FILE,
-                add_promoter_bin=True, genes_df=adata_rna.var,
+                add_promoter_bin=False, genes_df=adata_rna.var,
             )
             
             # Get cis links indices
@@ -345,7 +384,8 @@ def main(args):
                     batch_size=BATCH_SIZE,
                     scheduler="processes",
                     n_workers=n_cores,
-                    flag_se=True,
+                    flag_se=FLAG_SE,
+                    flag_ll=FLAG_LL
                 )
             else:
                 cis_coeff_dic = ctar.parallel.multiprocess_poisson_irls(
@@ -355,7 +395,8 @@ def main(args):
                     batch_size=BATCH_SIZE,
                     scheduler="processes",
                     n_workers=n_cores,
-                    flag_se=True,
+                    flag_se=FLAG_SE,
+                    flag_ll=FLAG_LL
                 )
             print('# Cis-links IRLS time = %0.2fs' % (time.time() - start_time))
 
@@ -380,13 +421,14 @@ def main(args):
                     batch_size=BATCH_SIZE,
                     scheduler="processes",
                     n_workers=n_cores,
-                    flag_se=True,
+                    flag_se=FLAG_SE,
                 )
             print('# Control links IRLS time = %0.2fs' % (time.time() - start_time))
             
             # Extract coefficients from dictionaries
-            cis_coeff = np.array([cis_coeff_dic[idx][0] for idx in sorted(cis_coeff_dic.keys())])
-            ctrl_coeff = np.array([ctrl_coeff_dic[idx] for idx in sorted(ctrl_coeff_dic.keys())])
+            idx_list = cis_links_df.index.tolist()
+            cis_coeff = np.array([cis_coeff_dic[k][0] for k in idx_list])
+            ctrl_coeff = np.array([ctrl_coeff_dic[k] for k in idx_list])
             
             # Compute p-values
             if cis_coeff.ndim == 2 and cis_coeff.shape[1] == 2:
@@ -400,7 +442,6 @@ def main(args):
                 cis_links_df[f'{BIN_CONFIG}_ppval'] = ctar.method.pooled_mcpval(ctrl_coeff, cis_coeff)
                 cis_links_df['poissonb'] = cis_coeff
 
-            results_folder = f'{TARGET_PATH}/{JOB_ID}_results'
             print(f'# Saving files to {results_folder}')
             os.makedirs(results_folder, exist_ok=True)
             
@@ -484,7 +525,6 @@ def main(args):
             cis_links_df = ctar.data_loader.map_dic_to_df(cis_links_df, cis_idx_dic, ppval_dic, col_name=f'{BIN_CONFIG}_ppval')
             cis_links_df = ctar.data_loader.map_dic_to_df(cis_links_df, cis_idx_dic, cis_coeff_dic, col_name='poissonb')
 
-            results_folder = f'{TARGET_PATH}/{JOB_ID}_results'
             print(f'# Saving files to {results_folder}')
             os.makedirs(results_folder, exist_ok=True)
             
@@ -504,8 +544,8 @@ def main(args):
 
         print("# Running --job generate_links")
 
-        adata_rna.var = ctar.data_loader.get_gene_coords(adata_rna.var, add_tss=True)
-        cis_links_df = ctar.data_loader.peak_to_gene(adata_atac.var, adata_rna.var, split_peaks=True)
+        adata_rna.var = ctar.data_loader.get_gene_coords(adata_rna.var, add_tss=False)
+        cis_links_df = ctar.data_loader.peak_to_gene(adata_atac.var, adata_rna.var, clean=True, split_peaks=True)
 
         if USE_INF_MODE:
             print("# Using inf.inf mode - creating control peaks only")
@@ -513,10 +553,9 @@ def main(args):
             ctrl_peaks = ctar.method.create_ctrl_peaks(
                 adata_atac, type=atac_type, num_bins=atac_bins, b=n_ctrl,
                 peak_col='peak', layer='counts', genome_file=GENOME_FILE,
-                add_promoter_bin=True, genes_df=adata_rna.var,
+                add_promoter_bin=False, genes_df=adata_rna.var,
             )
             
-            results_folder = f'{TARGET_PATH}/{JOB_ID}_results'
             print(f'# Saving files to {results_folder}')
             os.makedirs(results_folder, exist_ok=True)
             
@@ -540,7 +579,6 @@ def main(args):
                 return_dic=True
             )
 
-            results_folder = f'{TARGET_PATH}/{JOB_ID}_results'
             print(f'# Saving files to {results_folder}')
             os.makedirs(results_folder, exist_ok=True)
 
@@ -560,10 +598,9 @@ def main(args):
             ctrl_peaks = ctar.method.create_ctrl_peaks(
                 adata_atac, type=atac_type, num_bins=atac_bins, b=n_ctrl,
                 peak_col='peak', layer='counts', genome_file=GENOME_FILE,
-                add_promoter_bin=True, genes_df=adata_rna.var,
+                add_promoter_bin=False, genes_df=adata_rna.var,
             )
             
-            results_folder = f'{TARGET_PATH}/{JOB_ID}_results'
             print(f'# Saving files to {results_folder}')
             os.makedirs(results_folder, exist_ok=True)
             
@@ -586,7 +623,6 @@ def main(args):
                 return_dic=True
             )
 
-            results_folder = f'{TARGET_PATH}/{JOB_ID}_results'
             print(f'# Saving files to {results_folder}')
             os.makedirs(results_folder, exist_ok=True)
 
@@ -603,7 +639,7 @@ def main(args):
         if not RESULTS_PATH: 
 
             adata_rna.var = ctar.data_loader.get_gene_coords(adata_rna.var, add_tss=True)
-            cis_links_df = ctar.data_loader.peak_to_gene(adata_atac.var, adata_rna.var, split_peaks=True)
+            cis_links_df = ctar.data_loader.peak_to_gene(adata_atac.var, adata_rna.var, clean=True, split_peaks=True)
 
             if not USE_INF_MODE: 
                 ctrl_links_dic, atac_bins_df, rna_bins_df = ctar.method.create_ctrl_pairs(
@@ -627,6 +663,7 @@ def main(args):
             cis_links_df['atac_idx'] = cis_links_df['peak'].map(adata_atac.var['atac_idx'])
             cis_links_df['rna_idx'] = cis_links_df['gene'].map(adata_rna.var['rna_idx'])
             cis_links_array = cis_links_df[['atac_idx', 'rna_idx']].to_numpy()
+            link_ids = cis_links_df.index.to_numpy()
 
             # Create cis links dictionary
             dic_batch_size = 512
@@ -654,6 +691,7 @@ def main(args):
                     batch_size=BATCH_SIZE,
                     scheduler="processes",
                     n_workers=n_cores,
+                    flag_se=FLAG_SE,
                 )
             else:
                 cis_coeff_dic = ctar.parallel.multiprocess_poisson_irls(
@@ -663,11 +701,13 @@ def main(args):
                     batch_size=BATCH_SIZE,
                     scheduler="processes",
                     n_workers=n_cores,
-                    flag_se=True,
+                    flag_se=FLAG_SE,
+                    flag_ll=FLAG_LL
                 )
             print('# Cis-links IRLS time = %0.2fs' % (time.time() - start_time))
 
-            cis_coeff = np.empty((len(cis_links_array), 2), dtype=np.float32)
+            n_links = len(cis_links_array)
+            cis_coeff = np.empty((n_links, 2), dtype=np.float32)
             for batch_key, coeffs in cis_coeff_dic.items():
                 # Use cis_idx_map to restore coefficients and SE to the correct positions
                 for i, idx in enumerate(cis_idx_map[batch_key]):
@@ -692,7 +732,7 @@ def main(args):
                 cis_links_dic = dict(sorted(cis_links_dic.items()))
                 cis_links_dic = dict(list(cis_links_dic.items())[ARRAY_IDX*BATCH_SIZE :  (ARRAY_IDX+1)*BATCH_SIZE])
                 cis_idx_dic  = {key :  cis_idx_dic[key]  for key in cis_links_dic.keys()}
-                print('# Running %d controls...' % (len(list(cis_links_dic.keys()))))
+                print('# Running %d links...' % (len(list(cis_links_dic.keys()))))
 
                 file_suffix = f'_{ARRAY_IDX}'
 
@@ -720,16 +760,17 @@ def main(args):
                     batch_size=BATCH_SIZE,
                     scheduler="processes",
                     n_workers=n_cores,
-                    flag_se=True,
+                    flag_se=FLAG_SE,
+                    flag_ll=FLAG_LL
                 )
             print('# Cis-links IRLS time = %0.2fs' % (time.time() - start_time))
 
-        results_folder = f'{TARGET_PATH}/{JOB_ID}_results'
         print(f'# Saving files to {results_folder}')
         os.makedirs(results_folder, exist_ok=True)
 
         if USE_INF_MODE: 
             np.save(f'{results_folder}/cis_coeff{file_suffix}.npy', cis_coeff)
+            np.save(f'{results_folder}/cis_link_ids{file_suffix}.npy', link_ids, allow_pickle=True)
         else:
             with open(f'{results_folder}/cis_coeff_dic{file_suffix}.pkl', 'wb') as f:
                 pickle.dump(cis_coeff_dic, f)
@@ -757,13 +798,13 @@ def main(args):
                     ctrl_peaks = ctar.method.create_ctrl_peaks(
                         adata_atac, type=atac_type, num_bins=atac_bins, b=n_ctrl,
                         peak_col='peak', layer='counts', genome_file=GENOME_FILE,
-                        add_promoter_bin=True, genes_df=adata_rna.var,
+                        add_promoter_bin=False, genes_df=adata_rna.var,
                     )
             else:
                 ctrl_peaks = ctar.method.create_ctrl_peaks(
                     adata_atac, type=atac_type, num_bins=atac_bins, b=n_ctrl,
                     peak_col='peak', layer='counts', genome_file=GENOME_FILE,
-                    add_promoter_bin=True, genes_df=adata_rna.var,
+                    add_promoter_bin=False, genes_df=adata_rna.var,
                 )
             
             # Get cis links indices
@@ -777,21 +818,23 @@ def main(args):
                 start_idx = ARRAY_IDX * BATCH_SIZE
                 end_idx = min((ARRAY_IDX + 1) * BATCH_SIZE, len(cis_links_df))
                 cis_links_subset = cis_links_df.iloc[start_idx:end_idx]
-                file_suffix = f'_{ARRAY_IDX}'
+                file_suffix = f'_{start_idx}_{end_idx}'
             else: 
                 cis_links_subset = cis_links_df
                 file_suffix = ''
+            link_ids = cis_links_subset.index.to_numpy()
             
             print(f'# Computing controls for {len(cis_links_subset)} links...')
             
             # Create control links dictionary
             ctrl_links_array = []
-            for idx, row in cis_links_df.iterrows():
+            for idx, row in cis_links_subset.iterrows():
                 atac_idx = row['atac_idx']
                 rna_idx = row['rna_idx']
                 ctrl_peak_indices = ctrl_peaks[atac_idx, :n_ctrl]
                 ctrl_links_array.extend([[peak_idx, rna_idx] for peak_idx in ctrl_peak_indices])
             ctrl_links_array = np.array(ctrl_links_array)
+            print(f'# ctrl_links_array.shape: {ctrl_links_array.shape}')
             
             # Chunk the control links array into batches
             dic_batch_size = 512
@@ -817,7 +860,7 @@ def main(args):
                     atac_sparse=atac_sparse,
                     rna_sparse=rna_sparse,
                     covar_mat=covar_mat,
-                    batch_size=BATCH_SIZE,
+                    batch_size=(BATCH_SIZE//10)+1,
                     scheduler="processes",
                     n_workers=n_cores,
                 )
@@ -826,19 +869,24 @@ def main(args):
                     links_dict=ctrl_links_dic,
                     atac_sparse=atac_sparse,
                     rna_sparse=rna_sparse,
-                    batch_size=BATCH_SIZE,
+                    batch_size=(BATCH_SIZE//10)+1,
                     scheduler="processes",
                     n_workers=n_cores,
-                    flag_se=True,
+                    flag_se=FLAG_SE,
+                    flag_ll=FLAG_LL
                 )
             print('# Control links IRLS time = %0.2fs' % (time.time() - start_time))
             
             # Map coefficients back to their original indices
-            ctrl_coeff = np.empty((len(ctrl_links_array), 2), dtype=np.float32)
+            n_links = len(cis_links_subset)
+            n_rows = n_links * n_ctrl
+            assert ctrl_links_array.shape[0] == n_rows, "ctrl_links_array and cis_links_subset shape mismatch"
+            ctrl_coeff = np.empty((n_rows, 2), dtype=np.float32)
             for batch_key, coeffs in ctrl_coeff_dic.items():
                 for i, idx in enumerate(ctrl_idx_map[batch_key]):
                     ctrl_coeff[idx, 0] = coeffs[i][0]
                     ctrl_coeff[idx, 1] = coeffs[i][1]
+            ctrl_coeff = ctrl_coeff.reshape(n_links, n_ctrl, 2)
             
         else:
             
@@ -899,21 +947,16 @@ def main(args):
                     batch_size=(BATCH_SIZE//10)+1,
                     scheduler="processes",
                     n_workers=n_cores,
-                    flag_se=True,
+                    flag_se=FLAG_SE,
+                    flag_ll=FLAG_LL
                 )
             print('# Control links IRLS time = %0.2fs' % (time.time() - start_time))
-
-        if RESULTS_PATH: 
-            results_folder = RESULTS_PATH
-        elif ARRAY_IDX is None:
-            results_folder = f'{TARGET_PATH}/{JOB_ID}_results'
-        else:
-            results_folder = f'{TARGET_PATH}'
 
         print(f'# Saving files to {results_folder}')
         os.makedirs(results_folder, exist_ok=True)
 
         if USE_INF_MODE:
+            np.save(f'{results_folder}/ctrl_link_ids{file_suffix}.npy', link_ids, allow_pickle=True)
             np.save(f'{results_folder}/ctrl_coeff{file_suffix}.npy', ctrl_coeff)
         else:
             with open(f'{results_folder}/ctrl_coeff_dic{file_suffix}.pkl', 'wb') as f:
@@ -996,7 +1039,6 @@ def main(args):
                     {key: value[: , 1] for key, value in cis_coeff_dic.items()},
                     {key: value[: , 1] for key, value in ctrl_coeff_dic.items()},
                     b=n_ctrl,
-                    flag_corrected=False
                 )
                 
                 cis_links_df = ctar.data_loader.map_dic_to_df(cis_links_df, cis_idx_dic, mcpval_dic, col_name=f'{BIN_CONFIG}_mcpval')
@@ -1020,7 +1062,6 @@ def main(args):
                     cis_coeff_dic_z,
                     ctrl_coeff_dic_z,
                     b=n_ctrl,
-                    flag_corrected=False
                 )
                 
                 cis_links_df = ctar.data_loader.map_dic_to_df(cis_links_df, cis_idx_dic, mcpval_dic_z, col_name=f'{BIN_CONFIG}_mcpval_z')
@@ -1034,7 +1075,6 @@ def main(args):
                     cis_coeff_dic,
                     ctrl_coeff_dic,
                     b=n_ctrl,
-                    flag_corrected=False
                 )
                 
                 cis_links_df = ctar.data_loader.map_dic_to_df(cis_links_df, cis_idx_dic, mcpval_dic, col_name=f'{BIN_CONFIG}_mcpval')
@@ -1072,6 +1112,8 @@ if __name__ == "__main__":
     parser.add_argument("--links_file", type=str, required=False, default=None)
     parser.add_argument("--target_path", type=str, required=False, default=None)
     parser.add_argument("--results_path", type=str, required=False, default=None)
+    parser.add_argument("--flag_ll", type=str, required=False, default='False')
+    parser.add_argument("--flag_se", type=str, required=False, default='False')
     parser.add_argument(
         "--genome_file", type=str, required=False, default=None, help="GRCh38.p14.genome.fa.bgz reference"
     )
