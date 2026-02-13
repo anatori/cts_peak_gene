@@ -12,6 +12,7 @@ from scipy.stats import poisson, nbinom
 from matplotlib.container import BarContainer
 import math
 from matplotlib.ticker import ScalarFormatter
+import seaborn as sns
 
 
 # custom func from https://stackoverflow.com/questions/7404116/defining-the-midpoint-of-a-colormap-in-matplotlib
@@ -1058,7 +1059,7 @@ def barplot_grouped_with_sig(
     label_renames=None,       # dict {original_label -> display_label}
     method_renames=None,      # dict {internal_method -> display_name}
     # Layout
-    bar_width=0.18,
+    bar_width=0.1,
     bar_spacing_mult=1,
     group_pad=0.8,
     # Bracket spacing controls
@@ -1073,6 +1074,8 @@ def barplot_grouped_with_sig(
     asterisk_fontsize=9,      # used only if bracket_text='stars'
     bracket_fontsize=9,
     bracket_linewidth=1.2,
+    ci_legend_loc="upper right",
+    bbox_to_anchor=(0.5, -0.1),
 ):
     """
     Grouped bar plot of 'estimate' with CI error bars, colored by method, grouped by dataset label.
@@ -1129,6 +1132,16 @@ def barplot_grouped_with_sig(
 
     # Positions
     bar_spacing = bar_width * bar_spacing_mult
+
+    # AUTO group_pad to prevent overlap (unless user explicitly set it large enough)
+    group_width = (M - 1) * bar_spacing + bar_width
+    min_group_pad = group_width + 0.15  # add a little breathing room (tune 0.05–0.4)
+
+    if group_pad is None:
+        group_pad = min_group_pad
+    else:
+        group_pad = max(group_pad, min_group_pad)
+
     group_centers = np.arange(len(labels)) * group_pad
     within_offsets = np.array([(j - (M - 1) / 2.0) * bar_spacing for j in range(M)])
 
@@ -1178,7 +1191,7 @@ def barplot_grouped_with_sig(
 
             color = method_colors[m]
             ax.bar(x, y, width=bar_width, color=color, edgecolor='none', alpha=0.9)
-            ax.errorbar(x, y, yerr=[[e_low[j]], [e_up[j]]], fmt='none', ecolor=color, elinewidth=1.2, capsize=4)
+            ax.errorbar(x, y, yerr=[[e_low[j]], [e_up[j]]], fmt='none', ecolor='black', elinewidth=1.2, capsize=4)
 
             max_y_for_limits.append(y + e_up[j])
 
@@ -1214,8 +1227,24 @@ def barplot_grouped_with_sig(
             handles.append(patch)
             disp = method_renames.get(m, m) if method_renames else m
             labels_legend.append(disp)
-        ax.legend(handles, labels_legend, loc='upper center', bbox_to_anchor=(0.5, -0.1),
-                  frameon=False, ncol=min(len(methods_order), 4))
+        method_legend = ax.legend(handles, labels_legend, loc='upper center', bbox_to_anchor=bbox_to_anchor,
+                  frameon=False, ncol=len(methods_order))
+        
+        # 95 CI legend
+        ci_handle = ax.errorbar(
+            [np.nan], [np.nan],
+            yerr=[[1], [1]],
+            fmt='none',
+            ecolor='k',
+            elinewidth=1.4,
+            capsize=4
+        )
+
+        ax.add_artist(
+            ax.legend([ci_handle], ["Error bars = 95% CI"],
+                      loc=ci_legend_loc, frameon=True)
+        )
+        ax.add_artist(method_legend)
 
     # Draw brackets vs reference using column-based p-values
     if per_label_vs_ref:
@@ -1247,8 +1276,10 @@ def barplot_grouped_with_sig(
             for m in methods_order:
                 if m == ref_internal:
                     continue
+                if (lbl, m) not in positions:
+                    continue
                 p = pmap.get(m, None)
-                if p is None:
+                if p is None or np.isnan(p):
                     continue
                 pairs.append(((m, ref_internal), p))
 
@@ -1288,3 +1319,105 @@ def barplot_grouped_with_sig(
         fig.tight_layout()
 
     return ax
+
+
+def plot_two_topk_heatmaps(
+    res_df,
+    row_col="RNA",
+    col_col="ATAC",
+    value_col="log2OR",
+    method_col="method",
+    methods=("CTAR", "Signac"),
+    # what to show inside each cell:
+    or_col="OR_cc",
+    p_col="p",
+    or_ci_low_col="OR_ci_low",
+    or_ci_high_col="OR_ci_high",
+    show_ci=False,   # <-- NEW
+    # axis order
+    row_order=("RNA low", "RNA high"),
+    col_order=("ATAC low", "ATAC high"),
+    title="Top-K enrichment (log2 OR)",
+):
+    """
+    res_df must contain columns:
+      - method
+      - row_col, col_col
+      - value_col (e.g. log2OR)
+      - or_col (e.g. OR_cc)
+      - p_col (Fisher p-value)
+    Optional:
+      - or_ci_low_col, or_ci_high_col (if show_ci=True)
+
+    Plots two side-by-side heatmaps with shared color scale.
+    """
+
+    mats = {}
+    anns = {}
+
+    for m in methods:
+        sub = res_df[res_df[method_col] == m].copy()
+
+        mat = (sub.pivot(index=row_col, columns=col_col, values=value_col)
+                  .reindex(index=list(row_order), columns=list(col_order)))
+
+        def make_annot(r):
+            if pd.isna(r.get(or_col, np.nan)) or pd.isna(r.get(p_col, np.nan)):
+                return "NA"
+
+            or_txt = f"{r[or_col]:.2f}"
+
+            if show_ci:
+                lo = r.get(or_ci_low_col, np.nan)
+                hi = r.get(or_ci_high_col, np.nan)
+                if np.isfinite(lo) and np.isfinite(hi):
+                    or_txt = f"{or_txt} [{lo:.2f},{hi:.2f}]"
+
+            return f"OR={or_txt}\np={r[p_col]:.2g}"
+
+        ann = (sub.assign(_ann=sub.apply(make_annot, axis=1))
+                .pivot(index=row_col, columns=col_col, values="_ann")
+                .reindex(index=list(row_order), columns=list(col_order)))
+
+        mats[m] = mat
+        anns[m] = ann
+
+    # Shared color scale
+    all_vals = np.concatenate([mats[m].to_numpy().ravel() for m in methods])
+    all_vals = all_vals[np.isfinite(all_vals)]
+    vmax = np.max(np.abs(all_vals)) if all_vals.size else 1.0
+    if vmax == 0:
+        vmax = 1.0
+    vmin = np.min(np.abs(all_vals)) if all_vals.size else 0.0
+    center = 1.0
+    if value_col == "log2OR":
+        vmin = -vmax
+        center = 0.0
+
+
+    fig, axes = plt.subplots(1, len(methods), figsize=(10, 4), constrained_layout=True)
+
+    if len(methods) == 1:
+        axes = [axes]
+
+    for ax, m in zip(axes, methods):
+        sns.heatmap(
+            mats[m],
+            annot=anns[m],
+            fmt="",
+            cmap="coolwarm",
+            center=center,
+            vmin=vmin,
+            vmax=vmax,
+            linewidths=0.6,
+            mask=mats[m].isna(),
+            cbar=(m == methods[-1]),
+            cbar_kws={"label": value_col},
+            ax=ax
+        )
+        ax.set_title(m)
+        ax.set_xlabel("")
+        ax.set_ylabel("")
+
+    fig.suptitle(title, y=1.05)
+    plt.show()
