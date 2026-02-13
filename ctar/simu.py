@@ -66,7 +66,7 @@ def null_peak_gene_pairs(rna, atac):
     return null_pairs
 
 
-def odds_ratio(y_arr, label_arr, return_table=False, smoothed=False, epsilon=1e-6, fn_cap=None):
+def odds_ratio(y_arr, label_arr, return_table=False, smoothed=False, epsilon=1e-6, flag_zero=False):
 
     # (tp * tn) / (fp * fn)
     
@@ -86,8 +86,9 @@ def odds_ratio(y_arr, label_arr, return_table=False, smoothed=False, epsilon=1e-
         tn_s = tn + epsilon
         stat = (tp_s * tn_s) / (fp_s * fn_s)
 
-    if fn_cap and (fn < fn_cap):
-        stat = np.nan
+    if flag_zero:
+        if 0 in np.array(table):
+            stat = np.nan
 
     if return_table:
         return table, stat, pval
@@ -242,7 +243,7 @@ def auprc_enrichment(y_true, y_scores):
 
     Returns
     -------
-    auprc, recall, enrichment
+    auprc, precision, recall, enrichment
     """
 
     y_true = np.asarray(y_true)
@@ -250,14 +251,14 @@ def auprc_enrichment(y_true, y_scores):
     n_links = len(y_true)
     n_relevant = int(np.sum(y_true))
     if n_links == 0 or n_relevant == 0:
-        return np.nan, None, None
+        return np.nan, None, None, None
     precision, recall, _ = metrics.precision_recall_curve(y_true, y_scores, pos_label=1)
     enrichment = precision * (n_links / n_relevant)
     try:
         auprc = metrics.auc(recall, enrichment)
     except Exception:
         auprc = np.nan
-    return auprc, recall, enrichment
+    return auprc, precision, recall, enrichment
 
 
 def stratified_bootstrap_auprc(y_true, y_scores, n_boot=1000, seed=0):
@@ -286,7 +287,7 @@ def pgb_enrichment_recall(df, col, min_recall, max_recall, ascending=True,
     '''Adapted from Dorans et al. NG 2025.
     
     Supports both binary labels (0/1) and continuous scores (0.0-1.0) in gold_col.
-    For continuous scores:  a value of 0.5 contributes 0.5 to cumulative gold. 
+    For continuous scores: a value of 0.5 contributes 0.5 to cumulative gold. 
     
     Changes from original:
     - Added total_gold and total_length calculation before filtering (handles NaN)
@@ -298,32 +299,20 @@ def pgb_enrichment_recall(df, col, min_recall, max_recall, ascending=True,
     - Fixed extrapolation:  new_enrichment uses (i+1) instead of i
     '''
     tmp = df[[col, gold_col]].copy()
-    
-    # Store totals from original df BEFORE filtering (to handle NaN correctly)
-    # Works with continuous gold_col values (sums the total "gold mass")
     total_gold = tmp[gold_col].sum()
     total_length = len(tmp)
     
     tmp = tmp.sort_values(by=col, ascending=ascending).reset_index(drop=True)
     
-    # Check .notna() in addition to > 0
+    # check .notna() in addition to > 0
     tmp["linked"] = 1 * (tmp[col].notna() & (tmp[col] > 0))
     tmp["linked_cum"] = tmp["linked"].cumsum()
-    
-    # Only count gold in linked items (multiply by "linked" mask)
-    # For continuous scores:  this accumulates the weighted "gold mass"
     tmp["gold_cum"] = (tmp[gold_col] * tmp["linked"]).cumsum()
-    
-    # Use total_gold instead of tmp["gold_cum"].max()
-    # Recall = fraction of total "gold mass" recovered
-    tmp["recall"] = tmp["gold_cum"] / total_gold
-    
-    # Use total_gold / total_length instead of tmp["gold_cum"].max() / len(tmp)
-    # Enrichment denom = average "gold density" across all items
+    tmp["recall"] = tmp["gold_cum"] / total_gold 
     enrich_denom = total_gold / total_length
     tmp["enrichment"] = (tmp["gold_cum"].divide(tmp["linked_cum"])) / enrich_denom
     
-    # Identify unscored as NaN or <= 0 using .notna() check
+    # identify unscored as NaN or <= 0 using .notna() check
     unscored = tmp[~(tmp[col].notna() & (tmp[col] > 0))].reset_index(drop=True)
     tmp = tmp[tmp[col].notna() & (tmp[col] > 0)][["recall", "enrichment"]]
     
@@ -331,7 +320,6 @@ def pgb_enrichment_recall(df, col, min_recall, max_recall, ascending=True,
         last_point = tmp.iloc[-1]
         last_recall, last_enrichment = last_point["recall"], last_point["enrichment"]
         
-        # Remaining "gold mass" in unscored items
         num_new_points = int(unscored[gold_col].sum())
         recall_increment = (1 - last_recall) / num_new_points
         enrichment_increment = (last_enrichment - 1) / num_new_points
@@ -591,245 +579,6 @@ def compute_bootstrap_table(
 
     return pd.DataFrame(rows)
 
-
-def scent_enrichment_setup(annotations_df,
-    genomes_file,
-    causal_variants_bed,
-    ):
-    ''' Setup dataframes for scent_enrichment.
-    Parameters
-    ----------
-    genomes_file : BED file path containing common SNPs in hg38. Must be tab delimited.
-    causal_variants_bed : pybedtools object containing causal variants (PIP < 0.2 in SCENT paper).
-
-    Returns
-    -------
-    causal_var_in_annot, common_var_in_annot, annotations_df, genomes_df, windows_df
-
-    '''
-
-    # create annotations bed
-    annotations_df[['peak','gene']] = annotations_df.reset_index()['index'].str.split(';',expand=True).values
-    annotations_df[['chr','start','end']] = annotations_df.peak.str.split(':|-',expand=True).values
-    annotations_df[['start','end']] = annotations_df[['start','end']].astype(int)
-    annotations_df = annotations_df.reset_index(names='idx')
-    annotations_df.index = annotations_df['idx']
-    annotations_bed = pybedtools.BedTool.from_dataframe(annotations_df[['chr','start','end','idx']])
-    
-    # load common snps
-    genomes_df = pd.read_csv(genomes_file,header=None, sep='\t')
-    genomes_df.columns = ['CHROM','START','END','rsid']
-    common_variants_bed = pybedtools.BedTool.from_dataframe(genomes_df)
-    
-    # precompute common variants in annotations
-    common_var_in_annot = common_variants_bed.intersect(annotations_bed, wa=True, wb=True)
-    common_var_in_annot = common_var_in_annot.to_dataframe(names=['CHROM', 'POS', 'POS2', 'RSID', 'CHROM_ANN', 'START_ANN', 'END_ANN', 'GENE_ANN'])
-    common_var_in_annot[['PEAK_ANN','GENE_ANN']] = common_var_in_annot['GENE_ANN'].str.split(';',expand=True).values
-    
-    windows_df = get_gene_coords(annotations_df,gene_col='gene',gene_id_type='ensembl_gene_id')
-    windows_df.dropna(subset=['chr', 'start', 'end'],inplace=True)
-    windows_df['CIS_START'] = windows_df['start'].astype(int) - 500000
-    windows_df['CIS_START'] = windows_df['CIS_START'].clip(lower=0)  # Ensure CIS_START is not negative
-    windows_df['CIS_END'] = windows_df['end'].astype(int) + 500000
-    windowsdf_bed = pybedtools.BedTool.from_dataframe(
-        windows_df[['chr', 'CIS_START', 'CIS_END', 'gene']]
-    )
-    
-    # precompute causal variants in annotations
-    causal_var_in_annot = causal_variants_bed.intersect(annotations_bed, wa=True, wb=True)
-    causal_var_in_annot = causal_var_in_annot.to_dataframe(names=['CHROM', 'POS', 'POS2', 'PROB', 'CHROM_ANN', 'START_ANN', 'END_ANN', 'GENE_ANN'])
-    causal_var_in_annot[['eQTL','eQTL_GENE','eQTL_PROB','eQTL_TISSUE']] = causal_var_in_annot['PROB'].str.split(';',expand=True).values
-    causal_var_in_annot['eQTL_PROB'] = causal_var_in_annot['eQTL_PROB'].astype(float)
-    causal_var_in_annot.index = causal_var_in_annot['GENE_ANN']
-    causal_var_in_annot.index.name = ''
-    causal_var_in_annot[['PEAK_ANN','GENE_ANN']] = causal_var_in_annot['GENE_ANN'].str.split(';',expand=True).values
-    
-    return causal_var_in_annot, common_var_in_annot, annotations_df, genomes_df, windows_df
-
-
-def scent_enrichment(causal_var_in_annot,
-                    common_var_in_annot,
-                    annotations_df,
-                    ref_df,
-                    genomes_df,
-                    windows_df,
-                    method,
-                    threshold,
-                    flag_debug=False,
-    ):
-    """
-    Vectorized replacement for the per-gene loop.
-
-    Parameters
-    ----------
-    causal_var_in_annot: DataFrame with columns ['eQTL_GENE','GENE_ANN','eQTL_PROB', method, ...]
-    common_var_in_annot: DataFrame with column 'GENE_ANN' (1000G variant in annotation peaks)
-    ref_df: DataFrame with column 'GENE' and 'Probability'
-    genomes_df: DataFrame with columns ['CHROM','START','END'] for common variants (hg38)
-    windows_df: DataFrame with columns ['gene', 'chr', 'CIS_START', 'CIS_END']
-                  (chr should include 'chr' prefix to match genomes_df['CHROM'])
-    method: column name in causal_var_in_annot to threshold (smaller is better if you use '< threshold' as in your loop)
-    threshold: threshold applied as causal_var_in_annot[method] < threshold
-
-    Returns
-    -------
-    overall_enrichment: scalar (mean over included genes)
-    per_gene_enrichment: pandas Series indexed by gene name for included genes (same ordering as original logic)
-    """
-    # gene universe (match original: intersection of annotations and reference genes)
-    genes_eQTL = ref_df['GENE'].astype(str).unique()
-    genes_ANN  = annotations_df['gene'].astype(str).unique()
-    genes = np.intersect1d(genes_eQTL, genes_ANN) # sorted unique
-
-    # precompute pip totals by eQTL_GENE (pip_causal_var_genei)
-    pip_total = ref_df.groupby('GENE')['Probability'].sum()
-    # reindex to full gene list (missing -> 0)
-    pip_total_arr = pip_total.reindex(genes).fillna(0.0).to_numpy(dtype=float)
-
-    if isinstance(threshold, int) and threshold >= 1:
-        # treat smaller values as better (like p-values). Select rows with smallest `method` values.
-        scores = causal_var_in_annot[method].to_numpy()
-        # put NaNs at the end by replacing with +inf so they are not selected
-        scores_clean = np.where(np.isfinite(scores), scores, np.inf)
-        # argsort and take top-N indices
-        order = np.argsort(scores_clean)
-        top_n = threshold
-        if top_n >= len(scores_clean):
-            selected_idx = order  # all
-        else:
-            selected_idx = order[:top_n]
-        mask_method = np.zeros(len(causal_var_in_annot), dtype=bool)
-        mask_method[selected_idx] = True
-    else:
-        # original numeric threshold behavior: select rows with method value < threshold
-        mask_method = causal_var_in_annot[method] < threshold
-
-    # precompute pip in annotated peaks where the method condition holds AND GENE matches (eQTL_GENE == GENE_ANN)
-    mask_same = causal_var_in_annot['eQTL_GENE'].astype(str) == causal_var_in_annot['GENE_ANN'].astype(str)
-    df_linked = causal_var_in_annot.loc[mask_method & mask_same]
-    pip_in_annot = df_linked.groupby('eQTL_GENE')['eQTL_PROB'].sum()
-    pip_in_annot_arr = pip_in_annot.reindex(genes).fillna(0.0).to_numpy(dtype=float)
-
-    # precompute num_common_var_in_annot_genei from common_var_in_annot grouped by GENE_ANN
-    num_common_annot = common_var_in_annot.groupby('GENE_ANN').size()
-    num_common_annot_arr = num_common_annot.reindex(genes).fillna(0).to_numpy(dtype=int)
-
-    # compute num_common_var_in_cis_genei efficiently per-chromosome using numpy.searchsorted
-    genomes = genomes_df.copy()
-    # assume genomes['START'] is int; if not, convert
-    genomes['START'] = genomes['START'].astype(int)
-    # group genomes by CHROM and build sorted arrays of STARTs
-    genomes_grouped = {chrom: arr['START'].to_numpy(dtype=int) for chrom, arr in genomes.groupby('CHROM')}
-    for chrom in genomes_grouped:
-        genomes_grouped[chrom] = np.sort(genomes_grouped[chrom])
-
-    # arrange windows by chrom and compute counts vectorized per-chrom
-    # create arrays aligned with genes
-    gene_to_index = {g: i for i, g in enumerate(genes)}
-    num_common_cis_arr = np.zeros(len(genes), dtype=int)
-    # filter windows_df to only genes present in our gene list
-    w = windows_df[windows_df['gene'].astype(str).isin(genes)].copy()
-    # standardize 'chr' column name
-    if 'chr' in w.columns:
-        chrom_col = 'chr'
-    elif 'CHROM' in w.columns:
-        chrom_col = 'CHROM'
-    else:
-        raise KeyError("windows_df must contain a 'chr' or 'CHROM' column")
-
-    # ensure same 'chr' formatting: convert to string and keep 'chr' prefix if present in genome
-    w[chrom_col] = w[chrom_col].astype(str)
-
-    # group by chromosome and do vectorized searchsorted per chrom
-    for chrom, grp in w.groupby(chrom_col):
-        starts = genomes_grouped.get(chrom)
-        if starts is None or starts.size == 0:
-            # zero counts for all genes on this chrom
-            for idx, row in grp.iterrows():
-                gi = gene_to_index[str(row['gene'])]
-                num_common_cis_arr[gi] = 0
-            continue
-        # vector of window starts/ends for this chrom
-        cis_starts = grp['CIS_START'].to_numpy(dtype=int)
-        cis_ends   = grp['CIS_END'].to_numpy(dtype=int)
-        # searchsorted supports vectorized inputs
-        left_idx  = np.searchsorted(starts, cis_starts, side='left')
-        right_idx = np.searchsorted(starts, cis_ends, side='right')
-        counts = (right_idx - left_idx).astype(int)
-        # assign to array based on genes in this group
-        for gene_name, cnt in zip(grp['gene'].astype(str).tolist(), counts.tolist()):
-            gi = gene_to_index[gene_name]
-            num_common_cis_arr[gi] = int(cnt)
-
-    # vectorized logic implementing the same control flow as the loop:
-    # - if pip_total == 0 -> enrichment = 0 (include)
-    # - elif num_common_annot == 0 -> enrichment = 0 (include)
-    # - elif num_common_cis == 0 -> skip (do not include)
-    # - else compute enrichment = (pip_in_annot / num_common_annot) / (pip_total / num_common_cis)
-
-    pip_total = pip_total_arr
-    pip_annot = pip_in_annot_arr
-    n_common_annot = num_common_annot_arr
-    n_common_cis = num_common_cis_arr
-
-    G = len(genes)
-    enrichment_vals = np.empty(G, dtype=float)
-    included_mask = np.zeros(G, dtype=bool)
-
-    # case A: pip_total == 0 -> 0 and include
-    mask_pip0 = (pip_total == 0.0)
-    enrichment_vals[mask_pip0] = 0.0
-    included_mask[mask_pip0] = True
-
-    # case B: pip_total > 0 -> consider further
-    mask_remaining = ~mask_pip0
-
-    # case B1: n_common_annot == 0 => enrichment 0 and include
-    mask_annot0 = mask_remaining & (n_common_annot == 0)
-    enrichment_vals[mask_annot0] = 0.0
-    included_mask[mask_annot0] = True
-
-    # case C: have both pip_total>0 and n_common_annot>0 => potential compute
-    mask_to_compute = mask_remaining & (n_common_annot > 0)
-
-    # from these, those with n_common_cis == 0 are skipped
-    mask_cis0 = mask_to_compute & (n_common_cis == 0)
-    # do nothing for mask_cis0 (excluded)
-
-    # final compute mask: pip_total>0 & n_common_annot>0 & n_common_cis>0
-    mask_compute_final = mask_to_compute & (n_common_cis > 0)
-
-    if np.any(mask_compute_final):
-        numer = pip_annot[mask_compute_final] / n_common_annot[mask_compute_final].astype(float)
-        denom = pip_total[mask_compute_final] / n_common_cis[mask_compute_final].astype(float)
-        if flag_debug:
-            print('pip_annot',pip_annot[mask_compute_final])
-            print('n_common_annot',n_common_annot[mask_compute_final].astype(float))
-            print('pip_total',pip_total[mask_compute_final])
-            print('n_common_cis',n_common_cis[mask_compute_final].astype(float))
-            print('')
-            print('numer',numer)
-            print('denom',denom)
-        # guard against zero denom (shouldn't happen because n_common_cis >0 and pip_total>0)
-        with np.errstate(divide='ignore', invalid='ignore'):
-            enr = numer / denom
-        # where denom==0 or nan set enr to np.nan (but the original code wouldn't hit denom==0)
-        enr = np.where(np.isfinite(enr), enr, np.nan)
-        enrichment_vals[mask_compute_final] = enr
-        included_mask[mask_compute_final] = True
-
-    # now compute the final list exactly like original: include entries for genes with included_mask True
-    included_enrichments = enrichment_vals[included_mask]
-
-    # overall enrichment: mean of included values
-    overall_enrichment = float(np.nanmean(included_enrichments)) if included_enrichments.size > 0 else float('nan')
-
-    # build a pd.Series of per-gene enrichment for included genes (to inspect)
-    included_genes = genes[included_mask]
-    per_gene_series = pd.Series(included_enrichments, index=included_genes)
-
-    return overall_enrichment, per_gene_series
-
     
 def test_overlap(list1, list2, list_background):
     """
@@ -864,3 +613,223 @@ def test_overlap(list1, list2, list_background):
         or_lb = np.exp(np.log(oddsratio) - 1.96 * se_log_or)
         return pvalue, oddsratio, or_ub, or_lb
 
+
+def topk_or_by_regime(
+    df,
+    score_col,            # p-values or scores for ONE method
+    regime_mask,          # boolean mask for the regime
+    truth_col="score",
+    K=100,
+    smaller_is_better=True,
+    continuity=0.5,
+    alpha=0.05
+):
+    d = df[regime_mask].copy()
+    d[truth_col] = d[truth_col].astype(bool)
+
+    if len(d) == 0:
+        return None
+
+    # rank within regime
+    if smaller_is_better:
+        d["rank"] = d[score_col].rank(method="average")
+    else:
+        d["rank"] = (-d[score_col]).rank(method="average")
+
+    d["topK"] = d["rank"] <= min(K, len(d))  # avoid empty "not topK" when n<K
+
+    # contingency table counts
+    a = int(((d["topK"]) & (d[truth_col])).sum())
+    b = int(((d["topK"]) & (~d[truth_col])).sum())
+    c = int(((~d["topK"]) & (d[truth_col])).sum())
+    d_ = int(((~d["topK"]) & (~d[truth_col])).sum())
+
+    table = np.array([[a, b],
+                      [c, d_]])
+
+    # Fisher test (exact; may return inf/0 when zeros)
+    try:
+        or_val, p = sp.stats.fisher_exact(table)
+    except Exception:
+        or_val, p = np.nan, np.nan
+
+    # continuity-corrected OR (stable for display + CI)
+    ac, bc, cc, dc = (a + continuity, b + continuity, c + continuity, d_ + continuity)
+    or_cc = (ac * dc) / (bc * cc)
+
+    # Wald CI on log(OR_cc)
+    z = sp.stats.norm.ppf(1 - alpha / 2)
+    se_logOR_cc = np.sqrt(1/ac + 1/bc + 1/cc + 1/dc)
+    logOR_cc = np.log(or_cc)
+    ci_low = np.exp(logOR_cc - z * se_logOR_cc)
+    ci_high = np.exp(logOR_cc + z * se_logOR_cc)
+
+    # log2 scale versions (handy for heatmaps if you prefer)
+    log2OR = np.log2(or_cc)
+    log2_ci_low = np.log2(ci_low)
+    log2_ci_high = np.log2(ci_high)
+
+    return {
+        "a": a, "b": b, "c": c, "d": d_,
+        "OR": or_val,
+        "OR_cc": or_cc,
+        "OR_ci_low": ci_low,
+        "OR_ci_high": ci_high,
+        "logOR_cc": logOR_cc,
+        "se_logOR_cc": se_logOR_cc,
+        "log2OR": log2OR,
+        "log2OR_ci_low": log2_ci_low,
+        "log2OR_ci_high": log2_ci_high,
+        "p": p,
+        "n": int(a + b + c + d_)
+    }
+
+
+def global_topk_or_by_regime(
+    df,
+    score_col,
+    regimes, # list of (regime_name, mask) or dict {name: mask}
+    truth_col="score",
+    K=100,
+    smaller_is_better=True,
+    continuity=0.5,
+    alpha=0.05,
+):
+    """
+    Global Top-K is computed ONCE over all rows.
+    Then for each regime mask, compute 2x2 OR of True vs False for TopK vs not-TopK
+    restricted to that regime.
+
+    regimes: list of tuples [("regime1", mask1), ...] OR dict {"regime1": mask1, ...}
+    """
+    d = df.copy()
+    d[truth_col] = d[truth_col].astype(bool)
+
+    # global rank + global topK
+    if smaller_is_better:
+        d["_rank"] = d[score_col].rank(method="average")
+    else:
+        d["_rank"] = (-d[score_col]).rank(method="average")
+
+    d["_topK_global"] = d["_rank"] <= K
+
+    # normalize regimes input
+    if isinstance(regimes, dict):
+        regimes_iter = list(regimes.items())
+    else:
+        regimes_iter = list(regimes)
+
+    rows = []
+    z = sp.stats.norm.ppf(1 - alpha/2)
+
+    for regime_name, mask in regimes_iter:
+        sub = d.loc[mask].copy()
+        if len(sub) == 0:
+            continue
+
+        a = int(((sub["_topK_global"]) & (sub[truth_col])).sum())
+        b = int(((sub["_topK_global"]) & (~sub[truth_col])).sum())
+        c = int(((~sub["_topK_global"]) & (sub[truth_col])).sum())
+        d_ = int(((~sub["_topK_global"]) & (~sub[truth_col])).sum())
+
+        table = np.array([[a, b],
+                          [c, d_]])
+
+        # Fisher exact
+        try:
+            or_val, p = sp.stats.fisher_exact(table)
+        except Exception:
+            or_val, p = np.nan, np.nan
+
+        # continuity-corrected OR + Wald CI on log(OR_cc)
+        ac, bc, cc, dc = a+continuity, b+continuity, c+continuity, d_+continuity
+        or_cc = (ac * dc) / (bc * cc)
+        se = np.sqrt(1/ac + 1/bc + 1/cc + 1/dc)
+        ci_low = np.exp(np.log(or_cc) - z*se)
+        ci_high = np.exp(np.log(or_cc) + z*se)
+
+        rows.append({
+            "regime": regime_name,
+            "a": a, "b": b, "c": c, "d": d_,
+            "OR": or_val,
+            "OR_cc": or_cc,
+            "OR_ci_low": ci_low,
+            "OR_ci_high": ci_high,
+            "log2OR": np.log2(or_cc),
+            "p": p,
+            "n_regime": int(a+b+c+d_),
+            "K_global": int(K),
+        })
+
+    return pd.DataFrame(rows)
+
+
+def global_fdr_or_by_regime(
+    df,
+    fdr_col,
+    regimes, # list of (regime_name, mask) or dict {name: mask}
+    truth_col="score",
+    fdr_level=0.1,
+    continuity=0.5,
+    alpha=0.05,
+):
+    """
+    Global Top-K is computed ONCE over all rows.
+    Then for each regime mask, compute 2x2 OR of True vs False for TopK vs not-TopK
+    restricted to that regime.
+
+    regimes: list of tuples [("regime1", mask1), ...] OR dict {"regime1": mask1, ...}
+    """
+    d = df.copy()
+    d[truth_col] = d[truth_col].astype(bool)
+
+    d["_fdr_global"] = d[fdr_col] <= fdr_level
+
+    # normalize regimes input
+    if isinstance(regimes, dict):
+        regimes_iter = list(regimes.items())
+    else:
+        regimes_iter = list(regimes)
+
+    rows = []
+    z = sp.stats.norm.ppf(1 - alpha/2)
+
+    for regime_name, mask in regimes_iter:
+        sub = d.loc[mask].copy()
+        if len(sub) == 0:
+            continue
+
+        a = int(((sub["_fdr_global"]) & (sub[truth_col])).sum())
+        b = int(((sub["_fdr_global"]) & (~sub[truth_col])).sum())
+        c = int(((~sub["_fdr_global"]) & (sub[truth_col])).sum())
+        d_ = int(((~sub["_fdr_global"]) & (~sub[truth_col])).sum())
+
+        table = np.array([[a, b],
+                          [c, d_]])
+
+        # Fisher exact
+        try:
+            or_val, p = sp.stats.fisher_exact(table)
+        except Exception:
+            or_val, p = np.nan, np.nan
+
+        # continuity-corrected OR + Wald CI on log(OR_cc)
+        ac, bc, cc, dc = a+continuity, b+continuity, c+continuity, d_+continuity
+        or_cc = (ac * dc) / (bc * cc)
+        se = np.sqrt(1/ac + 1/bc + 1/cc + 1/dc)
+        ci_low = np.exp(np.log(or_cc) - z*se)
+        ci_high = np.exp(np.log(or_cc) + z*se)
+
+        rows.append({
+            "regime": regime_name,
+            "a": a, "b": b, "c": c, "d": d_,
+            "OR": or_val,
+            "OR_cc": or_cc,
+            "OR_ci_low": ci_low,
+            "OR_ci_high": ci_high,
+            "log2OR": np.log2(or_cc),
+            "p": p,
+            "n_regime": int(a+b+c+d_)
+        })
+
+    return pd.DataFrame(rows)
