@@ -2,16 +2,18 @@
 
 # FILE: /projects/zhanglab/users/ana/cts_peak_gene/experiments/job.pipeline/cli.sh
 
-MULTIOME_FILE=/projects/zhanglab/users/ana/multiome/processed/neatseq/neat_filt.h5mu
-TARGET_PATH=/projects/zhanglab/users/ana/multiome/results/ctar/final_eval
+MULTIOME_FILE=/projects/zhanglab/users/ana/multiome/processed/brain_3k/brain_filt.h5mu
+TARGET_PATH=/projects/zhanglab/users/ana/multiome/results/ctar/final_eval/brain/brain_filtered_5.5.5.5.10000
 GENOME_FILE=/projects/zhanglab/users/ana/bedtools2/ana_bedfiles/ref/GRCh38.p14.genome.fa.bgz
-BIN_CONFIG=5.5.5.5.1000
+BIN_CONFIG=5.5.5.5.10000
 BIN_TYPE='mean_var'
 PYBEDTOOLS_PATH=/projects/zhanglab/users/ana/bedtools2/bin
 BATCH_SIZE=1800
-RESULTS_PATH=/projects/zhanglab/users/ana/multiome/results/ctar/final_eval
-PARTITION="mzhang,pool1"
+RESULTS_PATH=/projects/zhanglab/users/ana/multiome/results/ctar/final_eval/brain/brain_filtered_5.5.5.5.10000
+PARTITION="mzhang,pool1,statgen"
 MAX_CONCURRENT=10
+FLAG_LL='False'
+FLAG_SE='True'
 
 IFS='.' read -r b1 b2 b3 b4 rest <<< "$BIN_CONFIG"
 if [[ "$b3" == "inf" && "$b4" == "inf" ]]; then
@@ -44,16 +46,16 @@ echo "Links job ID: $LINKS_JOB"
 ###########################################################################################
 
 echo "Submitting $BIN_CONFIG compute_cis_only job..."
-CIS_JOB=$(sbatch --parsable -p $PARTITION -t 2-00:00:00 \
+CIS_JOB=$(sbatch --parsable -p $PARTITION -t 6-00:00:00 \
   --dependency=afterok:${LINKS_JOB} \
-  -c 16 --mem 48Gb \
+  -c 16 --mem 128Gb \
   -o /projects/zhanglab/users/ana/logs/cis_%j.err -J "cis_$BIN_CONFIG" \
   --wrap "source ~/.bashrc && conda activate ctar && python /projects/zhanglab/users/ana/cts_peak_gene/CLI_ctar.py \
           --job compute_cis_only --job_id $LINKS_JOB --multiome_file $MULTIOME_FILE --batch_size $BATCH_SIZE \
           --binning_config $BIN_CONFIG --binning_type $BIN_TYPE --genome_file $GENOME_FILE --target_path $TARGET_PATH \
-          --results_path $TARGET_PATH/${LINKS_JOB}_results --pybedtools_path $PYBEDTOOLS_PATH")
+          --results_path $TARGET_PATH/${LINKS_JOB}_results --pybedtools_path $PYBEDTOOLS_PATH \
+          --flag_ll $FLAG_LL --flag_se $FLAG_SE")
 echo "Cis job ID: $CIS_JOB"
-
 
 ###########################################################################################
 ######                    Wait for Links Job and Count Cis-Links                     ######
@@ -111,15 +113,16 @@ if [ "$USE_INF_MODE" = true ]; then
     if [ $TOTAL_NUM_BATCHES -le $MAX_ARRAY_SIZE ]; then
         echo "Submitting single array job with $TOTAL_NUM_BATCHES tasks..."
         
-        CTRL_JOB=$(sbatch --parsable -p $PARTITION -t 2-00:00:00 \
+        CTRL_JOB=$(sbatch --parsable -p $PARTITION -t 6-00:00:00 \
           --array=0-$((TOTAL_NUM_BATCHES - 1))%${MAX_CONCURRENT} \
-          -c 16 --mem 32Gb \
+          -c 16 --mem 64Gb \
           -o /projects/zhanglab/users/ana/logs/ctrl_%A_%a.err \
           -J "ctrl_$BIN_CONFIG" \
           --wrap "source ~/.bashrc && conda activate ctar && python /projects/zhanglab/users/ana/cts_peak_gene/CLI_ctar.py \
                   --job compute_ctrl_only --job_id $LINKS_JOB --array_idx \$SLURM_ARRAY_TASK_ID --multiome_file $MULTIOME_FILE \
                   --batch_size $BATCH_SIZE --target_path $TARGET_PATH --results_path $TARGET_PATH/${LINKS_JOB}_results \
-                  --binning_config $BIN_CONFIG --binning_type $BIN_TYPE --genome_file $GENOME_FILE --pybedtools_path $PYBEDTOOLS_PATH")
+                  --binning_config $BIN_CONFIG --binning_type $BIN_TYPE --genome_file $GENOME_FILE --pybedtools_path $PYBEDTOOLS_PATH \
+                  --flag_ll $FLAG_LL --flag_se $FLAG_SE")
         echo "Ctrl job ID: $CTRL_JOB"
         CTRL_JOB_FOR_DEPENDENCY=$CTRL_JOB
         
@@ -131,14 +134,15 @@ if [ "$USE_INF_MODE" = true ]; then
     
 else
     echo "Submitting $BIN_CONFIG compute_ctrl_only job with $TOTAL_NUM_BATCHES batches..."
-    CTRL_JOB=$(sbatch --parsable -p $PARTITION -t 2-00:00:00 $ARRAY_OPT \
+    CTRL_JOB=$(sbatch --parsable -p $PARTITION -t 6-00:00:00 $ARRAY_OPT \
       --dependency=afterok:${LINKS_JOB} \
-      -c 16 --mem 32Gb \
+      -c 16 --mem 64Gb \
       -o /projects/zhanglab/users/ana/logs/ctrl_%A_%a.err -J "ctrl_$BIN_CONFIG" \
       --wrap "source ~/.bashrc && conda activate ctar && python /projects/zhanglab/users/ana/cts_peak_gene/CLI_ctar.py \
               --job compute_ctrl_only --job_id $LINKS_JOB --array_idx \$SLURM_ARRAY_TASK_ID --multiome_file $MULTIOME_FILE \
               --batch_size $BATCH_SIZE --target_path $TARGET_PATH --results_path $TARGET_PATH/${LINKS_JOB}_results \
-              --binning_config $BIN_CONFIG --binning_type $BIN_TYPE --genome_file $GENOME_FILE --pybedtools_path $PYBEDTOOLS_PATH")
+              --binning_config $BIN_CONFIG --binning_type $BIN_TYPE --genome_file $GENOME_FILE --pybedtools_path $PYBEDTOOLS_PATH \
+              --flag_ll $FLAG_LL --flag_se $FLAG_SE")
     echo "Ctrl job ID: $CTRL_JOB"
     CTRL_JOB_FOR_DEPENDENCY=$CTRL_JOB
 fi
@@ -146,6 +150,7 @@ fi
 ###########################################################################################
 ######                               Compute P-values                                ######
 ###########################################################################################
+
 
 echo "Submitting $BIN_CONFIG compute_pval job..."
 PVAL_JOB=$(sbatch --parsable -p $PARTITION -t 00:30:00 --mem 16Gb \
@@ -156,6 +161,7 @@ PVAL_JOB=$(sbatch --parsable -p $PARTITION -t 00:30:00 --mem 16Gb \
           --job compute_pval --binning_config $BIN_CONFIG --binning_type $BIN_TYPE --results_path $TARGET_PATH/${LINKS_JOB}_results")
 echo "P-value job ID: $PVAL_JOB"
 
+
 echo ""
 echo "================================"
 echo "Pipeline submitted successfully!"
@@ -165,4 +171,5 @@ echo "Cis job:      $CIS_JOB"
 echo "Ctrl job:     $CTRL_JOB"
 echo "P-value job:  $PVAL_JOB"
 echo ""
+echo "Used $MULTIOME_FILE."
 echo "Results in: $TARGET_PATH/${LINKS_JOB}_results/cis_links_df.csv"

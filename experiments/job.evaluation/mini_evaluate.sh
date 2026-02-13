@@ -16,16 +16,12 @@ REPO_ROOT="${REPO_ROOT:-/projects/zhanglab/users/ana/cts_peak_gene}"
 SCRIPTS_DIR="${SCRIPTS_DIR:-${REPO_ROOT}/experiments/job.evaluation}"
 
 # New file to add column of
-NEW_FILE="${NEW_FILE:-/projects/zhanglab/users/ana/multiome/results/ctar/final_eval/pbmc/pbmc_filtered_5.5.5.5.10000/cis_links_df.csv}"
-ORIGINAL_COL="${ORIGINAL_COL:-5.5.5.5.10000_mcpval}"
-NEW_COL="${NEW_COL:-ctar_filt_10k}"
+NEW_FILE="${NEW_FILE:-/projects/zhanglab/users/ana/multiome/results/ctar/final_eval/${DATASET_NAME}/${DATASET_NAME}_filtered_5.5.5.5.1000/cis_links_df.csv}"
+ORIGINAL_COL="${ORIGINAL_COL:-5.5.5.5.1000_corr_mcpval}"
+NEW_COL="${NEW_COL:-corr_mc}"
 
 # Be sure to include new col!
-METHOD_COLS="${METHOD_COLS:-scmm,signac,ctar_filt_z,ctar_filt,ctar_filt_10k}"
-
-# Intersect inputs/outputs
-OVERLAP_DIR="${OVERLAP_DIR:-/projects/zhanglab/users/ana/bedtools2/ana_bedfiles/validation/overlap/${DATASET_NAME}}"
-BEDTOOLS_BIN="${BEDTOOLS_BIN:-/projects/zhanglab/users/ana/bedtools2/bin/intersectBed}"
+METHOD_COLS="${METHOD_COLS:-scmm,signac,ctar_filt_z,ctar_filt,scmm_mc,corr_mc}"
 
 # Aggregate outputs (aggregate_overlaps.py default)
 AGG_DIR="${AGG_DIR:-/projects/zhanglab/users/ana/multiome/validation/${DATASET_NAME}}"
@@ -35,7 +31,7 @@ AURC_DIR="${AURC_DIR:-/projects/zhanglab/users/ana/multiome/validation/tables/${
 REFERENCE_METHOD="${REFERENCE_METHOD:-ctar_filt}"
 N_BOOTSTRAP="${N_BOOTSTRAP:-1000}"
 
-echo "Evaluating ${DATASET_NAME}..."
+echo "Evaluating ${DATASET_NAME} with ${NEW_COL}..."
 
 mkdir -p "${LOG_DIR}"
 
