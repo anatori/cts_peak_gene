@@ -21,13 +21,14 @@ ORIGINAL_COL="${ORIGINAL_COL:-5.5.5.5.1000_corr_mcpval}"
 NEW_COL="${NEW_COL:-corr_mc}"
 
 # Be sure to include new col!
-METHOD_COLS="${METHOD_COLS:-scmm,signac,ctar_filt_z,ctar_filt,scmm_mc,corr_mc}"
+DEDUP="${DEDUP:-min}"
+METHOD_COLS="${METHOD_COLS:-scent,scmm,signac,ctar_filt_z,ctar_filt,corr_mc}"
 
-# Aggregate outputs (aggregate_overlaps.py default)
-AGG_DIR="${AGG_DIR:-/projects/zhanglab/users/ana/multiome/validation/${DATASET_NAME}}"
+# Merge outputs (using add_new_overlap.py)
+MERGE_DIR="${MERGE_DIR:-/projects/zhanglab/users/ana/multiome/validation/evaluation/${DATASET_NAME}}"
 
 # AUERC outputs (calculate_auerc.py default)
-AURC_DIR="${AURC_DIR:-/projects/zhanglab/users/ana/multiome/validation/tables/${DATASET_NAME}}"
+AURC_DIR="${AURC_DIR:-/projects/zhanglab/users/ana/multiome/validation/evaluation/tables/metrics/${DATASET_NAME}}"
 REFERENCE_METHOD="${REFERENCE_METHOD:-ctar_filt}"
 N_BOOTSTRAP="${N_BOOTSTRAP:-1000}"
 
@@ -41,30 +42,31 @@ submit() {
 
 
 echo "Submitting add_new_overlap.py ..."
-AGG_JOB_ID=$(submit \
+MERGE_JOB_ID=$(submit \
   -t 0-06:00:00 --mem=32G -J "add_overlap_${DATASET_NAME}" \
   -o "${LOG_DIR}/add_overlap_${DATASET_NAME}-%j.out" \
   -e "${LOG_DIR}/add_overlap_${DATASET_NAME}-%j.err" \
   --wrap "source ~/.bashrc && conda activate ${CONDA_ENV} && \
-          mkdir -p '${AGG_DIR}' && \
+          mkdir -p '${MERGE_DIR}' && \
           python ${SCRIPTS_DIR}/add_new_overlap.py \
-            --agg_path '${AGG_DIR}' \
+            --merge_path '${MERGE_DIR}' \
             --new_file '${NEW_FILE}' \
             --dataset_name '${DATASET_NAME}' \
             --original_col '${ORIGINAL_COL}' \
-            --new_col '${NEW_COL}'")
-echo "AGG_JOB_ID=${AGG_JOB_ID}"
+            --new_col '${NEW_COL}' \
+            --dedup '${DEDUP}'")
+echo "MERGE_JOB_ID=${MERGE_JOB_ID}"
 
-echo "Submitting calculate_auerc.py (after aggregate) ..."
+echo "Submitting calculate_auerc.py (after merge) ..."
 AURC_JOB_ID=$(submit \
-  --dependency=afterok:${AGG_JOB_ID} \
+  --dependency=afterok:${MERGE_JOB_ID} \
   -t 0-06:00:00 --mem=32G -J "auerc_${DATASET_NAME}" \
   -o "${LOG_DIR}/auerc_${DATASET_NAME}-%j.out" \
   -e "${LOG_DIR}/auerc_${DATASET_NAME}-%j.err" \
   --wrap "source ~/.bashrc && conda activate ${CONDA_ENV} && \
           mkdir -p '${AURC_DIR}' && \
           python ${SCRIPTS_DIR}/calculate_auerc.py \
-            --agg_path '${AGG_DIR}' \
+            --merge_path '${MERGE_DIR}' \
             --res_path '${AURC_DIR}' \
             --dataset_name '${DATASET_NAME}' \
             --n_bootstrap '${N_BOOTSTRAP}' \
@@ -73,5 +75,5 @@ AURC_JOB_ID=$(submit \
 echo "AURC_JOB_ID=${AURC_JOB_ID}"
 
 echo "Submitted jobs:"
-echo "  aggregate:      ${AGG_JOB_ID}"
+echo "  merge:          ${MERGE_JOB_ID}"
 echo "  auerc:          ${AURC_JOB_ID}"
