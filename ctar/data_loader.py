@@ -8,9 +8,7 @@ import anndata as ad
 import scanpy as sc
 import pickle
 import re
-
 import os
-import re
 
 
 def peak_to_gene(peaks_df,genes_df,clean=True,split_peaks=True,distance=500000,col_names=['chr','start','end'],
@@ -146,6 +144,23 @@ def normalize_chr(chrom):
     if chrom.startswith('chr'):
         return chrom
     return chrom
+
+
+def canonicalize_peak(s):
+    """
+    Intakes Series and normalize peak strings to 'chr{chr}:{start}-{end}'.
+    Handles '1:100-200', 'chr1-100-200', 'chr1:100-200', etc.
+    Strips whitespace.
+    """
+    peak_regex = re.compile(r"^(?:chr)?(?P<chr>[0-9XYMT]+)[:\-](?P<start>\d+)-(?P<end>\d+)$", re.IGNORECASE)
+    s = s.astype(str).str.strip()
+    def _canon(x: str) -> str:
+        m = peak_regex.match(x)
+        if not m:
+            return x
+        chrom = m.group("chr").upper()
+        return f"chr{chrom}:{m.group('start')}-{m.group('end')}"
+    return s.map(_canon)
 
 
 def get_gene_coords(
@@ -598,33 +613,57 @@ def consolidate_null_dic(path, startswith='ctrl_coeff_dic_', remove_empty=True, 
 
 def load_validation_intersect_bed(path,
     validation_cols,
-    candidate_cols=['scent','scmm','signac','ctar','peak','gene'],
-    candidate_methods_cols=['scent','scmm','signac','ctar'],
     score_type=float,
-    flag_split=True,
     flag_gene_match=True,
     flag_verbose=True
 ):
-    ''' Load result of bedtools intersection between candidate multiome links and validation data. Return dataframe.
+    ''' Process bedfile from bedtools intersection between (-a) validation data and (-b) candidate multiome links.
+    Bedtools intersect documentation:
+        https://bedtools.readthedocs.io/en/latest/content/tools/intersect.html
+    4rd column should contain validation source information separated by `;`.
+    8th column should contain candidate multiome peak then gene separated by `;`.
+
+    Parameters
+    ----------
+    validation_cols :  List of str
+        Column names for validation file wrt to original input (-a).
+        Must contain `score`.
+    score_type : dtype
+        Type to coerce score column into, as bedtools only returns strings.
+    flag_gene_match : bool
+        Whether to match genes from validation data and multiome links.
+        If True, be sure gene names use same convention (e.g. ENSEMBL ids).
+    flag_verbose : bool
+        Prints gene matching lengths.
+    
+    Returns
+    ----------
+    pd.DataFrame
+        Dataframe with columns validation_cols, gene, bp_overlap.
     '''
+    
+    assert 'score' in validation_cols, "score not in {validation_cols}."
+
     df = pd.read_csv(path,sep='\t',header=None)
     df.columns = ['gt_chr','gt_start','gt_end','gt_id','chr','start','end','id','bp_overlap']
-    
-    if flag_split:
 
-        df[validation_cols] = df['gt_id'].str.split(';',expand=True).values
-        df[candidate_cols] = df['id'].str.split(';',expand=True).values
-        df[candidate_methods_cols] = df[candidate_methods_cols].replace('nan', np.nan).astype(float)
-        if score_type == bool:
-            df['score'] = df['score'].map({'True':True,'False':False})
-        else:
-            df['score'] = df['score'].astype(score_type)
+    gt_split_vals = df['gt_id'].str.split(';',expand=True).values
+    len_gt_split_vals = len(gt_split_vals[0]) # sample split
+    assert len(validation_cols) == len_gt_split_vals, \
+        f"Length of provided validation_cols ({len(validation_cols)}) do not match number of splits ({len_gt_split_vals})"
+    df[validation_cols] = gt_split_vals
+    df[['peak','gene']] = df['id'].str.split(';',expand=True).values
 
-        if flag_gene_match:
-            if flag_verbose:
-                print('initial overlap',df.shape)
-            df = df[df.gt_gene == df.gene].copy()
-            if flag_verbose:
-                print('gene-matched overlap',df.shape)
+    if score_type == bool:
+        df['score'] = df['score'].map({'True':True,'False':False})
+    else:
+        df['score'] = df['score'].astype(score_type)
 
-    return df[validation_cols + candidate_cols + ['bp_overlap']]
+    if flag_gene_match:
+        if flag_verbose:
+            print('Initial overlap',df.shape)
+        df = df[df.gt_gene == df.gene].copy()
+        if flag_verbose:
+            print('Gene-matched overlap',df.shape)
+
+    return df[validation_cols + ['id','peak','gene','bp_overlap']]
