@@ -1294,17 +1294,15 @@ def mc_pval(ctrl_corr_full,corr):
     return (1+indicator)/(1+(n*b))
 
 
-def cauchy_combination(p_values1, p_values2):
+def cauchy_combination(p_values):
 
     ''' Calculates Cauchy combination test for two arrays of p-values.
     
     Parameters
     ----------
-    p_values1 : np.ndarray
-        Array of shape (N,) of p-values from one method.
-    p_values2 : np.ndarray
-        Array of shape (N,) of p-values from another method.
-    
+    p_values : np.ndarray
+        Array of shape (N,M) of N p-values from M methods.
+
     Returns
     ----------
     combined_p_value : np.ndarray
@@ -1314,15 +1312,9 @@ def cauchy_combination(p_values1, p_values2):
     '''
 
     # From R code : 0.5-atan(mean(tan((0.5-Pval)*pi)))/pi
-    quantiles1 = np.tan(np.pi * (0.5 - p_values1))
-    quantiles2 = np.tan(np.pi * (0.5 - p_values2))
-
-    # Combine the quantiles
-    combined_quantiles = np.vstack((quantiles1, quantiles2))
-    
+    quantiles = np.tan(np.pi * (0.5 - p_values))
     # Calculate the combined statistic (mean)
-    combined_statistic = np.mean(combined_quantiles,axis=0)
-
+    combined_statistic = np.mean(quantiles,axis=1)
     # Convert the combined statistic back to a p-value
     combined_p_value = 0.5-np.arctan(combined_statistic)/math.pi
 
