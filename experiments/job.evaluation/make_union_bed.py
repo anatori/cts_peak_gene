@@ -3,42 +3,21 @@ import os
 import pandas as pd
 from collections import OrderedDict
 from typing import Optional
+from ctar.data_loader import canonicalize_peak
 import re
 
 
 peak_regex = re.compile(r"^(?:chr)?(?P<chr>[0-9XYMT]+)[:\-](?P<start>\d+)-(?P<end>\d+)$", re.IGNORECASE)
 
-def canonicalize_peak(s: pd.Series) -> pd.Series:
-    """
-    Normalize peak strings to 'chr{chr}:{start}-{end}'.
-    Handles '1:100-200', 'chr1-100-200', 'chr1:100-200', etc.
-    Strips whitespace.
-    """
-    s = s.astype(str).str.strip()
-    def _canon(x: str) -> str:
-        m = peak_regex.match(x)
-        if not m:
-            return x
-        chrom = m.group("chr").upper()
-        return f"chr{chrom}:{m.group('start')}-{m.group('end')}"
-    return s.map(_canon)
 
-
-def load_indexed_series(
-    file_path: str, 
-    metric_specs: list[tuple[str, str]],
-    deduplicate: bool,
-    deduplicate_type: Optional[str] = None,
-) -> dict[str, pd.Series]:
+def load_pg_df(file_path: str) -> pd.DataFrame:
     """
-    Load a file and return a dict of Series indexed by canonical 'peak;gene'.
-    If duplicates exist for the same 'peak;gene', reduce by taking min.
+    Load a file, canonicalize peaks. 
+    Return dataframe with columns canonical peak, gene only.
     """
-    if deduplicate:
-        assert deduplicate_type is not None, "deduplicate_type required when deduplicate=True"
 
     if not os.path.isfile(file_path):
-        return {}
+        raise FileNotFoundError(f"File not found: {file_path}")
 
     df = pd.read_csv(file_path, sep=None, engine='python')
 
@@ -50,39 +29,9 @@ def load_indexed_series(
     # Canonicalize peak and clean gene strings
     df["peak"] = canonicalize_peak(df["peak"])
     df["gene"] = df["gene"].astype(str).str.strip()
+    df["idx"] = df["peak"].astype(str) + ";" + df["gene"].astype(str)
 
-    # Build index "peak;gene"
-    idx = df["peak"].astype(str) + ";" + df["gene"].astype(str)
-
-    out: dict[str, pd.Series] = {}
-    for out_label, source_col in metric_specs:
-        if source_col in df.columns:
-            s = df[source_col].copy()
-            s.index = idx
-            s.name = out_label
-
-            # Deduplicate by taking min per 'peak;gene'
-            if deduplicate and s.index.has_duplicates:
-                if deduplicate_type not in ("min", "max", "median", "mean"):
-                    raise ValueError(f"Unsupported deduplicate_type={deduplicate_type}")
-                # coerce to numeric to ensure proper behavior for pvals/z-scores
-                s_numeric = pd.to_numeric(s, errors="coerce")
-                s = s_numeric.groupby(level=0).agg(deduplicate_type)
-                s.name = out_label
-
-            out[out_label] = s
-
-    return out
-
-
-def _opt_none(x: str | None) -> str | None:
-    """
-    Return None for empty/none-like strings, otherwise the original string.
-    """
-    if x is None:
-        return None
-    s = str(x).strip().lower()
-    return None if s in {"", "none", "null", "na"} else x
+    return df[["peak","gene","idx"]]
 
 
 def main(args):
@@ -93,84 +42,48 @@ def main(args):
     CTAR_FILE = args.ctar_file
     CTAR_FILT_FILE = args.ctar_filt_file
 
-    SCENT_COL = _opt_none(args.scent_col)
-    SCMM_COL = _opt_none(args.scmm_col)
-    SIGNAC_COL = _opt_none(args.signac_col)
-    CTAR_COL_Z = _opt_none(args.ctar_col_z)
-    CTAR_COL = _opt_none(args.ctar_col)
-    CTAR_FILT_COL_Z = _opt_none(args.ctar_filt_col_z)
-    CTAR_FILT_COL = _opt_none(args.ctar_filt_col)
-
-    DEDUPLICATE = (args.deduplicate == 'True')
-    DEDUPLICATE_TYPE = args.deduplicate_type
-
     BED_PATH = args.bed_path
     DATASET_NAME = args.dataset_name
 
-    if args.method_cols:
-        METHOD_COLS = [m.strip() for m in args.method_cols.split(",") if m.strip()]
-    else:
-        METHOD_COLS = ["scent", "scmm", "signac", "ctar_z", "ctar", "ctar_filt_z", "ctar_filt"]
-
-    # Build source configs only with provided columns
-    source_configs: list[tuple[str, list[tuple[str, str]]]] = []
-
-    def add_source(file_path: str | None, pairs: list[tuple[str, str | None]]):
-        if not file_path:
-            return
-        specs = [(label, col) for (label, col) in pairs if col]  # keep only non-empty columns
-        if specs:
-            source_configs.append((file_path, specs))
-    add_source(SCENT_FILE, [("scent", SCENT_COL)])
-    add_source(SCMM_FILE, [("scmm", SCMM_COL)])
-    add_source(SIGNAC_FILE, [("signac", SIGNAC_COL)])
-    add_source(CTAR_FILE, [("ctar_z", CTAR_COL_Z), ("ctar", CTAR_COL)])
-    add_source(CTAR_FILT_FILE, [("ctar_filt_z", CTAR_FILT_COL_Z), ("ctar_filt", CTAR_FILT_COL)])
-
-    # Build dict of Series
-    dfs: "OrderedDict[str, pd.Series]" = OrderedDict()
+    # Load each file (skip if empty string)
+    source_files = [
+        f for f in [SCENT_FILE, SCMM_FILE, SIGNAC_FILE, CTAR_FILE, CTAR_FILT_FILE] 
+        if f and f.strip()
+    ]
+    pg_set = set()
     per_label_stats = []
 
-    for file_path, specs in source_configs:
+    for file_path in source_files:
         try:
-            series_dict = load_indexed_series(file_path, specs, deduplicate=DEDUPLICATE, deduplicate_type=DEDUPLICATE_TYPE)
+            df = load_pg_df(file_path)
         except Exception as e:
             raise RuntimeError(f"Error processing '{file_path}': {e}") from e
 
-        for label, _ in specs:
-            if label in series_dict:
-                s = series_dict[label]
-                dfs[label] = s
-                per_label_stats.append(
-                    {
-                        "label": label,
-                        "rows": len(s),
-                        "unique_index": s.index.nunique(),
-                        "duplicates": len(s) - s.index.nunique(),
-                    }
-                )
+        pg_set.update(zip(df['peak'], df['gene'], df['idx']))
+        per_label_stats.append(
+            {
+                "file": os.path.basename(file_path),
+                "rows": len(df),
+                "unique_index": df.index.nunique(),
+                "duplicates": len(df) - df.index.nunique(),
+            }
+        )
 
-    if not dfs:
-        raise RuntimeError("No input series were loaded. Check file paths and column names.")
+    if not pg_set:
+        raise RuntimeError("No input dataframes were loaded. Check file paths.")
 
-    print("Per-source series stats after canonicalization:")
+    print("Per-source df stats after canonicalization:")
     for stat in per_label_stats:
         print(
-            f"  {stat['label']}: rows={stat['rows']}, unique_index={stat['unique_index']}, "
+            f"  {stat['file']}: rows={stat['rows']}, unique_index={stat['unique_index']}, "
             f"duplicates={stat['duplicates']}"
         )
 
     # Concat (outer join)
-    links_df = pd.concat(dfs, axis=1)
-
+    links_df = pd.DataFrame(list(pg_set), columns=["peak", "gene", "idx"])
     total_rows = len(links_df)
     unique_rows = links_df.index.nunique()
     print(f"After concat: total_rows={total_rows}, unique_index_rows={unique_rows}")
-
-    # Recover peak and gene from index
-    idx_split = links_df.index.to_series().str.split(";", n=1, expand=True)
-    links_df["peak"] = idx_split[0].values
-    links_df["gene"] = idx_split[1].values
 
     # Parse chr, start, end from canonical peak
     peak_parts = links_df["peak"].str.extract(r"^(?P<chr>chr(?:[0-9XYMT]+)):(?P<start>\d+)-(?P<end>\d+)$", flags=re.IGNORECASE)
@@ -181,19 +94,9 @@ def main(args):
     links_df["chr"] = links_df["chr"].astype(str)
     links_df[["start", "end"]] = links_df[["start", "end"]].astype(int)
 
-    # Build final_col in canonical metric order, only including present metrics
-    present_metric_cols = [c for c in METHOD_COLS if c in links_df.columns]
-    missing = [c for c in METHOD_COLS if c not in links_df.columns]
-    if missing:
-        print(f"Warning! Missing metrics in merged dataframe: {missing}")
-    final_components = present_metric_cols + ["peak", "gene"]
-    links_df["final_col"] = links_df[final_components].astype(str).agg(";".join, axis=1)
-
     os.makedirs(BED_PATH, exist_ok=True)
     out_path = os.path.join(BED_PATH, f"{DATASET_NAME}.bed")
-    links_df[["chr", "start", "end", "final_col"]].to_csv(out_path, header=False, index=False, sep="\t")
-
-    print(f"final_col contains metrics (in order): {present_metric_cols}")
+    links_df[["chr", "start", "end", "idx"]].to_csv(out_path, header=False, index=False, sep="\t")
     print(f"Wrote {len(links_df)} records to {out_path}")
 
 
@@ -206,22 +109,8 @@ if __name__ == "__main__":
     parser.add_argument("--ctar_file", type=str, default="/projects/zhanglab/users/ana/multiome/results/ctar/final_eval/neat/neat_unfiltered_5.5.5.5.1000/cis_links_df.csv")
     parser.add_argument("--ctar_filt_file", type=str, default="/projects/zhanglab/users/ana/multiome/results/ctar/final_eval/neat/neat_filtered_5.5.5.5.1000/cis_links_df.csv")
 
-    parser.add_argument("--scent_col", type=str, default="boot_basic_p")
-    parser.add_argument("--scmm_col", type=str, default="pval")
-    parser.add_argument("--signac_col", type=str, default="pvalue")
-    parser.add_argument("--ctar_col_z", type=str, default="5.5.5.5.1000_mcpval_z")
-    parser.add_argument("--ctar_col", type=str, default="5.5.5.5.1000_mcpval")
-    parser.add_argument("--ctar_filt_col_z", type=str, default="5.5.5.5.1000_mcpval_z")
-    parser.add_argument("--ctar_filt_col", type=str, default="5.5.5.5.1000_mcpval")
-
-    parser.add_argument("--bed_path", type=str, default="/projects/zhanglab/users/ana/bedtools2/ana_bedfiles/validation/union_links")
+    parser.add_argument("--bed_path", type=str, default="/projects/zhanglab/users/ana/bedtools2/ana_bedfiles/validation/union_links/no_score")
     parser.add_argument("--dataset_name", type=str, default="neat")
-
-    parser.add_argument("--deduplicate", type=str, default="True")
-    parser.add_argument("--deduplicate_type", type=str, default="min",
-                        help='Deduplication type to feed into pandas agg, e.g. min or max')
-    parser.add_argument("--method_cols", type=str, default=None,
-                        help="Comma-separated list of metric column names to order final_col, e.g. 'scent,scmm,signac,ctar_filt_z,ctar_filt'")
 
     args = parser.parse_args()
     main(args)

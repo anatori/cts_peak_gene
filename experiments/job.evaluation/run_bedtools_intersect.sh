@@ -4,8 +4,8 @@ set -euo pipefail
 # Defaults (match repo)
 DATASET_NAME="${DATASET_NAME:-neat}"
 EVAL_DIR="${EVAL_DIR:-/projects/zhanglab/users/ana/bedtools2/ana_bedfiles/validation/tissue_max}"
-UNION_DIR="${UNION_DIR:-/projects/zhanglab/users/ana/bedtools2/ana_bedfiles/validation/union_links}"
-OVERLAP_DIR="${OVERLAP_DIR:-/projects/zhanglab/users/ana/bedtools2/ana_bedfiles/validation/overlap/${DATASET_NAME}}"
+UNION_DIR="${UNION_DIR:-/projects/zhanglab/users/ana/bedtools2/ana_bedfiles/validation/union_links/no_score}"
+OVERLAP_DIR="${OVERLAP_DIR:-/projects/zhanglab/users/ana/bedtools2/ana_bedfiles/validation/overlap/${DATASET_NAME}/no_score}"
 BEDTOOLS_BIN="${BEDTOOLS_BIN:-/projects/zhanglab/users/ana/bedtools2/bin/intersectBed}"
 
 # Parse CLI overrides
@@ -51,7 +51,7 @@ for A_FILE in "${EVAL_DIR}"/*.bed; do
 
   out="${OVERLAP_DIR}/${base}_${DATASET_NAME}.bed"
 
-  # GTEx: variant overlaps (no fraction requirement)
+  # GTEx and Onek1k: variant overlaps (no fraction requirement)
   if [[ "${base}" == gtex_* || "${base}" == onek1k_* ]]; then
     "${BEDTOOLS_BIN}" -wo \
       -a "${A_FILE}" \

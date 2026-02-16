@@ -9,8 +9,6 @@ def main(args):
     BED_PATH = args.bed_path
     RES_PATH = args.res_path
     DATASET_NAME = args.dataset_name
-    METHOD_COLS = [m.strip() for m in args.method_cols.split(",")]
-    CAND_COLS = METHOD_COLS + ['peak','gene']
 
     cols_dict = {
         'onek1k':['onek1k_id','score','gt_gene'],
@@ -30,19 +28,18 @@ def main(args):
         score_type = bool if label == 'crispr' else float
         eval_df_dict[filename] = ctar.data_loader.load_validation_intersect_bed(f'{BED_PATH}/{file}',
                                                                              cols_dict[label],
-                                                                             candidate_cols=CAND_COLS,
-                                                                             candidate_methods_cols=METHOD_COLS,
                                                                              score_type=score_type)
         eval_df_dict[filename].to_csv(f'{RES_PATH}/{filename}.csv',index=False)
+
+    print(f'Files written to {RES_PATH}')
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
 
-    parser.add_argument("--bed_path", type=str, default='/projects/zhanglab/users/ana/bedtools2/ana_bedfiles/validation/overlap/brain')
-    parser.add_argument("--res_path", type=str, default='/projects/zhanglab/users/ana/multiome/validation/brain')
-    parser.add_argument("--dataset_name", type=str, default='brain')
-    parser.add_argument("--method_cols", type=str, default='scent,scmm,signac,ctar_filt_z,ctar_filt')
+    parser.add_argument("--bed_path", type=str, default='/projects/zhanglab/users/ana/bedtools2/ana_bedfiles/validation/overlap/pbmc/no_score')
+    parser.add_argument("--res_path", type=str, default='/projects/zhanglab/users/ana/multiome/validation/overlap/pbmc')
+    parser.add_argument("--dataset_name", type=str, default='pbmc')
 
     args = parser.parse_args()
     main(args)
