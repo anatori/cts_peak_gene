@@ -1041,6 +1041,7 @@ def _map_to_internal(name, method_renames):
 def barplot_grouped_with_sig(
     res_dic,
     labels,
+    metric=None,
     methods_order=None,
     estimate_col="estimate",
     ci_lower_col="ci_lower",
@@ -1156,6 +1157,8 @@ def barplot_grouped_with_sig(
     max_y_for_limits = []
     for i, lbl in enumerate(labels):
         df = res_dic[lbl].copy()
+        if metric is not None:
+            df = df[df['metric'] == metric].copy()
         _ensure_method_column_inplace(df)
         df = df[df['method'].isin(methods_order)]
         df = df.set_index('method').reindex(methods_order)
