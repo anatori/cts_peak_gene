@@ -190,49 +190,8 @@ def contingency(link_list_sig, link_list_all, link_list_true):
     return enrich, pvalue, oddsratio, or_ub, or_lb
 
 
-def odds_ratio_with_ci(y_bool, label_arr, ci=0.95, smoothed=True, correction=0.5, fn_cap=None):
-    """
-    y_bool: boolean predictions (e.g., pval <= alpha)
-    label_arr: 0/1 ground truth labels
-    Returns: (or_stat, fisher_p, ci_low, ci_high, table)
-    """
-    y_bool = np.asarray(y_bool, dtype=bool)
-    label_arr = np.asarray(label_arr)
-
-    tp = np.sum((label_arr == 1) & y_bool)
-    fp = np.sum((label_arr == 0) & y_bool)
-    fn = np.sum((label_arr == 1) & ~y_bool)
-    tn = np.sum((label_arr == 0) & ~y_bool)
-
-    table = np.array([[tp, fp],
-                      [fn, tn]], dtype=float)
-
-    # Fisher exact on raw integer counts
-    fisher_or, fisher_p = sp.stats.fisher_exact([[tp, fp], [fn, tn]])
-
-    if fn_cap is not None and fn < fn_cap:
-        return np.nan, fisher_p, np.nan, np.nan, table
-
-    # CI: Table2x2 can fail / be inf with zeros; use Haldane-Anscombe if smoothed
-    table_for_ci = table.copy()
-    if smoothed:
-        table_for_ci = table_for_ci + correction
-
-    try:
-        t22 = Table2x2(table_for_ci,shift_zeros=smoothed)
-        or_stat = t22.oddsratio
-        alpha = 1.0 - ci
-        ci_low, ci_high = t22.oddsratio_confint(alpha=alpha)
-    except Exception:
-        # Fallback: keep fisher OR but no CI
-        or_stat = fisher_or
-        ci_low, ci_high = np.nan, np.nan
-
-    return or_stat, fisher_p, ci_low, ci_high, table
-
-
-def auprc_enrichment(y_true, y_scores):
-    """Enrichment with based on label.
+def auprc_enrichment_recall(y_true, y_scores):
+    """Recall enrichment based on label.
     
     Parameters
     ----------
@@ -259,27 +218,6 @@ def auprc_enrichment(y_true, y_scores):
     except Exception:
         auprc = np.nan
     return auprc, precision, recall, enrichment
-
-
-def stratified_bootstrap_auprc(y_true, y_scores, n_boot=1000, seed=0):
-    ''' Bootstrap AUPRC that resamples positives & negatives separately.
-    '''
-    rng = np.random.default_rng(seed)
-    pos_idx = np.where(y_true==1)[0]
-    neg_idx = np.where(y_true==0)[0]
-    n_pos, n_neg = len(pos_idx), len(neg_idx)
-    boot_vals = []
-    for _ in range(n_boot):
-        pos_sample = rng.choice(pos_idx, size=n_pos, replace=True) if n_pos>0 else np.array([],dtype=int)
-        neg_sample = rng.choice(neg_idx, size=n_neg, replace=True) if n_neg>0 else np.array([],dtype=int)
-        idx = np.concatenate([pos_sample, neg_sample])
-        yb = y_true[idx]; sb = y_scores[idx]
-        if yb.sum()==0 or yb.sum()==len(yb):
-            continue
-        val, _, _ = auprc_enrichment(yb, sb)
-        if np.isfinite(val):
-            boot_vals.append(val)
-    return np.array(boot_vals)
 
 
 def pgb_enrichment_recall(df, col, min_recall, max_recall, ascending=True, 
@@ -335,40 +273,325 @@ def pgb_enrichment_recall(df, col, min_recall, max_recall, ascending=True,
         return tmp.drop_duplicates(subset=["recall"], keep="first")
     else:
         return tmp[["recall", "enrichment"]].drop_duplicates(subset=["recall"], keep="first")
-    
 
-def pgb_auerc(df, col, min_recall = 0.0, max_recall = 1.0, ascending = True, gold_col='label', extrapolate = False, weighted = False):
-    ''' Adapted from Dorans et al. NG 2025.
+
+def pgb_enrichment_recall_tieblocks(
+    df,
+    col,
+    min_recall,
+    max_recall,
+    ascending=True,
+    gold_col="label",
+    full_info=False,
+    extrapolate=False,
+):
+    """
+    Tie-robust version of enrichment-recall:
+      - treat each distinct score value as a "block"
+      - compute cumulative linked + gold at block boundaries
+      - returns points only at tie-block boundaries (plus optional extrapolation)
+    """
+    tmp = df[[col, gold_col]].copy()
+
+    total_gold = tmp[gold_col].sum()
+    total_length = len(tmp)
+    if total_gold == 0 or total_length == 0:
+        out = pd.DataFrame({"recall": [], "enrichment": []})
+        return out
+    tmp["_linked"] = tmp[col].notna() & (tmp[col] > 0)
+
+    # split scored-vs-unscored
+    scored = tmp[tmp["_linked"]].copy()
+    unscored = tmp[~tmp["_linked"]].copy()
+
+    # if nothing is scored, curve is empty unless you extrapolate
+    if scored.empty:
+        out = pd.DataFrame({"recall": [], "enrichment": []})
+        if extrapolate and unscored[gold_col].sum() > 0:
+            # goes from recall=0,enrichment=1 toward recall=1,enrichment=1 (degenerate)
+            out = pd.DataFrame({"recall": [min_recall], "enrichment": [1.0]})
+        return out
+
+    # sort by score (ties will be grouped)
+    scored = scored.sort_values(by=col, ascending=ascending, kind="mergesort")
+
+    # aggregate by exact score value => tie blocks
+    g = scored.groupby(col, sort=False, dropna=False)
+
+    block = pd.DataFrame({
+        "score": g.size().index,
+        "linked_n": g.size().to_numpy(),
+        "gold_block": g[gold_col].sum().to_numpy(),
+    })
+
+    # cumulative at block boundaries
+    block["linked_cum"] = block["linked_n"].cumsum()
+    block["gold_cum"] = block["gold_block"].cumsum()
+
+    # recall / enrichment at end of each tie block
+    block["recall"] = block["gold_cum"] / total_gold
+    enrich_denom = total_gold / total_length
+    block["enrichment"] = (block["gold_cum"] / block["linked_cum"]) / enrich_denom
+
+    out = block[["recall", "enrichment"]].copy()
+
+    # optional extrapolation over unscored positives
+    if extrapolate and len(unscored) > 0:
+        remaining_gold = unscored[gold_col].sum()
+        if remaining_gold > 0:
+            last_recall = float(out["recall"].iloc[-1])
+            last_enrich = float(out["enrichment"].iloc[-1])
+
+            # choose number of points; for fractional gold, use ceil and step by remaining_gold/num_points
+            num_new_points = int(np.ceil(remaining_gold))
+            if num_new_points > 0 and last_recall < 1:
+                recall_increment = (1 - last_recall) / num_new_points
+                enrich_increment = (last_enrich - 1) / num_new_points
+
+                new_recall = [last_recall + recall_increment * (i + 1) for i in range(num_new_points)]
+                new_enrich = [last_enrich - enrich_increment * (i + 1) for i in range(num_new_points)]
+                out = pd.concat([out, pd.DataFrame({"recall": new_recall, "enrichment": new_enrich})],
+                                ignore_index=True)
+
+    # clip to recall window
+    out = out[(out["recall"] <= max_recall) & (out["recall"] >= min_recall)]
+
+    # dedup recall points (should already be monotone by blocks, but safe)
+    out = out.drop_duplicates(subset=["recall"], keep="first")
+
+    if full_info:
+        return out
+    return out[["recall", "enrichment"]]
+
+
+def trap_auerc(er, weights=None):
+    ''' Trapezoid-based integration.
+    Suggested when using tie blocks to prevent bias towards methods 
+    with more points or improperly weight blocks across recall.
     '''
-    er = pgb_enrichment_recall(df, col, min_recall, max_recall, ascending = ascending, extrapolate = extrapolate, gold_col=gold_col)
-    if weighted == True:
-        try:
-            return np.average(er["enrichment"], weights = 1 - er["recall"])
-        except:
-            return np.nan
+    er = er.sort_values("recall").drop_duplicates("recall")
+    r = er["recall"].to_numpy()
+    e = er["enrichment"].to_numpy()
+    if len(r) < 2:
+        return np.nan
+    if weights is None:
+        return np.trapz(e, r) / (r[-1] - r[0])
     else:
-        return np.average(er["enrichment"])
+        num = np.trapz(e * weights, r)
+        den = np.trapz(weights, r)
+        return num / den
 
 
-def boostrap_pgb_auerc(df, col, ci, n_bs = 1000, method='basic', **auerc_kwargs):
-    estimate = pgb_auerc(df, col, **auerc_kwargs)
-    boots = np.empty(n_bs)
-    N = len(df)
-    for i in range(n_bs):
-        idx = np.random.randint(0, N, size=N)
-        sample = df.iloc[idx].reset_index(drop=True)
-        boots[i] = pgb_auerc(sample, col, **auerc_kwargs)
-    alpha = 1.0 - ci
-    if method == "percentile":
-        lower = np.nanquantile(boots, alpha / 2.0)
-        upper = np.nanquantile(boots, 1.0 - alpha / 2.0)
-    elif method == "basic":
-        q_low = np.nanquantile(boots, alpha / 2.0)
-        q_high = np.nanquantile(boots, 1.0 - alpha / 2.0)
-        lower = 2.0 * estimate - q_high
-        upper = 2.0 * estimate - q_low
-    out = {"estimate": estimate, "ci_lower": lower, "ci_upper": upper, "bootstraps": boots}
+def pgb_auerc(df, 
+    col, 
+    min_recall = 0.0, 
+    max_recall = 1.0, 
+    ascending = True, 
+    gold_col='label', 
+    extrapolate = False, 
+    weighted = False, 
+    flag_ties = True,
+    flag_trap = False,
+):
+    ''' Adapted from Dorans et al. NG 2025.
+    Added tie-robust option, computed over unique values.
+    '''
+    if flag_ties:
+        er = pgb_enrichment_recall_tieblocks(df, col, min_recall, max_recall, ascending = ascending, extrapolate = extrapolate, gold_col=gold_col)
+    else:
+        er = pgb_enrichment_recall(df, col, min_recall, max_recall, ascending = ascending, extrapolate = extrapolate, gold_col=gold_col)
+    if weighted == True:
+        if flag_trap:
+            try:
+                return trap_auerc(er["enrichment"], weights = 1 - er["recall"])
+            except:
+                return np.nan
+        else:
+            try:
+                return np.average(er["enrichment"], weights = 1 - er["recall"])
+            except:
+                return np.nan
+    else:
+        if flag_trap:
+            return trap_auerc(er["enrichment"])
+        else:
+            return np.average(er["enrichment"])
+
+
+def topk_or_curve_tieblocks(
+    eval_df,
+    method,
+    gold_col="label",
+    ascending=True,
+    epsilon=0.5,
+    k_max="P",
+    extrapolate=True,
+    flag_mask=False,
+):
+    ''' TopK vs. OR, averaging over ties.
+
+    Parameters
+    ----------
+    eval_df: pd.DataFrame
+        DataFrame containing `label` and `method`.
+    method : str
+        Column in eval_df containing scores to evaluate.
+    gold_col : str
+        Column in eval_df containing true labels.
+    ascending : bool
+        How to sort `method`.
+    epsilon : float
+        Haldane-anscombe OR correction.
+    k_max : 'P', int, None
+        Largest k to evaluate up to. If None, evaluates up to len(eval_df).
+    extrapolate : bool
+        Whether to interpolate up to `k_max`.
+    flag_mask : bool
+        If passed, filters out NaNs based on `method`.
+
+    Returns
+    -------
+    pd.DataFrame with columns k, odds_ratio, tp, fp, fn, tn.
+
+    '''
+
+    df = eval_df[[method, gold_col]].copy()
+
+    if not flag_mask:
+        scored_mask = df[method].notna()
+    df = df[scored_mask].copy()
+
+    df = df.sort_values(method, ascending=ascending, kind="mergesort")
+    g = df.groupby(method, sort=False, dropna=False)
+
+    block_n = g.size().to_numpy(dtype=float)
+    block_pos = g[gold_col].sum().to_numpy(dtype=float)
+
+    sel_n = np.cumsum(block_n)
+    tp = np.cumsum(block_pos)
+
+    N = float(len(df))
+    P = float(df[gold_col].sum())
+
+    if P <= 0 or P >= N:
+        return pd.DataFrame({"k": sel_n.astype(int), "odds_ratio": np.nan, "tp": tp, "fp": np.nan, "fn": np.nan, "tn": np.nan})
+
+    # decide k cap
+    if k_max == "P":
+        Kcap = P
+    elif k_max is None:
+        Kcap = np.inf
+    else:
+        Kcap = float(k_max)
+
+    # compute full-block tables
+    fp = sel_n - tp
+    fn = P - tp
+    tn = (N - P) - fp
+    OR = ((tp + epsilon) * (tn + epsilon)) / ((fp + epsilon) * (fn + epsilon))
+
+    out = pd.DataFrame({
+        "k": sel_n,
+        "odds_ratio": OR,
+        "tp": tp, "fp": fp, "fn": fn, "tn": tn,
+    })
+
+    # truncate to k <= Kcap, with optional partial last block to hit exactly Kcap
+    if np.isfinite(Kcap):
+
+        # keep full blocks strictly below cap
+        out_trunc = out[out["k"] <= Kcap].copy()
+
+        # add partial point exactly at cap if needed
+        last_k = out_trunc["k"].iloc[-1] if len(out_trunc) else 0.0
+        
+        if extrapolate and last_k < Kcap:
+            # find the first block that crosses the cap
+            j = int(np.searchsorted(sel_n, Kcap, side="left"))
+            prev_sel = sel_n[j-1] if j > 0 else 0.0
+            prev_tp = tp[j-1] if j > 0 else 0.0
+
+            m = block_n[j]
+            gpos = block_pos[j]
+            t = Kcap - prev_sel  # how many we take from this tie block
+
+            tp_partial = prev_tp + t * (gpos / m)
+            sel_partial = Kcap
+            fp_partial = sel_partial - tp_partial
+            fn_partial = P - tp_partial
+            tn_partial = (N - P) - fp_partial
+            or_partial = ((tp_partial + epsilon) * (tn_partial + epsilon)) / ((fp_partial + epsilon) * (fn_partial + epsilon))
+
+            extra = pd.DataFrame({
+                "k": [Kcap],
+                "odds_ratio": [or_partial],
+                "tp": [tp_partial], "fp": [fp_partial], "fn": [fn_partial], "tn": [tn_partial],
+            })
+            out_trunc = pd.concat([out_trunc, extra], ignore_index=True)
+
+        out = out_trunc
+
+    # finalize types
+    out["k"] = out["k"].round().astype(int)
+    out["odds_ratio"] = out["odds_ratio"].astype(float)
     return out
+
+
+def trap_auorc(odds_df, n_true, weighted=True, or_col='odds_ratio', max_recall=1.0, log_or=True):
+    ''' Area under log-odds ratio top-K curve.
+    '''
+    s = odds_df[or_col].dropna()
+
+    k = s.index.to_numpy(dtype=float)
+    orv = s.to_numpy(dtype=float)
+
+    # keep only k in [1, n_true*max_recall] and OR positive
+    r = k / float(n_true)
+    m = np.isfinite(r) & (r > 0) & (r <= max_recall) & np.isfinite(orv) & (orv > 0)
+    r = r[m]
+    if log_or:
+        ors = np.log(orv[m])
+    else:
+        ors = orv[m]
+
+    if r.size < 2:
+        return np.nan
+
+    # sort by recall
+    order = np.argsort(r)
+    r = r[order]
+    ors = ors[order]
+
+    if weighted:
+        w = 1.0 - r
+        num = np.trapz(ors * w, r)
+        den = np.trapz(w, r)
+        return num / den
+    else:
+        return np.trapz(ors, r) / (r[-1] - r[0])
+
+
+def auorc(df,
+    col,
+    epsilon=0.5,
+    k_max="P",
+    max_recall = 1.0, 
+    ascending = True, 
+    gold_col='label', 
+    log_or = True,
+    extrapolate = False, 
+    weighted = True,
+):
+    ''' 
+    TODO:
+    - implement non-tie version
+    '''
+    or_df = topk_or_curve_tieblocks(df, col, epsilon = epsilon, k_max = k_max, ascending = ascending, 
+        extrapolate = extrapolate, gold_col=gold_col)
+    try:
+        return trap_auorc(or_df, n_true, weighted = weighted, max_recall = max_recall, log_or = log_or)
+    except:
+        return np.nan
 
 
 def dedup_df(
@@ -416,7 +639,7 @@ def dedup_df(
     return work_df.groupby(list(key_cols), as_index=False).agg(agg_dic)
 
 
-def compute_bootstrap_table(
+def compute_bootstrap_auerc_table(
     all_df,
     methods,
     gold_col="label",
@@ -428,15 +651,10 @@ def compute_bootstrap_table(
     handle_dup=None,
     dup_key_cols=None,
     tie='zero',
-    or_alpha=0.05,
-    or_smoothed=True,
-    or_correction=0.5,
-    or_fn_cap=None,
-    or_multiple_testing=True,
     **auerc_kwargs
 ):
     """
-    Paired bootstrap across methods: one resample index per replicate, compute AUERC (and OR) for all methods,
+    Paired bootstrap across methods: one resample index per replicate, compute AUERC for all methods,
     then form paired differences vs reference on the same replicate.
 
     Returns DataFrame with columns:
@@ -471,66 +689,24 @@ def compute_bootstrap_table(
     alpha = 1.0 - ci
     N = len(work_df)
 
-    # Point estimates on full data (AUERC)
+    # Point estimates on full data
     auerc_est = {m: pgb_auerc(work_df, m, gold_col=gold_col, **auerc_kwargs) for m in methods}
-
-    # Point estimates on full data (OR)
-    or_est = {}
-    or_fisher_p = {}
-    or_ci = {}
-    for m in methods:
-        p = work_df[m].to_numpy()
-        if or_multiple_testing:
-            pval_corrected = np.empty(p.shape)
-            pval_corrected.fill(np.nan)
-            mask = np.isfinite(p)
-            pval_corrected[mask] = multipletests(p[mask],method='fdr_bh')[1]
-        else:
-            pval_corrected = p
-        y_bool = (pval_corrected <= or_alpha)
-        print(m, y_bool.sum())
-        or_stat, fisher_p, ci_low, ci_high, _ = odds_ratio_with_ci(
-            y_bool=y_bool,
-            label_arr=work_df[gold_col].to_numpy(),
-            ci=ci,
-            smoothed=or_smoothed,
-            correction=or_correction,
-            fn_cap=or_fn_cap,
-        )
-        or_est[m] = or_stat
-        or_fisher_p[m] = fisher_p
-        or_ci[m] = (ci_low, ci_high)
 
     # Bootstrap storage
     boot_auerc = {m: np.empty(n_bootstrap, dtype=float) for m in methods}
-    boot_or = {m: np.empty(n_bootstrap, dtype=float) for m in methods}
 
     for b in range(n_bootstrap):
         idx = rng.integers(0, N, size=N)
         sample = work_df.iloc[idx].reset_index(drop=True)
-
         labels = sample[gold_col].to_numpy()
         for m in methods:
-            # AUERC
             boot_auerc[m][b] = pgb_auerc(sample, m, gold_col=gold_col, **auerc_kwargs)
-            # OR
-            yb = (sample[m].to_numpy() <= or_alpha)
-            or_stat_b, _, _, _, _ = odds_ratio_with_ci(
-                y_bool=yb,
-                label_arr=labels,
-                ci=ci,
-                smoothed=or_smoothed,
-                correction=or_correction,
-                fn_cap=or_fn_cap,
-            )
-            boot_or[m][b] = or_stat_b
 
     ref_auerc_boot = boot_auerc[reference_method]
     ref_auerc_est = auerc_est[reference_method]
 
     rows = []
     for m in tqdm(methods):
-        # AUERC
         mboot = boot_auerc[m]
         pair_mask = np.isfinite(mboot) & np.isfinite(ref_auerc_boot)
         mboot_p = mboot[pair_mask]
@@ -545,12 +721,6 @@ def compute_bootstrap_table(
             "diff_ci_lower": np.nan,
             "diff_ci_upper": np.nan,
             "p_value": np.nan,
-            # OR
-            "odds_ratio": or_est[m],
-            "or_ci_lower": or_ci[m][0],
-            "or_ci_upper": or_ci[m][1],
-            "fisher_p": or_fisher_p[m],
-
             "n_bootstrap": n_bootstrap,
         }
 
@@ -568,12 +738,6 @@ def compute_bootstrap_table(
             p_upper = (n_gt + 0.5 * n_eq) / n
             pval = 2.0 * min(p_lower, p_upper)
             row["p_value"] = min(1.0, max(0.0, pval))
-
-        # OR boostrap CI
-        ob = boot_or[m]
-        ob = ob[np.isfinite(ob)]
-        row["or_ci_lower"] = np.nanquantile(ob, alpha / 2.0) if ob.size else np.nan
-        row["or_ci_upper"] = np.nanquantile(ob, 1.0 - alpha / 2.0) if ob.size else np.nan
 
         rows.append(row)
 
