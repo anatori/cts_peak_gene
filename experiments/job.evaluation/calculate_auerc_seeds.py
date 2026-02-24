@@ -2,6 +2,7 @@ import argparse
 import os
 import pandas as pd
 import ctar
+import numpy as np
 
 """
 TODO
@@ -32,9 +33,9 @@ def main(args):
 		label = os.path.basename(file).rsplit('.',maxsplit=1)[0].rsplit('_',maxsplit=1)[0]
 		if label.startswith("gtex") or label.startswith("onek1k"):
 		    merge_df['label'] = merge_df.score >= GTEX_SCORE_THRES
-		if label.startswith("abc"):
+		elif label.startswith("abc"):
 		    merge_df['label'] = merge_df.score >= ABC_SCORE_THRES
-		if label.startswith("crispr"):
+		elif label.startswith("crispr"):
 		    merge_df['label'] = merge_df.score
 
 		# Skipping hic for now
@@ -44,21 +45,25 @@ def main(args):
 		# Computing metrics
 		print(f'Computing metrics for {label}...')
 		merge_df['pg_pair'] = merge_df['peak'] + ';' + merge_df['gene']
-		metric_specs = ctar.metrics.build_default_metric_specs(merge_df, gold_col="label", pvals_smaller_is_better=True, early_R=0.2)
-		res_df = ctar.metrics.compute_bootstrap_table(
-			all_df=merge_df, 
-			methods=METHOD_COLS,
-			metrics_list=metric_specs,
-			gold_col=GOLD_COL, 
-			handle_dup='consensus',
-			dup_key_cols=['pg_pair'],
-			tie='zero',
-			n_bootstrap=N_BOOTSTRAP, 
-			reference_method=REFERENCE_METHOD, 
-			fillna=FILLNA
+		metric_specs = ctar.metrics.build_default_metric_specs(merge_df, gold_col='label', pvals_smaller_is_better=True, early_R=0.2)
+		
+		res_df = ctar.metrics.compute_bootstrap_table_seed_avg(
+		    all_df=merge_df,
+		    methods=METHOD_COLS,
+		    metrics_list=metric_specs,
+		    gold_col=GOLD_COL,
+		    reference_method=REFERENCE_METHOD,
+		    n_bootstrap=N_BOOTSTRAP,
+		    fillna=True,
+		    jitter_amount=1e-12,
+		    seeds=list(range(10)),
+		    handle_dup="consensus",
+		    dup_key_cols=["pg_pair"],
+		    tie="zero",
 		)
+
 		print(res_df.head())
-		res_df.to_csv(f'{RES_PATH}/{label}_{DATASET_NAME}_auerc.csv')
+		res_df.to_csv(f'{RES_PATH}/{label}_{DATASET_NAME}_seed_avg.csv')
 
 
 if __name__ == "__main__":

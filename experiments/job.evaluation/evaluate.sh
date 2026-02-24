@@ -4,12 +4,12 @@ set -euo pipefail
 # bash /projects/zhanglab/users/ana/cts_peak_gene/experiments/job.evaluation/evaluate.sh
 
 # Slurm settings
-PARTITIONS="${PARTITIONS:-mzhang,pool1}"
+PARTITIONS="${PARTITIONS:-statgen}"
 LOG_DIR="${LOG_DIR:-/projects/zhanglab/users/ana/logs}"
 CONDA_ENV="${CONDA_ENV:-ctar}"
 
 # Dataset name used consistently across steps
-DATASET_NAME="${DATASET_NAME:-bmmc}"
+DATASET_NAME="${DATASET_NAME:-neat}"
 
 # Paths (match repository defaults in scripts)
 REPO_ROOT="${REPO_ROOT:-/projects/zhanglab/users/ana/cts_peak_gene}"
@@ -44,7 +44,7 @@ AGG_DIR="${AGG_DIR:-/projects/zhanglab/users/ana/multiome/validation/overlap/${D
 MERGE_DIR="${MERGE_DIR:-/projects/zhanglab/users/ana/multiome/validation/evaluation/${DATASET_NAME}}"
 
 # AUERC outputs (calculate_auerc.py default)
-AURC_DIR="${AURC_DIR:-/projects/zhanglab/users/ana/multiome/validation/evaluation/tables/metrics/${DATASET_NAME}}"
+AURC_DIR="${AURC_DIR:-/projects/zhanglab/users/ana/multiome/validation/evaluation/tables/metrics_jitter/${DATASET_NAME}}"
 REFERENCE_METHOD="${REFERENCE_METHOD:-ctar_filt}"
 N_BOOTSTRAP="${N_BOOTSTRAP:-1000}"
 
@@ -121,15 +121,15 @@ MERGE_JOB_ID=$(submit \
             --res_path '${MERGE_DIR}'")
 echo "MERGE_JOB_ID=${MERGE_JOB_ID}"
 
-echo "Submitting calculate_auerc.py (after aggregate) ..."
+echo "Submitting calculate_auerc_seeds.py (after merge) ..."
 AURC_JOB_ID=$(submit \
-  --dependency=afterok:${MERGE_JOB_ID} \
-  -t 0-06:00:00 --mem=32G -J "auerc_${DATASET_NAME}" \
+  --dependency=afterok:${MERGE_JOB_ID}
+  -t 0-06:00:00 --mem=128G -J "auerc_${DATASET_NAME}" \
   -o "${LOG_DIR}/auerc_${DATASET_NAME}-%j.out" \
   -e "${LOG_DIR}/auerc_${DATASET_NAME}-%j.err" \
   --wrap "source ~/.bashrc && conda activate ${CONDA_ENV} && \
           mkdir -p '${AURC_DIR}' && \
-          python ${SCRIPTS_DIR}/calculate_auerc.py \
+          python ${SCRIPTS_DIR}/calculate_auerc_seeds.py \
             --merge_path '${MERGE_DIR}' \
             --res_path '${AURC_DIR}' \
             --dataset_name '${DATASET_NAME}' \

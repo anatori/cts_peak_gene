@@ -16,13 +16,13 @@ REPO_ROOT="${REPO_ROOT:-/projects/zhanglab/users/ana/cts_peak_gene}"
 SCRIPTS_DIR="${SCRIPTS_DIR:-${REPO_ROOT}/experiments/job.evaluation}"
 
 # New file to add column of
-NEW_FILE="${NEW_FILE:-/projects/zhanglab/users/ana/multiome/results/ctar/final_eval/${DATASET_NAME}/${DATASET_NAME}_filtered_5.5.5.5.1000/cis_links_df.csv}"
-ORIGINAL_COL="${ORIGINAL_COL:-5.5.5.5.1000_corr_mcpval}"
-NEW_COL="${NEW_COL:-corr_mc}"
+NEW_FILE="${NEW_FILE:-/projects/zhanglab/users/ana/multiome/results/scmultimap/scmm_ctrl/res_df/scmultimap_${DATASET_NAME}.csv}"
+ORIGINAL_COL="${ORIGINAL_COL:-scmm_mcpval}"
+NEW_COL="${NEW_COL:-scmm_mc}"
 
 # Be sure to include new col!
 DEDUP="${DEDUP:-min}"
-METHOD_COLS="${METHOD_COLS:-scent,scmm,signac,ctar_filt_z,ctar_filt,corr_mc}"
+METHOD_COLS="${METHOD_COLS:-scent,scmm,signac,ctar_filt_z,ctar_filt,corr_mc,scmm_mc}"
 
 # Merge outputs (using add_new_overlap.py)
 MERGE_DIR="${MERGE_DIR:-/projects/zhanglab/users/ana/multiome/validation/evaluation/${DATASET_NAME}}"

@@ -22,6 +22,8 @@ def main(args):
 
     eval_df_dict = dict.fromkeys(cols_dict.keys(), [])
     for file in os.listdir(BED_PATH):
+        if os.path.isdir(f'{BED_PATH}/{file}'):
+            continue
         label = [k for k in cols_dict.keys() if k in file][0]
         filename = file.split('.')[0]
         print(f'{filename}, {label}')

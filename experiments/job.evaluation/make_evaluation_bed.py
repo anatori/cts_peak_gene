@@ -149,25 +149,27 @@ def main(args):
 		'CD1c-positive_myeloid_dendritic_cell',
 	]
 
+	shareseq_abc = ['K562']
+
 	# take max across tissues
 	print('deduplicating...')
 	print('onek1k_df total',onek1k_df.shape)
-	onek1k_df = onek1k_df.sort_values('pip',ascending=False).drop_duplicates(subset='snp').copy()
+	onek1k_df = onek1k_df.sort_values('pip',ascending=False).drop_duplicates(subset=['snp','gene']).copy()
 	print('onek1k_df after',onek1k_df.shape)
 	print('')
 
 	print('gtex_df total',gtex_df.shape)
 	gtex_neat_df = gtex_df[gtex_df["tissue"].isin(neat_gtex)].copy()
 	print('gtex_neat_df before',gtex_neat_df.shape)
-	gtex_neat_df = gtex_neat_df.sort_values('pip',ascending=False).drop_duplicates(subset='variant_hg38').copy()
+	gtex_neat_df = gtex_neat_df.sort_values('pip',ascending=False).drop_duplicates(subset=['variant_hg38','gene']).copy()
 	print('gtex_neat_df after',gtex_neat_df.shape)
 	gtex_brain_df = gtex_df[gtex_df["tissue"].isin(brain_gtex)].copy()
 	print('gtex_brain_df before',gtex_brain_df.shape)
-	gtex_brain_df = gtex_brain_df.sort_values('pip',ascending=False).drop_duplicates(subset='variant_hg38').copy()
+	gtex_brain_df = gtex_brain_df.sort_values('pip',ascending=False).drop_duplicates(subset=['variant_hg38','gene']).copy()
 	print('gtex_brain_df after',gtex_brain_df.shape)
 	gtex_pbmc_df = gtex_df[gtex_df["tissue"].isin(pbmc_gtex)].copy()
 	print('gtex_pbmc_df before',gtex_brain_df.shape)
-	gtex_pbmc_df = gtex_pbmc_df.sort_values('pip',ascending=False).drop_duplicates(subset='variant_hg38').copy()
+	gtex_pbmc_df = gtex_pbmc_df.sort_values('pip',ascending=False).drop_duplicates(subset=['variant_hg38','gene']).copy()
 	print('gtex_pbmc_df after',gtex_pbmc_df.shape)
 	print('')
 
@@ -188,6 +190,10 @@ def main(args):
 	print('abc_pbmc_df before',abc_pbmc_df.shape)
 	abc_pbmc_df = abc_pbmc_df.sort_values('Score',ascending=False).drop_duplicates(subset=['cCRE ID','Gene ID']).copy()
 	print('abc_pbmc_df after',abc_pbmc_df.shape)
+	abc_shareseq_df = abc_df[abc_df["Biosample"].isin(shareseq_abc)].copy()
+	print('abc_shareseq_df before',abc_shareseq_df.shape)
+	abc_shareseq_df = abc_shareseq_df.sort_values('Score',ascending=False).drop_duplicates(subset=['cCRE ID','Gene ID']).copy()
+	print('abc_shareseq_df after',abc_shareseq_df.shape)
 	print('')
 
 	# there should be no duplicates in crispr	
@@ -222,11 +228,14 @@ def main(args):
 	abc_brain_df[['chr','start','end','final_col']].to_csv(f'{BED_PATH}/abc_brain.bed',header=False,index=False,sep='\t')
 	abc_bmmc_df[['chr','start','end','final_col']].to_csv(f'{BED_PATH}/abc_bmmc.bed',header=False,index=False,sep='\t')
 	abc_pbmc_df[['chr','start','end','final_col']].to_csv(f'{BED_PATH}/abc_pbmc.bed',header=False,index=False,sep='\t')
+	abc_shareseq_df[['chr','start','end','final_col']].to_csv(f'{BED_PATH}/abc_shareseq.bed',header=False,index=False,sep='\t')
 
-	# crispr - save bulk and per celltype
+	# crispr - save bulk and per celltype and per k562 experiment
 	crispr_df[['chrom','chromStart','chromEnd','final_col']].to_csv(f'{BED_PATH}/crispr.bed',header=False,index=False,sep='\t')
 	for ct in crispr_df.CellType.unique():
 		crispr_df.loc[(crispr_df.CellType == ct),['chrom','chromStart','chromEnd','final_col']].to_csv(f'{BED_PATH}/crispr_{ct}.bed',header=False,index=False,sep='\t')
+	crispr_df.loc[(crispr_df.Reference == 'Gasperini et al., 2019'),['chrom','chromStart','chromEnd','final_col']].to_csv(f'{BED_PATH}/crispr_gasperini_k562.bed',header=False,index=False,sep='\t')
+	crispr_df.loc[(crispr_df.CellType == 'Nasser et al., 2021 from Fulco et al., 2019'),['chrom','chromStart','chromEnd','final_col']].to_csv(f'{BED_PATH}/crispr_fulco_k562.bed',header=False,index=False,sep='\t')
 
 	# hic
 	rnachia_df[['chr','start','end','final_col']].to_csv(f'{BED_PATH}/rnap2_chiapet.bed',header=False,index=False,sep='\t')
