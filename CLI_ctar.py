@@ -170,6 +170,14 @@ def main(args):
         print("# RNA file is shape",adata_rna.shape)
         print("# ATAC file is shape",adata_atac.shape)
 
+        # Convert peak to chr#:###-### format
+        if adata_atac.var_names.str.match(r"^[^-]+-\d+-\d+$").any():
+            adata_atac.var_names = adata_atac.var_names.astype(str).str.replace(
+                r"\b([^-]+)-(\d+)-(\d+)\b",
+                r"\1:\2-\3",
+                regex=True,
+            )
+
         adata_rna.var.index.name = ''
         adata_atac.var.index.name = ''
 
@@ -195,7 +203,7 @@ def main(args):
             adata_rna.var.index = adata_rna.var.gene_ids
             print("# Using gene_ids columns for RNA genes...")
         assert adata_rna.var.gene.str.startswith('ENSG').all(), "Must use ENSEMBL IDs for genes"
-
+            
         # Setting atac bin type
         if (n_atac_gc == 1) and (n_atac_mean > 1):
             atac_type = 'mean'

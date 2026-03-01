@@ -2,14 +2,14 @@
 
 # FILE: /projects/zhanglab/users/ana/cts_peak_gene/experiments/job.pipeline/cli.sh
 
-MULTIOME_FILE=/projects/zhanglab/users/ana/multiome/processed/brain_3k/brain_filt.h5mu
-TARGET_PATH=/projects/zhanglab/users/ana/multiome/results/ctar/final_eval/brain/brain_filtered_5.5.5.5.10000
+MULTIOME_FILE=/projects/zhanglab/users/ana/multiome/processed/brain_3k/broad_celltypes/oligodendrocyte.h5mu
+TARGET_PATH=/projects/zhanglab/users/ana/multiome/results/ctar/final_eval/brain/brain_broad_celltype_filt_5.5.5.5.1000/oligodendrocyte
 GENOME_FILE=/projects/zhanglab/users/ana/bedtools2/ana_bedfiles/ref/GRCh38.p14.genome.fa.bgz
-BIN_CONFIG=5.5.5.5.10000
+BIN_CONFIG=5.5.5.5.1000
 BIN_TYPE='mean_var'
 PYBEDTOOLS_PATH=/projects/zhanglab/users/ana/bedtools2/bin
 BATCH_SIZE=1800
-RESULTS_PATH=/projects/zhanglab/users/ana/multiome/results/ctar/final_eval/brain/brain_filtered_5.5.5.5.10000
+RESULTS_PATH=/projects/zhanglab/users/ana/multiome/results/ctar/final_eval/brain/brain_broad_celltype_filt_5.5.5.5.1000/oligodendrocyte
 PARTITION="mzhang,pool1,statgen"
 MAX_CONCURRENT=10
 FLAG_LL='False'
