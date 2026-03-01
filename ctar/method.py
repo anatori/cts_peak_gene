@@ -1321,6 +1321,18 @@ def cauchy_combination(p_values):
     return combined_p_value
 
 
+def cauchy_combine_1row(pvals, clip=1e-15):
+    ''' Cauchy combination for dataframe rows.
+    '''
+    p = pd.to_numeric(pd.Series(pvals), errors='coerce').dropna().to_numpy()
+    if p.size == 0:
+        return np.nan
+    p = np.clip(p, clip, 1 - clip)
+    t = np.tan(np.pi * (0.5 - p))
+    stat = t.mean()
+    return 0.5 - np.arctan(stat) / np.pi
+
+
 def basic_mcinterp(ctrl_corr,corr):
     ctrl_corr_sort = np.sort(ctrl_corr)
     n = len(ctrl_corr_sort)
