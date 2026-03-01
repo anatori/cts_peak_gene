@@ -9,9 +9,9 @@ from sklearn import metrics
 
 
 
-##############################
-##### Core stats helpers #####
-##############################
+##############################################
+############# Core stat functions ############
+##############################################
 
 def odds_ratio(y_bool: np.ndarray,
                label_arr: np.ndarray,
@@ -49,298 +49,235 @@ def odds_ratio(y_bool: np.ndarray,
     return stat, pval
 
 
-def trap_area_over_recall(recall: np.ndarray,
-                          y: np.ndarray,
-                          w: Optional[np.ndarray] = None,
-                          normalize: bool = True) -> float:
+def trap_area(
+    x: np.ndarray,
+    y: np.ndarray,
+    w: Optional[np.ndarray] = None,
+    normalize: bool = True,
+    xmax: Optional[float] = None,
+    xmin: Optional[float] = None,
+) -> float:
     """
-    Trapezoid integration of y(recall).
-    If normalize=True, returns mean y over the recall window (area / width).
+    Trapezoid integration of y(x).
+    If normalize=True, returns mean y over the x window (area / width).
     If w is provided, returns weighted mean: ∫ y w dr / ∫ w dr.
+    If xmax or xmin are provided, uses left-continous step convention.
     """
-    recall = np.asarray(recall, float)
+    x = np.asarray(x, float)
     y = np.asarray(y, float)
 
-    m = np.isfinite(recall) & np.isfinite(y)
-    recall = recall[m]
+    m = np.isfinite(x) & np.isfinite(y)
+    x = x[m]
     y = y[m]
-    if recall.size < 2:
+    if x.size < 2:
         return np.nan
 
-    order = np.argsort(recall)
-    recall = recall[order]
+    order = np.argsort(x)
+    x = x[order]
     y = y[order]
+    if w is not None:
+        w = np.asarray(w, float)
+        w = w[m]
+        w = w[order]
+
+    if xmin is not None and x[0] > xmin:
+        x = np.r_[xmin, x]
+        y = np.r_[y[0], y]
+        if w is not None:
+            w = np.r_[w[0], w]
+    if xmax is not None and x[-1] < xmax:
+        x = np.r_[x, xmax]
+        y = np.r_[y, y[-1]]
+        if w is not None:
+            w = np.r_[w, w[-1]]
 
     if w is None:
-        area = float(np.trapz(y, recall))
+        area = float(np.trapz(y, x=x))
         if not normalize:
             return area
-        width = float(recall[-1] - recall[0])
+        width = float(x[-1] - x[0])
         return float(area / width) if width > 0 else np.nan
 
-    w = np.asarray(w, float)
-    w = w[m][order]
-    num = float(np.trapz(y * w, recall))
-    den = float(np.trapz(w, recall))
+    num = float(np.trapz(y * w, x=x))
+    den = float(np.trapz(w, x=x))
     return float(num / den) if den != 0 else np.nan
 
 
-##############################
-### Enrichment–Recall (ER) ###
-##############################
+##############################################
+########### Enrichment–Recall (ER) ###########
+##############################################
 
-def pgb_enrichment_recall_tieblocks(
+def enrichment_recall(
     df: pd.DataFrame,
-    col: str,
+    method: str,
     min_recall: float,
     max_recall: float,
     ascending: bool = True,
     gold_col: str = "label",
-    extrapolate: bool = True,
 ) -> pd.DataFrame:
+    """ 
+    Calculates enrichment over recall per row in df.
+    Adapted from Dorans et al. NG 2025.
+    Removed drop_duplicates (handled in auerc).
     """
-    Tie-robust enrichment-recall:
-    - "linked" items are those with df[col].notna() & (df[col] > 0)
-    - sort by col (ascending=True for p-values)
-    - group by identical score values (tie blocks)
-    - compute cumulative linked and gold at block boundaries
-    """
-    tmp = df[[col, gold_col]].copy()
+    tmp = df[[method, gold_col]].copy()
+    tmp = tmp.sort_values(by = method, ascending = ascending).reset_index(drop = True)
 
-    total_gold = float(tmp[gold_col].sum())
-    total_length = int(len(tmp))
-    if total_gold <= 0 or total_length <= 0:
-        return pd.DataFrame({"recall": [], "enrichment": []})
-
-    linked_mask = tmp[col].notna() & (tmp[col] > 0)
-    scored = tmp.loc[linked_mask].copy()
-    unscored = tmp.loc[~linked_mask].copy()
-
-    if scored.empty:
-        # degenerate; optionally extrapolate to enrichment=1
-        out = pd.DataFrame({"recall": [], "enrichment": []})
-        if extrapolate and float(unscored[gold_col].sum()) > 0:
-            out = pd.DataFrame({"recall": [min_recall], "enrichment": [1.0]})
-        return out
-
-    scored = scored.sort_values(by=col, ascending=ascending, kind="mergesort")
-    g = scored.groupby(col, sort=False, dropna=False)
-
-    block_n = g.size().to_numpy(dtype=float)
-    block_gold = g[gold_col].sum().to_numpy(dtype=float)
-
-    linked_cum = np.cumsum(block_n)
-    gold_cum = np.cumsum(block_gold)
+    linked = tmp[method].notna().astype(int)
+    linked_cum = linked.cumsum()
+    gold_cum = tmp[gold_col].cumsum()
+    total_gold = gold_cum.max()
+    total_length = len(tmp)
 
     recall = gold_cum / total_gold
     enrich_denom = total_gold / total_length
-    enrichment = (gold_cum / linked_cum) / enrich_denom
 
+    enrichment = (gold_cum.divide(linked_cum)) / enrich_denom
     out = pd.DataFrame({"recall": recall, "enrichment": enrichment})
-
-    # optional extrapolation over unscored positives
-    if extrapolate:
-        remaining_gold = float(unscored[gold_col].sum())
-        if remaining_gold > 0:
-            last_recall = float(out["recall"].iloc[-1])
-            last_enrich = float(out["enrichment"].iloc[-1])
-
-            num_new_points = int(np.ceil(remaining_gold))
-            if num_new_points > 0 and last_recall < 1:
-                recall_increment = (1 - last_recall) / num_new_points
-                enrich_increment = (last_enrich - 1) / num_new_points
-                new_recall = [last_recall + recall_increment * (i + 1) for i in range(num_new_points)]
-                new_enrich = [last_enrich - enrich_increment * (i + 1) for i in range(num_new_points)]
-                out = pd.concat([out, pd.DataFrame({"recall": new_recall, "enrichment": new_enrich})],
-                                ignore_index=True)
-
+    out = out[linked.astype(bool)]
     out = out[(out["recall"] >= min_recall) & (out["recall"] <= max_recall)]
-    out = out.drop_duplicates(subset=["recall"], keep="first")
     return out
 
 
 def auerc(
     df: pd.DataFrame,
-    col: str,
-    gold_col: str = "label",
+    method: str,
     ascending: bool = True,
+    gold_col: str = "label",
     min_recall: float = 0.0,
     max_recall: float = 1.0,
     weighted: bool = True,
-    tieblocks: bool = True,
-    extrapolate: bool = True,
+    average: bool = False
 ) -> float:
     """
-    Area-under enrichment-recall curve (AUERC), computed via trapezoid integration over recall.
+    Area-under enrichment-recall curve (AUERC).
+    If average=True, uses point average with first (smallest) recall.
     If weighted=True, uses w(r)=1-r.
     """
-    if tieblocks:
-        er = pgb_enrichment_recall_tieblocks(
-            df, col, min_recall=min_recall, max_recall=max_recall,
-            ascending=ascending, gold_col=gold_col, extrapolate=extrapolate
-        )
-    else:
-        # fallback: treat each row as its own "block" (stable if no ties)
-        tmp = df[[col, gold_col]].copy()
-        total_gold = float(tmp[gold_col].sum())
-        total_length = int(len(tmp))
-        if total_gold <= 0 or total_length <= 0:
-            return np.nan
-        tmp = tmp.sort_values(by=col, ascending=ascending).reset_index(drop=True)
-        linked = (tmp[col].notna() & (tmp[col] > 0)).astype(int)
-        linked_cum = linked.cumsum().to_numpy(dtype=float)
-        gold_cum = (tmp[gold_col] * linked).cumsum().to_numpy(dtype=float)
-        recall = gold_cum / total_gold
-        enrich_denom = total_gold / total_length
-        enrichment = (gold_cum / linked_cum) / enrich_denom
-        er = pd.DataFrame({"recall": recall, "enrichment": enrichment})
-        er = er[(er["recall"] >= min_recall) & (er["recall"] <= max_recall)].drop_duplicates("recall")
-
+    er = enrichment_recall(
+        df, method, min_recall=min_recall, max_recall=max_recall,
+        ascending=ascending, gold_col=gold_col)
+    
     if er.empty or len(er) < 2:
         return np.nan
 
-    r = er["recall"].to_numpy(dtype=float)
-    e = er["enrichment"].to_numpy(dtype=float)
-    w = (1.0 - r) if weighted else None
-    return trap_area_over_recall(r, e, w=w, normalize=True)
+    if average:
+        er = er.sort_values("recall").drop_duplicates("recall", keep="first")
+    
+    weights = 1 - er["recall"] if weighted else None
+
+    if average:
+        if np.sum(weights) == 0:
+            return np.nan
+        else:
+            return np.average(er["enrichment"], weights=weights)
+    else:
+        return trap_area(er["recall"], er["enrichment"], xmin=min_recall, xmax=max_recall, w=weights)
 
 
-##############################
-### TopK OR curve + AUORC ####
-##############################
+##############################################
+########### TopK OR curve + AUORC ############
+##############################################
 
-def topk_or_curve_tieblocks(
-    eval_df: pd.DataFrame,
-    method: str,
+def default_k_values(
+    df: pd.DataFrame, 
     gold_col: str = "label",
+) -> np.ndarray:
+    """ 
+    Evaluate at each k up to min(total positive, 99% of dataset).
+    """
+    total_gold = float(df[gold_col].sum())
+    total_length = int(len(df))
+    k_max = min(total_gold, int(0.99 * total_length))
+    if k_max < 1:
+        return np.array([1], dtype=int)
+    k_values = np.arange(1, k_max + 1).astype(int)
+    return k_values
+
+
+def topk_log_odds_ratio(
+    df: pd.DataFrame,
+    method: str,
+    k_values: Optional[List[int]] = None,
     ascending: bool = True,
+    gold_col: str = "label",
     epsilon: float = 0.5,
-    k_max: Any = "P",            # "P", int, or None
-    include_partial_last: bool = True,
-    mask_scored: bool = True,
 ) -> pd.DataFrame:
     """
-    Tie-robust topK OR curve.
-    - sort rows by method score
-    - group by tied score values
-    - compute OR at block boundaries
-    - optionally add a "partial block" point exactly at k_max (expected within-tie)
+    Top-k log odds ratio evaluated at fixed k values.
+    Note: Requires binary labels.
     """
-    df = eval_df[[method, gold_col]].copy()
 
-    if mask_scored:
-        df = df[df[method].notna()].copy()
+    if k_values is None:
+        k_values = default_k_values(df, gold_col=gold_col)
 
-    df = df.sort_values(method, ascending=ascending, kind="mergesort")
-    g = df.groupby(method, sort=False, dropna=False)
+    tmp = df[[method, gold_col]].copy()
+    total_gold = float(tmp[gold_col].sum())
+    total_length = int(len(tmp))
 
-    block_n = g.size().to_numpy(dtype=float)
-    block_pos = g[gold_col].sum().to_numpy(dtype=float)
+    empty_df = pd.DataFrame({"k": [], "tp": [], "fp": [], "fn": [], "tn": [], "log_odds_ratio": []})
+    if total_gold <= 0 or total_gold >= total_length or total_length <= 0:
+        return empty_df
 
-    sel_n = np.cumsum(block_n)
-    tp = np.cumsum(block_pos)
+    tmp = tmp.sort_values(by=method, ascending=ascending, kind="mergesort").reset_index(drop=True)
+    tp_cum = tmp[gold_col].cumsum().to_numpy(dtype=float)
 
-    N = float(len(df))
-    P = float(df[gold_col].sum())
+    k = np.array([int(x) for x in k_values if x is not None], dtype=int)
+    k = np.unique(k)
+    k = k[(k >= 1) & (k <= total_length)]
+    if k.size == 0:
+        return empty_df
 
-    if P <= 0 or P >= N:
-        return pd.DataFrame({"k": sel_n.astype(int), "odds_ratio": np.nan, "tp": tp, "fp": np.nan, "fn": np.nan, "tn": np.nan})
-
-    # decide cap
-    if k_max == "P":
-        Kcap = P
-    elif k_max is None:
-        Kcap = np.inf
-    else:
-        Kcap = float(k_max)
+    tp = tp_cum[k - 1]
+    sel_n = k.astype(float)
 
     fp = sel_n - tp
-    fn = P - tp
-    tn = (N - P) - fp
-    OR = ((tp + epsilon) * (tn + epsilon)) / ((fp + epsilon) * (fn + epsilon))
+    fn = total_gold - tp
+    tn = (total_length - total_gold) - fp
 
-    out = pd.DataFrame({"k": sel_n, "odds_ratio": OR, "tp": tp, "fp": fp, "fn": fn, "tn": tn})
+    log_odds_ratio = np.log(((tp + epsilon) * (tn + epsilon)) / ((fp + epsilon) * (fn + epsilon)))
 
-    if np.isfinite(Kcap):
-        out_trunc = out[out["k"] <= Kcap].copy()
-        last_k = float(out_trunc["k"].iloc[-1]) if len(out_trunc) else 0.0
-
-        if include_partial_last and last_k < Kcap:
-            j = int(np.searchsorted(sel_n, Kcap, side="left"))
-            prev_sel = sel_n[j - 1] if j > 0 else 0.0
-            prev_tp = tp[j - 1] if j > 0 else 0.0
-
-            m = block_n[j]
-            gpos = block_pos[j]
-            t = Kcap - prev_sel
-
-            tp_partial = prev_tp + t * (gpos / m)
-            sel_partial = Kcap
-            fp_partial = sel_partial - tp_partial
-            fn_partial = P - tp_partial
-            tn_partial = (N - P) - fp_partial
-            or_partial = ((tp_partial + epsilon) * (tn_partial + epsilon)) / ((fp_partial + epsilon) * (fn_partial + epsilon))
-
-            extra = pd.DataFrame({
-                "k": [Kcap],
-                "odds_ratio": [or_partial],
-                "tp": [tp_partial], "fp": [fp_partial], "fn": [fn_partial], "tn": [tn_partial],
-            })
-            out_trunc = pd.concat([out_trunc, extra], ignore_index=True)
-
-        out = out_trunc
-
-    out["k"] = out["k"].round().astype(int)
-    out["odds_ratio"] = out["odds_ratio"].astype(float)
+    out = pd.DataFrame({"k": k, "tp": tp, "fp": fp, "fn": fn, "tn": tn, "log_odds_ratio": log_odds_ratio.astype(float)})
     return out
 
 
-def auorc(
+def auorc_log(
     df: pd.DataFrame,
     col: str,
-    gold_col: str = "label",
+    k_values: Optional[List[int]] = None,
     ascending: bool = True,
+    gold_col: str = "label",
     max_recall: float = 1.0,
     epsilon: float = 0.5,
-    k_max: Any = "P",
     weighted: bool = True,
-    log_or: bool = True,
-    include_partial_last: bool = True,
+    log: bool = True,
+    average: bool = False,
 ) -> float:
     """
-    AUORC: area under (log) odds_ratio vs recall (recall = k/P), using trapezoid integration.
-    Weighted option uses w(r)=1-r.
+    AUORC_log: area under log_odds_ratio vs k.
+    Weighted option uses w(k)=(1/k), equivalent to log-k weighting.
+    Note: Using point average does not account for log-k spacing.
     """
-    or_df = topk_or_curve_tieblocks(
-        df, col, gold_col=gold_col, ascending=ascending, epsilon=epsilon,
-        k_max=k_max, include_partial_last=include_partial_last, mask_scored=True
-    )
-    if or_df.empty or len(or_df) < 2:
+    if k_values is None:
+        k_values = default_k_values(df, gold_col=gold_col)
+
+    k_or = topk_log_odds_ratio(
+        df, col, k_values=k_values, gold_col=gold_col, ascending=ascending, epsilon=epsilon)
+
+    if k_or.empty or len(k_or) < 2:
         return np.nan
 
-    P = float(df[gold_col].sum())
-    if P <= 0:
-        return np.nan
+    weights = (1.0 / k_or["k"]) if weighted else None
 
-    r = or_df["k"].to_numpy(dtype=float) / P
-    y = or_df["odds_ratio"].to_numpy(dtype=float)
-
-    m = np.isfinite(r) & np.isfinite(y) & (r > 0) & (r <= max_recall) & (y > 0)
-    r = r[m]
-    y = y[m]
-    if r.size < 2:
-        return np.nan
-
-    if log_or:
-        y = np.log(y)
-
-    w = (1.0 - r) if weighted else None
-    return trap_area_over_recall(r, y, w=w, normalize=True)
+    if average:
+        return np.average(k_or["log_odds_ratio"], weights=weights)
+    else:
+        return trap_area(k_or["k"], k_or["log_odds_ratio"], w=weights)
 
 
-##############################
-# PR metrics (AP, partialAP) #
-##############################
+##############################################
+######### PR metrics (AP, partialAP) #########
+##############################################
 
 def default_score_transform_pvalue(p: np.ndarray, eps: float = 1e-300) -> np.ndarray:
     """Convert p-values (smaller=better) to a higher-is-better score."""
@@ -348,10 +285,13 @@ def default_score_transform_pvalue(p: np.ndarray, eps: float = 1e-300) -> np.nda
     return -np.log10(np.clip(p, eps, 1.0))
 
 
-def average_precision(df: pd.DataFrame,
-                      col: str,
-                      gold_col: str = "label",
-                      score_transform: Optional[Callable[[np.ndarray], np.ndarray]] = default_score_transform_pvalue) -> float:
+def average_precision(
+    df: pd.DataFrame,
+    col: str,
+    gold_col: str = "label",
+    score_transform: Optional[Callable[[np.ndarray], np.ndarray]] = default_score_transform_pvalue
+) -> float:
+
     sub = df[[col, gold_col]].dropna()
     y_true = sub[gold_col].dropna().to_numpy().astype(int)
     if y_true.sum() == 0:
@@ -362,15 +302,18 @@ def average_precision(df: pd.DataFrame,
     return float(metrics.average_precision_score(y_true, y_score))
 
 
-def partial_average_precision(df: pd.DataFrame,
-                              col: str,
-                              R: float = 0.2,
-                              gold_col: str = "label",
-                              normalize: bool = True,
-                              score_transform: Optional[Callable[[np.ndarray], np.ndarray]] = default_score_transform_pvalue) -> float:
+def partial_average_precision(
+    df: pd.DataFrame,
+    col: str,
+    R: float = 0.2,
+    gold_col: str = "label",
+    normalize: bool = True,
+    score_transform: Optional[Callable[[np.ndarray], np.ndarray]] = default_score_transform_pvalue
+) -> float:
     """
     pAP@R = ∫_0^R precision(r) dr. If normalize=True, divide by R.
     """
+
     sub = df[[col, gold_col]].dropna()
     y_true = sub[gold_col].dropna().to_numpy().astype(int)
     if y_true.sum() == 0:
@@ -390,9 +333,9 @@ def partial_average_precision(df: pd.DataFrame,
     return float(area / R) if normalize else area
 
 
-##############################
-###### Bootstrap class #######
-##############################
+##############################################
+############## Bootstrap class ###############
+##############################################
 
 MetricFn = Callable[[pd.DataFrame, str], float]
 
@@ -404,9 +347,13 @@ class MetricSpec:
     larger_is_better: bool = True
 
 
-def _paired_boot_summary(ref_boot: np.ndarray, m_boot: np.ndarray, alpha: float) -> Dict[str, float]:
+def _paired_boot_summary(
+    ref_boot: np.ndarray, 
+    m_boot: np.ndarray, 
+    alpha: float
+) -> Dict[str, float]:
     """
-    Paired CI on (ref - m) and a simple two-sided "sign test style" p-value.
+    Paired CI on (ref - m) and a simple two-sided sign test p-value.
     """
     mask = np.isfinite(ref_boot) & np.isfinite(m_boot)
     if mask.sum() == 0:
@@ -428,6 +375,81 @@ def _paired_boot_summary(ref_boot: np.ndarray, m_boot: np.ndarray, alpha: float)
     return {"diff_ci_lower": float(lo), "diff_ci_upper": float(hi), "p_value": pval}
 
 
+def _prepare_work_df(
+    all_df: pd.DataFrame,
+    methods: List[str],
+    gold_col: str,
+    random_state: Optional[int],
+    fillna: bool,
+    jitter_amount: Optional[float],
+    clip_min: Optional[float],
+    handle_dup: Optional[str],
+    dup_key_cols: Optional[List[str]],
+    tie: str,
+) -> pd.DataFrame:
+    """
+    Shared preprocessing: numeric coercion, clipping, fillna policy, optional jitter, optional dedup.
+    """
+    rng = np.random.default_rng(random_state)
+    work_df = all_df.copy()
+
+    if jitter_amount is not None:
+        noise = rng.uniform(-jitter_amount, jitter_amount, size=work_df.shape[0])
+
+    for m in methods:
+        work_df[m] = pd.to_numeric(work_df[m], errors="coerce")
+        if clip_min is not None:
+            work_df[m] = work_df[m].clip(lower=clip_min)
+        if fillna:
+            work_df[m] = work_df[m].fillna(1.0)
+        if jitter_amount is not None:
+            mask = work_df[m].notna()
+            work_df.loc[mask, m] = work_df.loc[mask, m] + noise[mask]
+
+    if handle_dup is not None:
+        if dup_key_cols is None:
+            raise ValueError("dup_key_cols must be provided when handle_dup is set")
+        work_df = dedup_df(
+            work_df,
+            key_cols=dup_key_cols,
+            gold_col=gold_col,
+            score_cols=methods,
+            handle_dup=handle_dup,
+            tie=tie,
+        )
+
+    return work_df
+
+
+def _paired_bootstrap_est_and_samples(
+    work_df: pd.DataFrame,
+    methods: List[str],
+    metrics_list: List[MetricSpec],
+    n_bootstrap: int,
+    rng: np.random.Generator,
+) -> Tuple[Dict[Tuple[str, str], float], Dict[str, Dict[str, np.ndarray]]]:
+    """Shared paired bootstrap core. Returns point estimates + bootstrap samples per metric/method."""
+    N = len(work_df)
+    if N == 0:
+        return {}, {}
+
+    est = {(ms.name, m): ms.fn(work_df, m) for ms in metrics_list for m in methods}
+
+    boot: Dict[str, Dict[str, np.ndarray]] = {
+        ms.name: {m: np.empty(n_bootstrap, dtype=float) for m in methods}
+        for ms in metrics_list
+    }
+
+    for b in range(n_bootstrap):
+        idx = rng.integers(0, N, size=N)
+        sample = work_df.iloc[idx].reset_index(drop=True)
+        for ms in metrics_list:
+            for m in methods:
+                boot[ms.name][m][b] = ms.fn(sample, m)
+
+    return est, boot
+
+
 def compute_bootstrap_table(
     all_df: pd.DataFrame,
     methods: List[str],
@@ -438,6 +460,7 @@ def compute_bootstrap_table(
     ci: float = 0.95,
     random_state: Optional[int] = None,
     fillna: bool = False,
+    jitter_amount: Optional[float] = None,
     clip_min: Optional[float] = 1e-300,
     handle_dup: Optional[str] = None,
     dup_key_cols: Optional[List[str]] = None,
@@ -452,6 +475,7 @@ def compute_bootstrap_table(
       diff_estimate, diff_ci_lower, diff_ci_upper, p_value,
       n_bootstrap
     """
+
     if reference_method not in methods:
         raise ValueError(f"reference_method {reference_method} not in methods")
     for m in methods:
@@ -461,30 +485,18 @@ def compute_bootstrap_table(
         raise ValueError(f"Missing gold_col: {gold_col}")
 
     rng = np.random.default_rng(random_state)
-    work_df = all_df.copy()
-
-    # Clean score columns
-    for m in methods:
-        work_df[m] = pd.to_numeric(work_df[m], errors="coerce")
-        if clip_min is not None:
-            # for p-values this avoids -inf in transforms
-            work_df[m] = work_df[m].clip(lower=clip_min)
-        if fillna:
-            # "missing means worst" policy
-            work_df[m] = work_df[m].fillna(1.0)
-
-    # Optional dedup
-    if handle_dup is not None:
-        if dup_key_cols is None:
-            raise ValueError("dup_key_cols must be provided when handle_dup is set")
-        work_df = dedup_df(
-            work_df,
-            key_cols=dup_key_cols,
-            gold_col=gold_col,
-            score_cols=methods,
-            handle_dup=handle_dup,
-            tie=tie,
-        )
+    work_df = _prepare_work_df(
+        all_df=all_df,
+        methods=methods,
+        gold_col=gold_col,
+        random_state=random_state,
+        fillna=fillna,
+        jitter_amount=jitter_amount,
+        clip_min=clip_min,
+        handle_dup=handle_dup,
+        dup_key_cols=dup_key_cols,
+        tie=tie,
+    )
 
     N = len(work_df)
     if N == 0:
@@ -492,22 +504,13 @@ def compute_bootstrap_table(
 
     alpha = 1.0 - ci
 
-    # point estimates on full data
-    est = {(ms.name, m): ms.fn(work_df, m) for ms in metrics_list for m in methods}
-
-    # bootstrap arrays: metric -> method -> samples
-    boot: Dict[str, Dict[str, np.ndarray]] = {
-        ms.name: {m: np.empty(n_bootstrap, dtype=float) for m in methods}
-        for ms in metrics_list
-    }
-
-    # one resample per replicate, reused for all metrics and methods (paired bootstrap)
-    for b in range(n_bootstrap):
-        idx = rng.integers(0, N, size=N)
-        sample = work_df.iloc[idx].reset_index(drop=True)
-        for ms in metrics_list:
-            for m in methods:
-                boot[ms.name][m][b] = ms.fn(sample, m)
+    est, boot = _paired_bootstrap_est_and_samples(
+        work_df=work_df,
+        methods=methods,
+        metrics_list=metrics_list,
+        n_bootstrap=n_bootstrap,
+        rng=rng,
+    )
 
     rows = []
     for ms in metrics_list:
@@ -538,9 +541,131 @@ def compute_bootstrap_table(
     return pd.DataFrame(rows)
 
 
-##############################
-####### Deduplication ########
-##############################
+def compute_bootstrap_table_seed_avg(
+    all_df: pd.DataFrame,
+    methods: List[str],
+    metrics_list: List[MetricSpec],
+    gold_col: str = "label",
+    reference_method: str = "ctar_filt",
+    n_bootstrap: int = 1000,
+    ci: float = 0.95,
+    seeds: List[int] = None,
+    fillna: bool = False,
+    jitter_amount: Optional[float] = None,
+    clip_min: Optional[float] = 1e-300,
+    handle_dup: Optional[str] = None,
+    dup_key_cols: Optional[List[str]] = None,
+    tie: str = "zero",
+    bootstrap_random_state: int = 0,
+    ddof: int = 1,
+) -> pd.DataFrame:
+    """
+    Paired bootstrap with seed-averaged evaluation.
+      - Point estimate = mean over seeds of metric(full_data, jittered(seed))
+      - seed_sd = SD over seeds of metric(full_data, jittered(seed))
+      - Bootstrap distribution: for each bootstrap replicate, resample rows once,
+        compute metric on each seed's jittered df, then average across seeds.
+      - Two-sided paired p-values/CI reuse _paired_boot_summary on seed-averaged boot arrays.
+    """
+    if seeds is None:
+        seeds = list(range(10))
+
+    if reference_method not in methods:
+        raise ValueError(f"reference_method {reference_method} not in methods")
+    for m in methods:
+        if m not in all_df.columns:
+            raise ValueError(f"Missing method column: {m}")
+    if gold_col not in all_df.columns:
+        raise ValueError(f"Missing gold_col: {gold_col}")
+
+    # Prepare one preprocessed dataframe per seed
+    seed_work = [
+        _prepare_work_df(
+            all_df=all_df,
+            methods=methods,
+            gold_col=gold_col,
+            random_state=s,
+            fillna=fillna,
+            jitter_amount=jitter_amount,
+            clip_min=clip_min,
+            handle_dup=handle_dup,
+            dup_key_cols=dup_key_cols,
+            tie=tie,
+        )
+        for s in seeds
+    ]
+
+    N = len(seed_work[0])
+    if N == 0:
+        return pd.DataFrame()
+
+    alpha = 1.0 - ci
+
+    # Point estimates per seed, then mean/sd across seeds
+    per_seed_est: Dict[Tuple[str, str], np.ndarray] = {}
+    for ms in metrics_list:
+        for m in methods:
+            vals = np.array([ms.fn(df, m) for df in seed_work], dtype=float)
+            per_seed_est[(ms.name, m)] = vals
+
+    seed_mean = {(k): float(np.nanmean(v)) for k, v in per_seed_est.items()}
+    seed_sd = {
+        (k): float(np.nanstd(v, ddof=ddof))
+        if np.isfinite(v).sum() > 1 else np.nan
+        for k, v in per_seed_est.items()
+    }
+
+    # Bootstrap seed-averaged distribution
+    rng = np.random.default_rng(bootstrap_random_state)
+
+    boot: Dict[str, Dict[str, np.ndarray]] = {
+        ms.name: {m: np.empty(n_bootstrap, dtype=float) for m in methods}
+        for ms in metrics_list
+    }
+
+    for b in range(n_bootstrap):
+        idx = rng.integers(0, N, size=N)
+        for ms in metrics_list:
+            for m in methods:
+                vals = [ms.fn(df.iloc[idx].reset_index(drop=True), m) for df in seed_work]
+                boot[ms.name][m][b] = float(np.nanmean(vals))
+
+    # Summarize as in compute_bootstrap_table, plus seed_sd
+    rows = []
+    for ms in metrics_list:
+        ref_boot = boot[ms.name][reference_method]
+        ref_est = seed_mean[(ms.name, reference_method)]
+
+        for m in methods:
+            m_boot = boot[ms.name][m]
+            m_est = seed_mean[(ms.name, m)]
+
+            finite = np.isfinite(m_boot)
+            row = {
+                "method": m,
+                "metric": ms.name,
+                "estimate": float(m_est) if np.isfinite(m_est) else np.nan,
+                "seed_sd": float(seed_sd[(ms.name, m)]) if np.isfinite(seed_sd[(ms.name, m)]) else np.nan,
+                "n_seeds": int(len(seeds)),
+                "ci_lower": float(np.nanquantile(m_boot[finite], alpha/2)) if finite.any() else np.nan,
+                "ci_upper": float(np.nanquantile(m_boot[finite], 1-alpha/2)) if finite.any() else np.nan,
+                "diff_estimate": float(ref_est - m_est) if (np.isfinite(ref_est) and np.isfinite(m_est)) else np.nan,
+                "n_bootstrap": int(n_bootstrap),
+            }
+
+            if m == reference_method:
+                row.update({"diff_ci_lower": 0.0, "diff_ci_upper": 0.0, "p_value": 1.0})
+            else:
+                row.update(_paired_boot_summary(ref_boot, m_boot, alpha))
+
+            rows.append(row)
+
+    return pd.DataFrame(rows)
+
+
+##############################################
+############### Deduplication ################
+##############################################
 
 def dedup_df(
     work_df: pd.DataFrame,
@@ -590,40 +715,43 @@ def dedup_df(
     return work_df.groupby(list(key_cols), as_index=False).agg(agg_dic)
 
 
-##############################
-##### Build metric specs #####
-##############################
+##############################################
+############# Build metric specs #############
+##############################################
 
 def build_default_metric_specs(
+    all_df: pd.DataFrame,
     gold_col: str = "label",
     pvals_smaller_is_better: bool = True,
     early_R: float = 0.2,
 ) -> List[MetricSpec]:
     """
-    Default metrics you likely want:
-    - AUERC (weighted) full and early
-    - AUORC (weighted log OR) full and early
+    Default metrics:
+    - AUERC (weighted) full
+    - AE (weighted) full
+    - AUERC (unweighted) early
+    - AUORC (weighted log OR)
     - AP and pAP@R
     """
     ascending = True if pvals_smaller_is_better else False
+    k_values = default_k_values(all_df, gold_col=gold_col)
+    print(f'Top-k for AUORC_log: {k_values}')
 
     def _auerc_full(df: pd.DataFrame, m: str) -> float:
         return auerc(df, m, gold_col=gold_col, ascending=ascending,
-                     min_recall=0.0, max_recall=1.0, weighted=True, tieblocks=True)
+                     min_recall=0.0, max_recall=1.0, weighted=True, average=False)
+
+    def _avg_enrich(df: pd.DataFrame, m: str) -> float:
+        return auerc(df, m, gold_col=gold_col, ascending=ascending,
+                     min_recall=0.0, max_recall=1.0, weighted=True, average=True)
 
     def _auerc_early(df: pd.DataFrame, m: str) -> float:
         return auerc(df, m, gold_col=gold_col, ascending=ascending,
-                     min_recall=0.0, max_recall=early_R, weighted=True, tieblocks=True)
+                     min_recall=0.0, max_recall=early_R, weighted=False, average=False)
 
-    def _auorc_full(df: pd.DataFrame, m: str) -> float:
-        return auorc(df, m, gold_col=gold_col, ascending=ascending,
-                     max_recall=1.0, epsilon=0.5, k_max="P",
-                     weighted=True, log_or=True, include_partial_last=True)
-
-    def _auorc_early(df: pd.DataFrame, m: str) -> float:
-        return auorc(df, m, gold_col=gold_col, ascending=ascending,
-                     max_recall=early_R, epsilon=0.5, k_max="P",
-                     weighted=True, log_or=True, include_partial_last=True)
+    def _auorc_log(df: pd.DataFrame, m: str) -> float:
+        return auorc_log(df, m, k_values=k_values, gold_col=gold_col, ascending=ascending,
+                     epsilon=0.5, weighted=True)
 
     def _ap(df: pd.DataFrame, m: str) -> float:
         return average_precision(df, m, gold_col=gold_col, score_transform=default_score_transform_pvalue)
@@ -634,17 +762,17 @@ def build_default_metric_specs(
 
     return [
         MetricSpec("AUERC", _auerc_full),
-        MetricSpec(f"AUERC≥{early_R}", _auerc_early),
-        MetricSpec("AUORC_log", _auorc_full),
-        MetricSpec(f"AUORC_log≥{early_R}", _auorc_early),
+        MetricSpec("AE", _avg_enrich),
+        MetricSpec(f"AUERC≤{early_R}", _auerc_early),
+        MetricSpec("AUORC_log", _auorc_log),
         MetricSpec("AP", _ap),
         MetricSpec(f"pAP@{early_R}", _pap),
     ]
 
 
-##############################
-####### Example usage ########
-##############################
+##############################################
+############### Example usage ################
+##############################################
 
 """
 methods = ['scmm','signac','ctar_filt','ctar_filt_z','ctar_filt_10k','scmm_mc','corr_mc']
