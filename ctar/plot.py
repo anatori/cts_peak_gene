@@ -1043,13 +1043,16 @@ def barplot_grouped_with_sig(
     labels,
     metric=None,
     methods_order=None,
+    metric_col="metric",
     estimate_col="estimate",
     ci_lower_col="ci_lower",
     ci_upper_col="ci_upper",
+    show_ci=True,
     # Significance: read vs-reference p-values from a column in res_dic[label]
     pval_vs_ref_col=None,     # e.g., "p_value_vs_ctar_filt"
     reference_method="ctar_filt",
     alpha=0.05,
+    show_brackets=True,
     bracket_text="p",         # 'p', 'stars', or 'none'
     use_log_y=True,
     # Coloring
@@ -1076,7 +1079,9 @@ def barplot_grouped_with_sig(
     bracket_fontsize=9,
     bracket_linewidth=1.2,
     ci_legend_loc="upper right",
+    ci_legend_fontsize=12,
     bbox_to_anchor=(0.5, -0.1),
+    axhline=True,
 ):
     """
     Grouped bar plot of 'estimate' with CI error bars, colored by method, grouped by dataset label.
@@ -1158,28 +1163,38 @@ def barplot_grouped_with_sig(
     for i, lbl in enumerate(labels):
         df = res_dic[lbl].copy()
         if metric is not None:
-            df = df[df['metric'] == metric].copy()
+            df = df[df[metric_col] == metric].copy()
         _ensure_method_column_inplace(df)
         df = df[df['method'].isin(methods_order)]
         df = df.set_index('method').reindex(methods_order)
 
-        # Validate columns
-        for col in (estimate_col, ci_lower_col, ci_upper_col):
-            if col not in df.columns:
-                raise KeyError(f"Column '{col}' not found in '{lbl}'. Columns: {list(df.columns)}")
+        # Validate required columns
+        if estimate_col not in df.columns:
+            raise KeyError(f"Column '{estimate_col}' not found in '{lbl}'. Columns: {list(df.columns)}")
 
-        # Read p-values vs reference, if column provided
+        # Validate CI columns only if we will draw CI
+        if show_ci:
+            for col in (ci_lower_col, ci_upper_col):
+                if col not in df.columns:
+                    raise KeyError(f"Column '{col}' not found in '{lbl}'. Columns: {list(df.columns)}")
+
+        # Read p-values vs reference, if column provided (only matters if brackets are enabled)
         if pval_vs_ref_col is not None and pval_vs_ref_col in df.columns:
             per_label_vs_ref[lbl] = df[pval_vs_ref_col].to_dict()
         elif pval_vs_ref_col is not None and pval_vs_ref_col not in df.columns:
             raise KeyError(f"Column '{pval_vs_ref_col}' not found in '{lbl}'. Available: {list(df.columns)}")
 
         est = df[estimate_col].astype(float).to_numpy()
-        lo  = df[ci_lower_col].astype(float).to_numpy()
-        hi  = df[ci_upper_col].astype(float).to_numpy()
 
-        e_low = np.clip(est - lo, 0, np.inf)
-        e_up  = np.clip(hi - est, 0, np.inf)
+        if show_ci:
+            lo = df[ci_lower_col].astype(float).to_numpy()
+            hi = df[ci_upper_col].astype(float).to_numpy()
+            e_low = np.clip(est - lo, 0, np.inf)
+            e_up  = np.clip(hi - est, 0, np.inf)
+        else:
+            # CI disabled: set zero error so downstream logic (limits/brackets) still works
+            e_low = np.zeros_like(est, dtype=float)
+            e_up  = np.zeros_like(est, dtype=float)
 
         x_group = group_centers[i]
         xs = x_group + within_offsets
@@ -1194,7 +1209,13 @@ def barplot_grouped_with_sig(
 
             color = method_colors[m]
             ax.bar(x, y, width=bar_width, color=color, edgecolor='none', alpha=0.9)
-            ax.errorbar(x, y, yerr=[[e_low[j]], [e_up[j]]], fmt='none', ecolor='black', elinewidth=1.2, capsize=4)
+
+            if show_ci:
+                ax.errorbar(
+                    x, y,
+                    yerr=[[e_low[j]], [e_up[j]]],
+                    fmt='none', ecolor='black', elinewidth=1.2, capsize=4
+                )
 
             max_y_for_limits.append(y + e_up[j])
 
@@ -1211,46 +1232,64 @@ def barplot_grouped_with_sig(
         ax.ticklabel_format(axis='y', style='plain')
 
     # Reference baseline line (enrichment = 1.0)
-    ax.axhline(1.0, color='k', linestyle='--', linewidth=1)
+    if axhline:
+        ax.axhline(1.0, color='k', linestyle='--', linewidth=1)
 
     # Labels/title
     if y_label is None:
-        y_label = "Weighted average enrichment (95% CI)"
+        y_label = "Weighted average enrichment (95% CI)" if show_ci else "Weighted average enrichment"
     ax.set_ylabel(y_label)
     if title:
         ax.set_title(title)
 
-    # Legend: method display names
+    # Legend: method display names (+ optional CI legend)
     if add_legend:
         handles = []
         labels_legend = []
         for m in methods_order:
-            patch = plt.Line2D([0], [0], marker='s', color='w',
-                               markerfacecolor=method_colors[m], markersize=10, linestyle='None')
+            patch = plt.Line2D(
+                [0], [0],
+                marker='s', color='w',
+                markerfacecolor=method_colors[m],
+                markersize=10,
+                linestyle='None'
+            )
             handles.append(patch)
             disp = method_renames.get(m, m) if method_renames else m
             labels_legend.append(disp)
-        method_legend = ax.legend(handles, labels_legend, loc='upper center', bbox_to_anchor=bbox_to_anchor,
-                  frameon=False, ncol=len(methods_order))
-        
-        # 95 CI legend
-        ci_handle = ax.errorbar(
-            [np.nan], [np.nan],
-            yerr=[[1], [1]],
-            fmt='none',
-            ecolor='k',
-            elinewidth=1.4,
-            capsize=4
+
+        method_legend = ax.legend(
+            handles, labels_legend,
+            loc='upper center',
+            bbox_to_anchor=bbox_to_anchor,
+            frameon=False,
+            ncol=len(methods_order)
         )
 
-        ax.add_artist(
-            ax.legend([ci_handle], ["Error bars = 95% CI"],
-                      loc=ci_legend_loc, frameon=True)
-        )
+        # Add CI legend only if CI is shown
+        if show_ci:
+            ci_handle = ax.errorbar(
+                [np.nan], [np.nan],
+                yerr=[[1], [1]],
+                fmt='none',
+                ecolor='k',
+                elinewidth=1.4,
+                capsize=4
+            )
+
+            ax.add_artist(
+                ax.legend(
+                    [ci_handle], ["Error bars = 95% CI"],
+                    loc=ci_legend_loc,
+                    frameon=True,
+                    fontsize=ci_legend_fontsize
+                )
+            )
+
         ax.add_artist(method_legend)
 
-    # Draw brackets vs reference using column-based p-values
-    if per_label_vs_ref:
+    # Draw brackets vs reference using column-based p-values (OPTIONAL)
+    if show_brackets and pval_vs_ref_col is not None and per_label_vs_ref:
         for i, lbl in enumerate(labels):
             pmap = per_label_vs_ref.get(lbl, {})
             if not pmap:
@@ -1260,8 +1299,11 @@ def barplot_grouped_with_sig(
             if (lbl, ref_internal) not in positions:
                 continue
 
-            group_max = max(heights[(lbl, m)] + err_up[(lbl, m)]
-                            for m in methods_order if (lbl, m) in heights)
+            group_max = max(
+                heights[(lbl, m)] + err_up[(lbl, m)]
+                for m in methods_order
+                if (lbl, m) in heights
+            )
 
             # Compute base, step, height with scale-aware semantics
             if ax.get_yscale() == 'log':
@@ -1296,6 +1338,7 @@ def barplot_grouped_with_sig(
             for (m1, m2), p in pairs:
                 if (lbl, m1) not in positions or (lbl, m2) not in positions:
                     continue
+
                 x1 = positions[(lbl, m1)]
                 x2 = positions[(lbl, m2)]
 
@@ -1310,10 +1353,16 @@ def barplot_grouped_with_sig(
                     txt = _format_p(p)
                 elif bracket_text == "stars":
                     txt = _stars(p, alpha=alpha)
+                    # Skip drawing entirely if not significant (no stars)
+                    if txt.strip() == "":
+                        continue
                 else:
                     txt = ""
 
-                _draw_sig_bracket(ax, x1, x2, y, h, txt, color='k', fontsize=bracket_fontsize, lw=bracket_linewidth)
+                _draw_sig_bracket(
+                    ax, x1, x2, y, h, txt,
+                    color='k', fontsize=bracket_fontsize, lw=bracket_linewidth
+                )
                 level += 1
 
     ax.grid(axis='y', linestyle=':', linewidth=0.6, alpha=0.6)
