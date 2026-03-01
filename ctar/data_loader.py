@@ -644,7 +644,12 @@ def load_validation_intersect_bed(path,
     
     assert 'score' in validation_cols, "score not in {validation_cols}."
 
-    df = pd.read_csv(path,sep='\t',header=None)
+    try:
+        df = pd.read_csv(path,sep='\t',header=None)
+    except:
+        print(f"Failed to read {path}")
+        return None
+
     df.columns = ['gt_chr','gt_start','gt_end','gt_id','chr','start','end','id','bp_overlap']
 
     gt_split_vals = df['gt_id'].str.split(';',expand=True).values
