@@ -15,6 +15,7 @@ CONFIG_FILE="${CONFIG_FILE:-${SCRIPTS_DIR}/celltype_config.csv}"
 
 # Dataset name
 DATASET_NAME="${DATASET_NAME:-pbmc}"
+EVAL_NAME="${EVAL_NAME:-onek1k}"
 
 # Shared parameters
 DEDUP="${DEDUP:-min}"
@@ -44,7 +45,7 @@ echo "Reading cell type configuration from ${CONFIG_FILE}..."
 TEMP_JOB_FILE=$(mktemp)
 
 # Skip header line and process each row
-tail -n +2 "${CONFIG_FILE}" | while IFS=, read -r CELLTYPE SCENT_FILE SIGNAC_FILE CTAR_FILT_FILE SCMM_FILE ONEK1K_BED; do
+tail -n +2 "${CONFIG_FILE}" | while IFS=, read -r CELLTYPE SCENT_FILE SIGNAC_FILE CTAR_FILT_FILE SCMM_FILE EVAL_BED; do
   
   echo ""
   echo "=========================================="
@@ -55,7 +56,7 @@ tail -n +2 "${CONFIG_FILE}" | while IFS=, read -r CELLTYPE SCENT_FILE SIGNAC_FIL
   echo "SCMM_FILE: ${SCMM_FILE}"
   echo "SIGNAC_FILE: ${SIGNAC_FILE}"
   echo "CTAR_FILT_FILE: ${CTAR_FILT_FILE}"
-  echo "ONEK1K_BED: ${ONEK1K_BED}"
+  echo "EVAL_BED: ${EVAL_BED}"
   
   # Set up cell-type-specific directories
   UNION_DIR="/projects/zhanglab/users/ana/bedtools2/ana_bedfiles/validation/union_links/no_score/${CELLTYPE}"
@@ -64,78 +65,78 @@ tail -n +2 "${CONFIG_FILE}" | while IFS=, read -r CELLTYPE SCENT_FILE SIGNAC_FIL
   MERGE_DIR="/projects/zhanglab/users/ana/multiome/validation/evaluation/${DATASET_NAME}/${CELLTYPE}"
   AURC_DIR="/projects/zhanglab/users/ana/multiome/validation/evaluation/tables/metrics/${DATASET_NAME}/${CELLTYPE}"
   
-  # # Step 1: make_union_bed
-  # echo "Submitting make_union_bed for ${CELLTYPE}..."
-  # UNION_JOB_ID=$(submit \
-  #   -t 1-00:00:00 --mem=128G -J "union_${DATASET_NAME}_${CELLTYPE}" \
-  #   -o "${LOG_DIR}/union_${DATASET_NAME}_${CELLTYPE}-%j.out" \
-  #   -e "${LOG_DIR}/union_${DATASET_NAME}_${CELLTYPE}-%j.err" \
-  #   --wrap "source ~/.bashrc && conda activate ${CONDA_ENV} && \
-  #           mkdir -p '${UNION_DIR}' && \
-  #           python ${SCRIPTS_DIR}/make_union_bed.py \
-  #             --dataset_name '${DATASET_NAME}_${CELLTYPE}' \
-  #             --bed_path '${UNION_DIR}' \
-  #             --scent_file '${SCENT_FILE}' \
-  #             --scmm_file '${SCMM_FILE}' \
-  #             --signac_file '${SIGNAC_FILE}' \
-  #             --ctar_file '' \
-  #             --ctar_filt_file '${CTAR_FILT_FILE}'")
-  # echo "  UNION_JOB_ID=${UNION_JOB_ID}"
+  # Step 1: make_union_bed
+  echo "Submitting make_union_bed for ${CELLTYPE}..."
+  UNION_JOB_ID=$(submit \
+    -t 1-00:00:00 --mem=128G -J "union_${DATASET_NAME}_${CELLTYPE}" \
+    -o "${LOG_DIR}/union_${DATASET_NAME}_${CELLTYPE}-%j.out" \
+    -e "${LOG_DIR}/union_${DATASET_NAME}_${CELLTYPE}-%j.err" \
+    --wrap "source ~/.bashrc && conda activate ${CONDA_ENV} && \
+            mkdir -p '${UNION_DIR}' && \
+            python ${SCRIPTS_DIR}/make_union_bed.py \
+              --dataset_name '${DATASET_NAME}_${CELLTYPE}' \
+              --bed_path '${UNION_DIR}' \
+              --scent_file '${SCENT_FILE}' \
+              --scmm_file '${SCMM_FILE}' \
+              --signac_file '${SIGNAC_FILE}' \
+              --ctar_file '' \
+              --ctar_filt_file '${CTAR_FILT_FILE}'")
+  echo "  UNION_JOB_ID=${UNION_JOB_ID}"
   
-  # # Step 2: bedtools intersect
-  # echo "Submitting bedtools intersect for ${CELLTYPE}..."
-  # INTERSECT_JOB_ID=$(submit \
-  #   --dependency=afterok:${UNION_JOB_ID} \
-  #   -t 0-06:00:00 --mem=16G -J "intersect_${DATASET_NAME}_${CELLTYPE}" \
-  #   -o "${LOG_DIR}/intersect_${DATASET_NAME}_${CELLTYPE}-%j.out" \
-  #   -e "${LOG_DIR}/intersect_${DATASET_NAME}_${CELLTYPE}-%j.err" \
-  #   --wrap "mkdir -p '${OVERLAP_DIR}' && \
-  #           '${BEDTOOLS_BIN}' -wo \
-  #             -a '${ONEK1K_BED}' \
-  #             -b '${UNION_DIR}/${DATASET_NAME}_${CELLTYPE}.bed' \
-  #             > '${OVERLAP_DIR}/onek1k_${DATASET_NAME}_${CELLTYPE}.bed'")
-  # echo "  INTERSECT_JOB_ID=${INTERSECT_JOB_ID}"
+  # Step 2: bedtools intersect
+  echo "Submitting bedtools intersect for ${CELLTYPE}..."
+  INTERSECT_JOB_ID=$(submit \
+    --dependency=afterok:${UNION_JOB_ID} \
+    -t 0-06:00:00 --mem=16G -J "intersect_${DATASET_NAME}_${CELLTYPE}" \
+    -o "${LOG_DIR}/intersect_${DATASET_NAME}_${CELLTYPE}-%j.out" \
+    -e "${LOG_DIR}/intersect_${DATASET_NAME}_${CELLTYPE}-%j.err" \
+    --wrap "mkdir -p '${OVERLAP_DIR}' && \
+            '${BEDTOOLS_BIN}' -wo \
+              -a '${EVAL_BED}' \
+              -b '${UNION_DIR}/${DATASET_NAME}_${CELLTYPE}.bed' \
+              > '${OVERLAP_DIR}/${EVAL_NAME}_${DATASET_NAME}_${CELLTYPE}.bed'")
+  echo "  INTERSECT_JOB_ID=${INTERSECT_JOB_ID}"
   
-  # # Step 3: aggregate_overlaps
-  # echo "Submitting aggregate_overlaps for ${CELLTYPE}..."
-  # AGG_JOB_ID=$(submit \
-  #   --dependency=afterok:${INTERSECT_JOB_ID} \
-  #   -t 0-06:00:00 --mem=32G -J "aggregate_${DATASET_NAME}_${CELLTYPE}" \
-  #   -o "${LOG_DIR}/aggregate_${DATASET_NAME}_${CELLTYPE}-%j.out" \
-  #   -e "${LOG_DIR}/aggregate_${DATASET_NAME}_${CELLTYPE}-%j.err" \
-  #   --wrap "source ~/.bashrc && conda activate ${CONDA_ENV} && \
-  #           mkdir -p '${AGG_DIR}' && \
-  #           python ${SCRIPTS_DIR}/aggregate_overlaps.py \
-  #             --bed_path '${OVERLAP_DIR}' \
-  #             --res_path '${AGG_DIR}' \
-  #             --dataset_name '${DATASET_NAME}_${CELLTYPE}'")
-  # echo "  AGG_JOB_ID=${AGG_JOB_ID}"
+  # Step 3: aggregate_overlaps
+  echo "Submitting aggregate_overlaps for ${CELLTYPE}..."
+  AGG_JOB_ID=$(submit \
+    --dependency=afterok:${INTERSECT_JOB_ID} \
+    -t 0-06:00:00 --mem=32G -J "aggregate_${DATASET_NAME}_${CELLTYPE}" \
+    -o "${LOG_DIR}/aggregate_${DATASET_NAME}_${CELLTYPE}-%j.out" \
+    -e "${LOG_DIR}/aggregate_${DATASET_NAME}_${CELLTYPE}-%j.err" \
+    --wrap "source ~/.bashrc && conda activate ${CONDA_ENV} && \
+            mkdir -p '${AGG_DIR}' && \
+            python ${SCRIPTS_DIR}/aggregate_overlaps.py \
+              --bed_path '${OVERLAP_DIR}' \
+              --res_path '${AGG_DIR}' \
+              --dataset_name '${DATASET_NAME}_${CELLTYPE}'")
+  echo "  AGG_JOB_ID=${AGG_JOB_ID}"
   
-  # # Step 4: merge_methods
-  # echo "Submitting merge_methods for ${CELLTYPE}..."
-  # MERGE_JOB_ID=$(submit \
-  #   --dependency=afterok:${AGG_JOB_ID} \
-  #   -t 1-00:00:00 --mem=128G -J "merge_${DATASET_NAME}_${CELLTYPE}" \
-  #   -o "${LOG_DIR}/merge_${DATASET_NAME}_${CELLTYPE}-%j.out" \
-  #   -e "${LOG_DIR}/merge_${DATASET_NAME}_${CELLTYPE}-%j.err" \
-  #   --wrap "source ~/.bashrc && conda activate ${CONDA_ENV} && \
-  #           mkdir -p '${MERGE_DIR}' && \
-  #           python ${SCRIPTS_DIR}/merge_methods.py \
-  #             --dataset_name '${DATASET_NAME}_${CELLTYPE}' \
-  #             --scent_file '${SCENT_FILE}' --scent_col '${SCENT_COL}' \
-  #             --scmm_file '${SCMM_FILE}' --scmm_col '${SCMM_COL}' \
-  #             --signac_file '${SIGNAC_FILE}' --signac_col '${SIGNAC_COL}' \
-  #             --ctar_file '' --ctar_col '' --ctar_col_z '' \
-  #             --ctar_filt_file '${CTAR_FILT_FILE}' --ctar_filt_col '${CTAR_FILT_COL}' --ctar_filt_col_z '${CTAR_FILT_COL_Z}' \
-  #             --dedup '${DEDUP}' \
-  #             --agg_path '${AGG_DIR}' \
-  #             --res_path '${MERGE_DIR}'")
-  # echo "  MERGE_JOB_ID=${MERGE_JOB_ID}"
+  # Step 4: merge_methods
+  echo "Submitting merge_methods for ${CELLTYPE}..."
+  MERGE_JOB_ID=$(submit \
+    --dependency=afterok:${AGG_JOB_ID} \
+    -t 1-00:00:00 --mem=128G -J "merge_${DATASET_NAME}_${CELLTYPE}" \
+    -o "${LOG_DIR}/merge_${DATASET_NAME}_${CELLTYPE}-%j.out" \
+    -e "${LOG_DIR}/merge_${DATASET_NAME}_${CELLTYPE}-%j.err" \
+    --wrap "source ~/.bashrc && conda activate ${CONDA_ENV} && \
+            mkdir -p '${MERGE_DIR}' && \
+            python ${SCRIPTS_DIR}/merge_methods.py \
+              --dataset_name '${DATASET_NAME}_${CELLTYPE}' \
+              --scent_file '${SCENT_FILE}' --scent_col '${SCENT_COL}' \
+              --scmm_file '${SCMM_FILE}' --scmm_col '${SCMM_COL}' \
+              --signac_file '${SIGNAC_FILE}' --signac_col '${SIGNAC_COL}' \
+              --ctar_file '' --ctar_col '' --ctar_col_z '' \
+              --ctar_filt_file '${CTAR_FILT_FILE}' --ctar_filt_col '${CTAR_FILT_COL}' --ctar_filt_col_z '${CTAR_FILT_COL_Z}' \
+              --dedup '${DEDUP}' \
+              --agg_path '${AGG_DIR}' \
+              --res_path '${MERGE_DIR}'")
+  echo "  MERGE_JOB_ID=${MERGE_JOB_ID}"
 
-  #     --dependency=afterok:${MERGE_JOB_ID} \
   # Step 5: calculate_auerc
   echo "Submitting calculate_auerc_seeds for ${CELLTYPE}..."
   AURC_JOB_ID=$(submit \
+    --dependency=afterok:${MERGE_JOB_ID} \
     -t 3-00:00:00 --mem=32G -J "auerc_${DATASET_NAME}_${CELLTYPE}" \
     -o "${LOG_DIR}/auerc_${DATASET_NAME}_${CELLTYPE}-%j.out" \
     -e "${LOG_DIR}/auerc_${DATASET_NAME}_${CELLTYPE}-%j.err" \

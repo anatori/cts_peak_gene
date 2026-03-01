@@ -31,6 +31,10 @@ def main(args):
         eval_df_dict[filename] = ctar.data_loader.load_validation_intersect_bed(f'{BED_PATH}/{file}',
                                                                              cols_dict[label],
                                                                              score_type=score_type)
+        if eval_df_dict[filename] is None:
+            print(f'Failed to read {file}. Skipping...')
+            continue
+
         eval_df_dict[filename].to_csv(f'{RES_PATH}/{filename}.csv',index=False)
 
     print(f'Files written to {RES_PATH}')

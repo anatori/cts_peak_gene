@@ -16,19 +16,19 @@ REPO_ROOT="${REPO_ROOT:-/projects/zhanglab/users/ana/cts_peak_gene}"
 SCRIPTS_DIR="${SCRIPTS_DIR:-${REPO_ROOT}/experiments/job.evaluation}"
 
 # New file to add column of
-NEW_FILE="${NEW_FILE:-/projects/zhanglab/users/ana/multiome/results/scmultimap/scmm_ctrl/res_df/scmultimap_${DATASET_NAME}.csv}"
-ORIGINAL_COL="${ORIGINAL_COL:-scmm_mcpval}"
-NEW_COL="${NEW_COL:-scmm_mc}"
+NEW_FILE="${NEW_FILE:-/projects/zhanglab/users/ana/multiome/results/scent/myscent_pbmc_cauchy.csv}"
+ORIGINAL_COL="${ORIGINAL_COL:-cauchy_p}"
+NEW_COL="${NEW_COL:-scent_cauchy}"
 
 # Be sure to include new col!
 DEDUP="${DEDUP:-min}"
-METHOD_COLS="${METHOD_COLS:-scent,scmm,signac,ctar_filt_z,ctar_filt,corr_mc,scmm_mc}"
+METHOD_COLS="${METHOD_COLS:-scent,scmm,signac,ctar_filt_z,ctar_filt,scmm_cauchy,scent_cauchy}"
 
 # Merge outputs (using add_new_overlap.py)
 MERGE_DIR="${MERGE_DIR:-/projects/zhanglab/users/ana/multiome/validation/evaluation/${DATASET_NAME}}"
 
 # AUERC outputs (calculate_auerc.py default)
-AURC_DIR="${AURC_DIR:-/projects/zhanglab/users/ana/multiome/validation/evaluation/tables/metrics/${DATASET_NAME}}"
+AURC_DIR="${AURC_DIR:-/projects/zhanglab/users/ana/multiome/validation/evaluation/tables/metrics_jitter/${DATASET_NAME}}"
 REFERENCE_METHOD="${REFERENCE_METHOD:-ctar_filt}"
 N_BOOTSTRAP="${N_BOOTSTRAP:-1000}"
 
@@ -57,15 +57,15 @@ MERGE_JOB_ID=$(submit \
             --dedup '${DEDUP}'")
 echo "MERGE_JOB_ID=${MERGE_JOB_ID}"
 
-echo "Submitting calculate_auerc.py (after merge) ..."
+echo "Submitting calculate_auerc_seeds.py (after merge) ..."
 AURC_JOB_ID=$(submit \
   --dependency=afterok:${MERGE_JOB_ID} \
-  -t 0-06:00:00 --mem=32G -J "auerc_${DATASET_NAME}" \
+  -t 3-00:00:00 --mem=128G -J "auerc_${DATASET_NAME}" \
   -o "${LOG_DIR}/auerc_${DATASET_NAME}-%j.out" \
   -e "${LOG_DIR}/auerc_${DATASET_NAME}-%j.err" \
   --wrap "source ~/.bashrc && conda activate ${CONDA_ENV} && \
           mkdir -p '${AURC_DIR}' && \
-          python ${SCRIPTS_DIR}/calculate_auerc.py \
+          python ${SCRIPTS_DIR}/calculate_auerc_seeds.py \
             --merge_path '${MERGE_DIR}' \
             --res_path '${AURC_DIR}' \
             --dataset_name '${DATASET_NAME}' \

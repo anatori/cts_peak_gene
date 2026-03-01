@@ -9,7 +9,7 @@ LOG_DIR="${LOG_DIR:-/projects/zhanglab/users/ana/logs}"
 CONDA_ENV="${CONDA_ENV:-ctar}"
 
 # Dataset name used consistently across steps
-DATASET_NAME="${DATASET_NAME:-neat}"
+DATASET_NAME="${DATASET_NAME:-bmmc_donor1}"
 
 # Paths (match repository defaults in scripts)
 REPO_ROOT="${REPO_ROOT:-/projects/zhanglab/users/ana/cts_peak_gene}"
@@ -17,13 +17,13 @@ SCRIPTS_DIR="${SCRIPTS_DIR:-${REPO_ROOT}/experiments/job.evaluation}"
 
 # Make union output directory (used by make_union_bed.py)
 UNION_DIR="${UNION_DIR:-/projects/zhanglab/users/ana/bedtools2/ana_bedfiles/validation/union_links/no_score}"
-SCENT_FILE="${SCENT_FILE:-/projects/zhanglab/users/ana/multiome/results/scent/pgboost_scent/bmmc-scent-all.tsv}"
-SCMM_FILE="${SCMM_FILE:-/projects/zhanglab/users/ana/multiome/results/scmultimap/scmultimap_bmmc_cis.csv}"
-SIGNAC_FILE="${SIGNAC_FILE:-/projects/zhanglab/users/ana/multiome/results/signac/signac_bmmc_links.csv}"
+SCENT_FILE="${SCENT_FILE:-}"
+SCMM_FILE="${SCMM_FILE:-/projects/zhanglab/users/ana/multiome/results/scmultimap/scmultimap_bmmc_donor1_cis.csv}"
+SIGNAC_FILE="${SIGNAC_FILE:-/projects/zhanglab/users/ana/multiome/results/signac/signac_bmmc_donor1_links.csv}"
 CTAR_FILE="${CTAR_FILE:-}"
-CTAR_FILT_FILE="${CTAR_FILT_FILE:-/projects/zhanglab/users/ana/multiome/results/ctar/final_eval/bmmc/bmmc_filtered_5.5.5.5.1000/cis_links_df.csv}"
+CTAR_FILT_FILE="${CTAR_FILT_FILE:-/projects/zhanglab/users/ana/multiome/results/ctar/final_eval/bmmc_donor1/bmmc_filt_5.5.5.5.1000/cis_links_df.csv}"
 
-SCENT_COL="${SCENT_COL:-boot_basic_p}"
+SCENT_COL="${SCENT_COL:-}"
 SCMM_COL="${SCMM_COL:-pval}"
 SIGNAC_COL="${SIGNAC_COL:-pvalue}"
 CTAR_COL_Z="${CTAR_COL_Z:-}"
@@ -32,7 +32,7 @@ CTAR_FILT_COL_Z="${CTAR_FILT_COL_Z:-5.5.5.5.1000_mcpval_z}"
 CTAR_FILT_COL="${CTAR_FILT_COL:-5.5.5.5.1000_mcpval}"
 
 DEDUP="${DEDUP:-min}"
-METHOD_COLS="${METHOD_COLS:-scent,scmm,signac,ctar_filt_z,ctar_filt}"
+METHOD_COLS="${METHOD_COLS:-scmm,signac,ctar_filt_z,ctar_filt}"
 
 # Intersect inputs/outputs
 EVAL_DIR="${EVAL_DIR:-/projects/zhanglab/users/ana/bedtools2/ana_bedfiles/validation/tissue_max}"
@@ -79,7 +79,8 @@ INTERSECT_JOB_ID=$(submit \
   -t 0-06:00:00 --mem=16G -J "intersect_${DATASET_NAME}" \
   -o "${LOG_DIR}/intersect_${DATASET_NAME}-%j.out" \
   -e "${LOG_DIR}/intersect_${DATASET_NAME}-%j.err" \
-  --wrap "bash ${SCRIPTS_DIR}/run_bedtools_intersect.sh \
+  --wrap "mkdir -p '${OVERLAP_DIR}' && \
+          bash ${SCRIPTS_DIR}/run_bedtools_intersect.sh \
            --dataset-name '${DATASET_NAME}' \
            --eval-dir '${EVAL_DIR}' \
            --union-dir '${UNION_DIR}' \
@@ -108,7 +109,7 @@ MERGE_JOB_ID=$(submit \
   -o "${LOG_DIR}/merge_${DATASET_NAME}-%j.out" \
   -e "${LOG_DIR}/merge_${DATASET_NAME}-%j.err" \
   --wrap "source ~/.bashrc && conda activate ${CONDA_ENV} && \
-          mkdir -p '${UNION_DIR}' && \
+          mkdir -p '${MERGE_DIR}' && \
           python ${SCRIPTS_DIR}/merge_methods.py \
             --dataset_name '${DATASET_NAME}' \
             --scent_file '${SCENT_FILE}' --scent_col '${SCENT_COL}' \
@@ -123,8 +124,8 @@ echo "MERGE_JOB_ID=${MERGE_JOB_ID}"
 
 echo "Submitting calculate_auerc_seeds.py (after merge) ..."
 AURC_JOB_ID=$(submit \
-  --dependency=afterok:${MERGE_JOB_ID}
-  -t 0-06:00:00 --mem=128G -J "auerc_${DATASET_NAME}" \
+  --dependency=afterok:${MERGE_JOB_ID} \
+  -t 3-00:00:00 --mem=128G -J "auerc_${DATASET_NAME}" \
   -o "${LOG_DIR}/auerc_${DATASET_NAME}-%j.out" \
   -e "${LOG_DIR}/auerc_${DATASET_NAME}-%j.err" \
   --wrap "source ~/.bashrc && conda activate ${CONDA_ENV} && \
