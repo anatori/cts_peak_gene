@@ -241,7 +241,7 @@ def main(args):
             raise FileNotFoundError(f"Expected cis_links_df.csv at {csv_file}, but it was not found.")
         cis_links_df = pd.read_csv(csv_file, index_col=0)
 
-    if JOB in ["compute_ctrl_only", "compute_cis_only"]:
+    if JOB in ["compute_ctar", "compute_ctrl_only", "compute_cis_only"]:
 
         if N_CORES:
             n_cores = N_CORES
@@ -366,18 +366,35 @@ def main(args):
             cis_links_df['atac_idx'] = cis_links_df['peak'].map(adata_atac.var['atac_idx'])
             cis_links_df['rna_idx'] = cis_links_df['gene'].map(adata_rna.var['rna_idx'])
             
-            # Create cis links dictionary (one entry per link)
-            cis_links_dic = {}
-            for idx, row in cis_links_df.iterrows():
-                cis_links_dic[idx] = np.array([[row['atac_idx'], row['rna_idx']]])
+            cis_links_array = cis_links_df[['atac_idx', 'rna_idx']].to_numpy()
+            link_ids = cis_links_df.index.to_numpy()
+
+            dic_batch_size = 512
+            cis_links_dic = {
+                i: cis_links_array[i * dic_batch_size: (i + 1) * dic_batch_size]
+                for i in range((len(cis_links_array) + dic_batch_size - 1) // dic_batch_size)
+            }
+            cis_idx_map = {
+                i: list(range(i * dic_batch_size, min((i + 1) * dic_batch_size, len(cis_links_array))))
+                for i in cis_links_dic.keys()
+            }
             
-            # Create control links dictionary (each cis-link has n_ctrl control peaks paired with same gene)
-            ctrl_links_dic = {}
-            for idx, row in cis_links_df.iterrows():
+            ctrl_links_array = []
+            for _, row in cis_links_df.iterrows():
                 atac_idx = row['atac_idx']
                 rna_idx = row['rna_idx']
                 ctrl_peak_indices = ctrl_peaks[atac_idx, :n_ctrl]
-                ctrl_links_dic[idx] = np.column_stack([ctrl_peak_indices, np.full(n_ctrl, rna_idx)])
+                ctrl_links_array.extend([[peak_idx, rna_idx] for peak_idx in ctrl_peak_indices])
+            ctrl_links_array = np.array(ctrl_links_array)
+
+            ctrl_links_dic = {
+                i: ctrl_links_array[i * dic_batch_size: (i + 1) * dic_batch_size]
+                for i in range((len(ctrl_links_array) + dic_batch_size - 1) // dic_batch_size)
+            }
+            ctrl_idx_map = {
+                i: list(range(i * dic_batch_size, min((i + 1) * dic_batch_size, len(ctrl_links_array))))
+                for i in ctrl_links_dic.keys()
+            }
             
             rna_sparse = adata_rna.layers['counts']
             atac_sparse = adata_atac.layers['counts']
@@ -410,6 +427,20 @@ def main(args):
                 )
             print('# Cis-links IRLS time = %0.2fs' % (time.time() - start_time))
 
+            n_links = len(cis_links_array)
+            first_cis_key = list(cis_coeff_dic.keys())[0]
+            first_cis_val = np.asarray(cis_coeff_dic[first_cis_key])
+            if first_cis_val.ndim == 2:
+                cis_coeff = np.empty((n_links, first_cis_val.shape[1]), dtype=np.float32)
+                for batch_key, coeffs in cis_coeff_dic.items():
+                    for i, idx in enumerate(cis_idx_map[batch_key]):
+                        cis_coeff[idx, :] = coeffs[i]
+            else:
+                cis_coeff = np.empty((n_links,), dtype=np.float32)
+                for batch_key, coeffs in cis_coeff_dic.items():
+                    for i, idx in enumerate(cis_idx_map[batch_key]):
+                        cis_coeff[idx] = coeffs[i]
+
             print('# Starting control links IRLS...')
             start_time = time.time()
 
@@ -428,29 +459,62 @@ def main(args):
                     links_dict=ctrl_links_dic,
                     atac_sparse=atac_sparse,
                     rna_sparse=rna_sparse,
-                    batch_size=BATCH_SIZE,
+                    batch_size=(BATCH_SIZE//10)+1,
                     scheduler="processes",
                     n_workers=n_cores,
                     flag_se=FLAG_SE,
+                    flag_ll=FLAG_LL,
                 )
             print('# Control links IRLS time = %0.2fs' % (time.time() - start_time))
-            
-            # Extract coefficients from dictionaries
-            idx_list = cis_links_df.index.tolist()
-            cis_coeff = np.array([cis_coeff_dic[k][0] for k in idx_list])
-            ctrl_coeff = np.array([ctrl_coeff_dic[k] for k in idx_list])
-            
-            # Compute p-values
-            if cis_coeff.ndim == 2 and cis_coeff.shape[1] == 2:
-                # We have [SE, coeff]
-                cis_links_df[f'{BIN_CONFIG}_mcpval'] = ctar.method.initial_mcpval(ctrl_coeff[: , : , 1], cis_coeff[:, 1])
-                cis_links_df[f'{BIN_CONFIG}_ppval'] = ctar.method.pooled_mcpval(ctrl_coeff[:, :, 1], cis_coeff[: , 1])
-                cis_links_df['poissonb'] = cis_coeff[:, 1]
-                cis_links_df['poissonb_se'] = cis_coeff[: , 0]
+
+            first_ctrl_key = list(ctrl_coeff_dic.keys())[0]
+            first_ctrl_val = np.asarray(ctrl_coeff_dic[first_ctrl_key])
+            n_rows = len(cis_links_df) * n_ctrl
+
+            if first_ctrl_val.ndim == 2:
+                ctrl_coeff_flat = np.empty((n_rows, first_ctrl_val.shape[1]), dtype=np.float32)
+                for batch_key, coeffs in ctrl_coeff_dic.items():
+                    for i, idx in enumerate(ctrl_idx_map[batch_key]):
+                        ctrl_coeff_flat[idx, :] = coeffs[i]
+                ctrl_coeff = ctrl_coeff_flat.reshape(len(cis_links_df), n_ctrl, first_ctrl_val.shape[1])
             else:
-                cis_links_df[f'{BIN_CONFIG}_mcpval'] = ctar.method.initial_mcpval(ctrl_coeff, cis_coeff)
-                cis_links_df[f'{BIN_CONFIG}_ppval'] = ctar.method.pooled_mcpval(ctrl_coeff, cis_coeff)
-                cis_links_df['poissonb'] = cis_coeff
+                ctrl_coeff_flat = np.empty((n_rows,), dtype=np.float32)
+                for batch_key, coeffs in ctrl_coeff_dic.items():
+                    for i, idx in enumerate(ctrl_idx_map[batch_key]):
+                        ctrl_coeff_flat[idx] = coeffs[i]
+                ctrl_coeff = ctrl_coeff_flat.reshape(len(cis_links_df), n_ctrl)
+
+            MAX_VAL = 100
+            if ctrl_coeff.ndim == 3 and ctrl_coeff.shape[2] == 2:
+                ctrl_se = ctrl_coeff[:, :, 0]
+                ctrl_beta = ctrl_coeff[:, :, 1]
+
+                cis_links_df[f'{BIN_CONFIG}_mcpval'] = ctar.method.initial_mcpval(ctrl_beta, cis_coeff[:, 1])
+                cis_links_df[f'{BIN_CONFIG}_ppval'] = ctar.method.pooled_mcpval(ctrl_beta, cis_coeff[:, 1])
+
+                cis_studentized = np.clip(cis_coeff[:, 1] / cis_coeff[:, 0], -MAX_VAL, MAX_VAL)
+                ctrl_studentized = np.clip(ctrl_beta / ctrl_se, -MAX_VAL, MAX_VAL)
+
+                cis_links_df[f'{BIN_CONFIG}_mcpval_z'] = ctar.method.initial_mcpval(ctrl_studentized, cis_studentized)
+                cis_links_df[f'{BIN_CONFIG}_ppval_z'] = ctar.method.pooled_mcpval(ctrl_studentized, cis_studentized)
+
+                cis_links_df['poissonb'] = cis_coeff[:, 1]
+                cis_links_df['poissonb_se'] = cis_coeff[:, 0]
+            else:
+                if cis_coeff.ndim == 1:
+                    cis_beta = cis_coeff
+                elif cis_coeff.ndim == 2 and cis_coeff.shape[1] == 2:
+                    cis_beta = cis_coeff[:, 1]
+                    cis_links_df['poissonb'] = cis_coeff[:, 1]
+                    cis_links_df['poissonb_se'] = cis_coeff[:, 0]
+                else:
+                    cis_beta = cis_coeff
+
+                cis_links_df[f'{BIN_CONFIG}_mcpval'] = ctar.method.initial_mcpval(ctrl_coeff, cis_beta)
+                cis_links_df[f'{BIN_CONFIG}_ppval'] = ctar.method.pooled_mcpval(ctrl_coeff, cis_beta)
+
+                if 'poissonb' not in cis_links_df.columns:
+                    cis_links_df['poissonb'] = cis_beta
 
             print(f'# Saving files to {results_folder}')
             os.makedirs(results_folder, exist_ok=True)
@@ -458,6 +522,7 @@ def main(args):
             np.save(f'{results_folder}/ctrl_peaks.npy', ctrl_peaks)
             np.save(f'{results_folder}/cis_coeff.npy', cis_coeff)
             np.save(f'{results_folder}/ctrl_coeff.npy', ctrl_coeff)
+            np.save(f'{results_folder}/cis_link_ids.npy', link_ids, allow_pickle=True)
             cis_links_df.to_csv(f'{results_folder}/cis_links_df.csv')
             
         else:
@@ -495,13 +560,15 @@ def main(args):
                     n_workers=n_cores,
                 )
             else:
-                cis_coeff_dic = ctar.parallel.multiprocess_poisson_irls_chunked(
+                cis_coeff_dic = ctar.parallel.multiprocess_poisson_irls(
                     links_dict=cis_links_dic,
                     atac_sparse=atac_sparse,
                     rna_sparse=rna_sparse,
                     batch_size=BATCH_SIZE,
                     scheduler="processes",
                     n_workers=n_cores,
+                    flag_se=FLAG_SE,
+                    flag_ll=FLAG_LL,
                 )
             print('# Cis-links IRLS time = %0.2fs' % (time.time() - start_time))
 
@@ -519,21 +586,62 @@ def main(args):
                     n_workers=n_cores,
                 )
             else:
-                ctrl_coeff_dic = ctar.parallel.multiprocess_poisson_irls_chunked(
+                ctrl_coeff_dic = ctar.parallel.multiprocess_poisson_irls(
                     links_dict=ctrl_links_dic,
                     atac_sparse=atac_sparse,
                     rna_sparse=rna_sparse,
-                    batch_size=BATCH_SIZE,
+                    batch_size=(BATCH_SIZE//10)+1,
                     scheduler="processes",
                     n_workers=n_cores,
+                    flag_se=FLAG_SE,
+                    flag_ll=FLAG_LL,
                 )
             print('# Control links IRLS time = %0.2fs' % (time.time() - start_time))
 
-            mcpval_dic, ppval_dic = ctar.method.binned_mcpval(cis_coeff_dic, ctrl_coeff_dic)
+            first_key = list(ctrl_coeff_dic.keys())[0]
+            if ctrl_coeff_dic[first_key].ndim == 2 and ctrl_coeff_dic[first_key].shape[1] == 2:
+                mcpval_dic, ppval_dic = ctar.method.binned_mcpval(
+                    {key: value[:, 1] for key, value in cis_coeff_dic.items()},
+                    {key: value[:, 1] for key, value in ctrl_coeff_dic.items()},
+                    b=n_ctrl,
+                )
 
-            cis_links_df = ctar.data_loader.map_dic_to_df(cis_links_df, cis_idx_dic, mcpval_dic, col_name=f'{BIN_CONFIG}_mcpval')
-            cis_links_df = ctar.data_loader.map_dic_to_df(cis_links_df, cis_idx_dic, ppval_dic, col_name=f'{BIN_CONFIG}_ppval')
-            cis_links_df = ctar.data_loader.map_dic_to_df(cis_links_df, cis_idx_dic, cis_coeff_dic, col_name='poissonb')
+                cis_links_df = ctar.data_loader.map_dic_to_df(cis_links_df, cis_idx_dic, mcpval_dic, col_name=f'{BIN_CONFIG}_mcpval')
+                cis_links_df = ctar.data_loader.map_dic_to_df(cis_links_df, cis_idx_dic, ppval_dic, col_name=f'{BIN_CONFIG}_ppval')
+                cis_links_df = ctar.data_loader.map_dic_to_df(
+                    cis_links_df,
+                    cis_idx_dic,
+                    {key: value[:, 1] for key, value in cis_coeff_dic.items()},
+                    col_name='poissonb'
+                )
+                cis_links_df = ctar.data_loader.map_dic_to_df(
+                    cis_links_df,
+                    cis_idx_dic,
+                    {key: value[:, 0] for key, value in cis_coeff_dic.items()},
+                    col_name='poissonb_se'
+                )
+
+                MAX_VAL = 100
+                cis_coeff_dic_z = {}
+                ctrl_coeff_dic_z = {}
+                for key in cis_coeff_dic.keys():
+                    cis_coeff_dic_z[key] = np.clip(cis_coeff_dic[key][:, 1] / cis_coeff_dic[key][:, 0], -MAX_VAL, MAX_VAL)
+                    ctrl_coeff_dic_z[key] = np.clip(ctrl_coeff_dic[key][:, 1] / ctrl_coeff_dic[key][:, 0], -MAX_VAL, MAX_VAL)
+
+                mcpval_dic_z, ppval_dic_z = ctar.method.binned_mcpval(
+                    cis_coeff_dic_z,
+                    ctrl_coeff_dic_z,
+                    b=n_ctrl,
+                )
+
+                cis_links_df = ctar.data_loader.map_dic_to_df(cis_links_df, cis_idx_dic, mcpval_dic_z, col_name=f'{BIN_CONFIG}_mcpval_z')
+                cis_links_df = ctar.data_loader.map_dic_to_df(cis_links_df, cis_idx_dic, ppval_dic_z, col_name=f'{BIN_CONFIG}_ppval_z')
+            else:
+                mcpval_dic, ppval_dic = ctar.method.binned_mcpval(cis_coeff_dic, ctrl_coeff_dic, b=n_ctrl)
+
+                cis_links_df = ctar.data_loader.map_dic_to_df(cis_links_df, cis_idx_dic, mcpval_dic, col_name=f'{BIN_CONFIG}_mcpval')
+                cis_links_df = ctar.data_loader.map_dic_to_df(cis_links_df, cis_idx_dic, ppval_dic, col_name=f'{BIN_CONFIG}_ppval')
+                cis_links_df = ctar.data_loader.map_dic_to_df(cis_links_df, cis_idx_dic, cis_coeff_dic, col_name='poissonb')
 
             print(f'# Saving files to {results_folder}')
             os.makedirs(results_folder, exist_ok=True)
@@ -738,11 +846,10 @@ def main(args):
                 cis_links_df['atac_mean_gc_bin_5.5'] = cis_links_df.peak.map(atac_bin_dict)
                 cis_links_df['rna_mean_var_bin_5.5'] = cis_links_df.gene.map(rna_bin_dict)
                 cis_links_df['combined_bin_5.5.5.5'] = cis_links_df['atac_mean_gc_bin_5.5'].astype(str) + '_' + cis_links_df['rna_mean_var_bin_5.5'].astype(str)
-
-            cis_links_df = ctar.data_loader.combine_peak_gene_bins(cis_links_df, atac_bins_df, rna_bins_df, 
-                atac_bins=[n_atac_mean,n_atac_gc], 
-                rna_bins=[n_rna_mean,n_rna_var]
-            )
+                cis_links_df = ctar.data_loader.combine_peak_gene_bins(cis_links_df, atac_bins_df, rna_bins_df, 
+                    atac_bins=[n_atac_mean,n_atac_gc], 
+                    rna_bins=[n_rna_mean,n_rna_var]
+                )
 
             cis_links_dic, cis_idx_dic = ctar.data_loader.groupby_combined_bins(cis_links_df, 
                 combined_bin_col=f'combined_bin_{BIN_CONFIG.rsplit(".",1)[0]}', 
@@ -995,7 +1102,7 @@ def main(args):
             if ARRAY_IDX is None:
                 with open(f'{results_folder}/ctrl_links_dic.pkl', 'wb') as f:
                     pickle.dump(ctrl_links_dic, f)
-                cis_links_df.to_csv(f'{results_folder}cis_links_df.csv')
+                cis_links_df.to_csv(f'{results_folder}/cis_links_df.csv')
 
                 print(f'# Saved file(s) ./ctrl_links_dic.pkl, ./cis_links_df.csv')
 
