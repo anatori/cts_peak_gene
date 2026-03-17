@@ -53,7 +53,10 @@ def main(args):
     print('new_df shape before deduplication:',new_df.shape)
     
     # Deduplication
+    if ~new_df.peak.str.match(r"^chr[^:]+:\d+-\d+$").all():
+        new_df['peak'] = new_df['peak'].str.replace('-',':',n=1)
     new_df['id'] = new_df['peak'].astype(str) + ';' + new_df['gene'].astype(str)
+    print(new_df.head())
     new_df = _aggregate_duplicates(new_df, id_col='id', score_col=NEW_COL, how=args.dedup)
     print(f'new_df shape after {args.dedup} deduplication',new_df.shape)
 

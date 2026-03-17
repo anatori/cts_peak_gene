@@ -1,34 +1,34 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# bash /projects/zhanglab/users/ana/cts_peak_gene/experiments/job.evaluation/mini_evaluate.sh
+# bash /ocean/projects/bio240051p/aprieto/cts_peak_gene/experiments/job.evaluation/mini_evaluate.sh
 
 # Slurm settings
-PARTITIONS="${PARTITIONS:-mzhang,pool1}"
-LOG_DIR="${LOG_DIR:-/projects/zhanglab/users/ana/logs}"
+PARTITIONS="${PARTITIONS:-RM}"
+LOG_DIR="${LOG_DIR:-/ocean/projects/bio240051p/aprieto/logs}"
 CONDA_ENV="${CONDA_ENV:-ctar}"
 
 # Dataset name used consistently across steps
-DATASET_NAME="${DATASET_NAME:-pbmc}"
+DATASET_NAME="${DATASET_NAME:-bmmc}"
 
 # Paths (match repository defaults in scripts)
-REPO_ROOT="${REPO_ROOT:-/projects/zhanglab/users/ana/cts_peak_gene}"
+REPO_ROOT="${REPO_ROOT:-/ocean/projects/bio240051p/aprieto/cts_peak_gene}"
 SCRIPTS_DIR="${SCRIPTS_DIR:-${REPO_ROOT}/experiments/job.evaluation}"
 
 # New file to add column of
-NEW_FILE="${NEW_FILE:-/projects/zhanglab/users/ana/multiome/results/scent/myscent_pbmc_cauchy.csv}"
-ORIGINAL_COL="${ORIGINAL_COL:-cauchy_p}"
-NEW_COL="${NEW_COL:-scent_cauchy}"
+NEW_FILE="${NEW_FILE:-/ocean/projects/bio240051p/aprieto/multiome/results/scmultimap/scmultimap_bmmc_with_donor_cis.csv}"
+ORIGINAL_COL="${ORIGINAL_COL:-pval}"
+NEW_COL="${NEW_COL:-scmm_with_donor}"
 
 # Be sure to include new col!
 DEDUP="${DEDUP:-min}"
-METHOD_COLS="${METHOD_COLS:-scent,scmm,signac,ctar_filt_z,ctar_filt,scmm_cauchy,scent_cauchy}"
+METHOD_COLS="${METHOD_COLS:-scent,scmm,signac,ctar_filt_z,ctar_filt,scmm_with_donor}"
 
 # Merge outputs (using add_new_overlap.py)
-MERGE_DIR="${MERGE_DIR:-/projects/zhanglab/users/ana/multiome/validation/evaluation/${DATASET_NAME}}"
+MERGE_DIR="${MERGE_DIR:-/ocean/projects/bio240051p/aprieto/multiome/validation/evaluation/${DATASET_NAME}}"
 
 # AUERC outputs (calculate_auerc.py default)
-AURC_DIR="${AURC_DIR:-/projects/zhanglab/users/ana/multiome/validation/evaluation/tables/metrics_jitter/${DATASET_NAME}}"
+AURC_DIR="${AURC_DIR:-/ocean/projects/bio240051p/aprieto/multiome/validation/evaluation/tables/metrics_jitter/${DATASET_NAME}}"
 REFERENCE_METHOD="${REFERENCE_METHOD:-ctar_filt}"
 N_BOOTSTRAP="${N_BOOTSTRAP:-1000}"
 
