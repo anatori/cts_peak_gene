@@ -52,6 +52,41 @@ def test_initial_mcpval_multiple_genes():
     assert np.allclose(pvals, expected_pvals)
 
 
+def test_initial_mcpval_ignores_nan_controls_and_updates_denominator():
+    ctrl_corr = np.array([[1.0, np.nan, 3.0, np.nan]])
+    corr = np.array([2.0])
+    pval = ctar.method.initial_mcpval(ctrl_corr, corr, one_sided=True)
+    # valid controls are [1, 3], one is >= 2 -> (1 + 1) / (1 + 2) = 2/3
+    assert pval[0] == approx(2 / 3)
+
+
+def test_initial_mcpval_returns_nan_for_nan_cis_value():
+    ctrl_corr = np.array([[1.0, 2.0, 3.0]])
+    corr = np.array([np.nan])
+    pval = ctar.method.initial_mcpval(ctrl_corr, corr, one_sided=True)
+    assert np.isnan(pval[0])
+
+
+def test_pooled_mcpval_ignores_nan_controls_and_nan_cis_values():
+    ctrl_corr = np.array([
+        [1.0, np.nan, 3.0],
+        [2.0, 4.0, np.nan],
+        [1.0, 1.0, 1.0],
+    ])
+    corr = np.array([2.0, np.nan, 1.0])
+
+    pval = ctar.method.pooled_mcpval(ctrl_corr, corr, axis=1)
+
+    # Row 1 contributes centered controls [-1, 1] and centered corr 0.
+    # Row 2 is skipped because cis is nan.
+    # Row 3 is skipped because std is 0.
+    # pooled controls are [-1, 1], so centered corr 0 has one pooled control >= it:
+    # (1 + 1) / (1 + 2) = 2/3
+    assert pval[0] == approx(2 / 3)
+    assert np.isnan(pval[1])
+    assert np.isnan(pval[2])
+
+
 ### zscore pval tests ###
 def test_zscore_pval_zero_z():
     ctrl_corr = np.array([[1,2,3,4,5]]) # mean=3, std=sqrt(2)
