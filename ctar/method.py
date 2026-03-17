@@ -1121,13 +1121,32 @@ def initial_mcpval(ctrl_corr,corr,one_sided=True):
     Vector of shape (gene#,) corresponding to the Monte Carlo p-value of each statistic.
     
     '''
+    ctrl_corr = np.asarray(ctrl_corr, dtype=float)
+    corr = np.asarray(corr, dtype=float).reshape(-1)
 
-    corr = corr.reshape(-1, 1)
+    if ctrl_corr.ndim != 2:
+        raise ValueError("ctrl_corr must be a 2D array of shape (n_rows, n_ctrl).")
+    if ctrl_corr.shape[0] != corr.shape[0]:
+        raise ValueError("ctrl_corr rows must match corr length.")
+
     if not one_sided:
         ctrl_corr = np.abs(ctrl_corr)
         corr = np.abs(corr)
-    indicator = np.sum(ctrl_corr >= corr.reshape(-1, 1), axis=1)
-    return (1+indicator)/(1+ctrl_corr.shape[1])
+
+    pvals = np.full(corr.shape[0], np.nan, dtype=float)
+
+    for i in range(corr.shape[0]):
+        if not np.isfinite(corr[i]):
+            continue
+
+        valid_ctrl = ctrl_corr[i][np.isfinite(ctrl_corr[i])]
+        if valid_ctrl.size == 0:
+            continue
+
+        indicator = np.sum(valid_ctrl >= corr[i])
+        pvals[i] = (1 + indicator) / (1 + valid_ctrl.size)
+
+    return pvals
 
 
 def zscore_pval(ctrl_corr,corr,axis=1):
@@ -1145,15 +1164,49 @@ def zscore_pval(ctrl_corr,corr,axis=1):
 def pooled_mcpval(ctrl_corr,corr,axis=1):
     ''' 1-sided MC pooled pvalue.
     '''
+    ctrl_corr = np.asarray(ctrl_corr, dtype=float)
+    corr = np.asarray(corr, dtype=float).reshape(-1)
 
-    # Center first
-    ctrl_corr_centered,corr_centered = center_ctrls(ctrl_corr,corr,axis=axis)
-    ctrl_corr_centered = np.sort(ctrl_corr_centered)
-    n,b = ctrl_corr.shape
-    
-    # Search sort returns indices where element would be inserted
-    indicator = (n*b) - np.searchsorted(ctrl_corr_centered, corr_centered, side='left')
-    return (1+indicator)/(1+(n*b))
+    if axis != 1:
+        raise NotImplementedError("pooled_mcpval currently supports axis=1 only.")
+    if ctrl_corr.ndim != 2:
+        raise ValueError("ctrl_corr must be a 2D array of shape (n_rows, n_ctrl).")
+    if ctrl_corr.shape[0] != corr.shape[0]:
+        raise ValueError("ctrl_corr rows must match corr length.")
+
+    pooled_ctrl_chunks = []
+    pooled_corr = []
+    scatter_idx = []
+
+    for i in range(corr.shape[0]):
+        if not np.isfinite(corr[i]):
+            continue
+
+        valid_ctrl = ctrl_corr[i][np.isfinite(ctrl_corr[i])]
+        if valid_ctrl.size == 0:
+            continue
+
+        mean = np.mean(valid_ctrl)
+        std = np.std(valid_ctrl)
+
+        if not np.isfinite(std) or std <= 0:
+            continue
+
+        pooled_ctrl_chunks.append((valid_ctrl - mean) / std)
+        pooled_corr.append((corr[i] - mean) / std)
+        scatter_idx.append(i)
+
+    pvals = np.full(corr.shape[0], np.nan, dtype=float)
+    if len(pooled_ctrl_chunks) == 0:
+        return pvals
+
+    pooled_ctrl = np.sort(np.concatenate(pooled_ctrl_chunks))
+    pooled_corr = np.asarray(pooled_corr, dtype=float)
+    total = pooled_ctrl.size
+
+    indicators = total - np.searchsorted(pooled_ctrl, pooled_corr, side='left')
+    pvals[np.asarray(scatter_idx, dtype=int)] = (1 + indicators) / (1 + total)
+    return pvals
 
 
 def center_ctrls(ctrl_corray,main_array,axis=0):
@@ -1535,4 +1588,3 @@ def fit_negbinom(x,y,return_both=False):
         return result.params[1]
 
     return result.params[0], result.params[1]
-
