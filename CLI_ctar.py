@@ -70,6 +70,7 @@ def main(args):
     ARRAY_IDX = args.array_idx
     FLAG_SE = (args.flag_se == 'True')
     FLAG_LL = (args.flag_ll == 'True')
+    N_CORES = int(args.n_cores) if args.n_cores is not None else None
 
     # Parse and check arguments
     LEGAL_JOB_LIST = [
@@ -136,18 +137,18 @@ def main(args):
         "generate_links",
         "generate_controls",
         "compute_pval",
-    ]: 
+    ]:
 
         # Setting bin config
         # Order:  MEAN.GC.MEAN.VAR
         n_atac_mean, n_atac_gc, n_rna_mean, n_rna_var, n_ctrl = BIN_CONFIG.split('.')
         n_atac_mean, n_atac_gc, n_ctrl = map(int, [n_atac_mean, n_atac_gc, n_ctrl])
-        
+
         # Check if using inf.inf mode (no RNA binning)
         USE_INF_MODE = (f'{n_rna_mean}.{n_rna_var}' == 'inf.inf')
-        
         if not USE_INF_MODE: 
             n_rna_mean, n_rna_var = map(int, [n_rna_mean, n_rna_var])
+        print(f'# Setting n_atac_mean={n_atac_mean}, n_atac_gc={n_atac_gc}, n_rna_mean={n_rna_mean}, n_rna_var={n_rna_var}, n_ctrl={n_ctrl}')
 
     if JOB in [
         "compute_ctar",
@@ -205,15 +206,13 @@ def main(args):
         assert adata_rna.var.gene.str.startswith('ENSG').all(), "Must use ENSEMBL IDs for genes"
             
         # Setting atac bin type
-        if (n_atac_gc == 1) and (n_atac_mean > 1):
-            atac_type = 'mean'
-            atac_bins = n_atac_mean # only depends on mean
-        elif BIN_TYPE == 'cholesky':
+        if BIN_TYPE == 'cholesky':
             atac_type = 'chol_logsum_gc'
             atac_bins = [n_atac_mean, n_atac_gc]
         else:
             atac_type = 'mean_gc'
             atac_bins = [n_atac_mean, n_atac_gc]
+        print(f'# Setting atac bin type to {atac_type}...')
         rna_type = 'mean_var'
 
         print("# Setting --pybedtools_path")
@@ -244,7 +243,10 @@ def main(args):
 
     if JOB in ["compute_ctrl_only", "compute_cis_only"]:
 
-        n_cores = int(os.environ.get('SLURM_CPUS_PER_TASK', 1))
+        if N_CORES:
+            n_cores = N_CORES
+        else:
+            n_cores = int(os.environ.get('SLURM_CPUS_PER_TASK', 1))
         print(f'# SLURM allocated {n_cores} CPUs for this job')
 
     if JOB in ["compute_pval"]:
@@ -725,6 +727,23 @@ def main(args):
         else:
             
             # Standard binned mode
+
+            if f'combined_bin_{BIN_CONFIG.rsplit(".",1)[0]}' not in cis_links_df.columns:
+
+                # Add combined_bin column if not present
+                atac_bins_df = ctar.method.get_bins(adata_atac, num_bins=[n_atac_mean,n_atac_gc], type=atac_type, col='peak', layer='counts', genome_file=GENOME_FILE)
+                rna_bins_df = ctar.method.get_bins(adata_rna, num_bins=[n_rna_mean,n_rna_var], type=rna_type, col='gene', layer='counts')
+                atac_bin_dict = atac_bins_df.set_index('peak')[f'{atac_type}_bin'].to_dict()
+                rna_bin_dict = rna_bins_df.set_index('gene')[f'{rna_type}_bin'].to_dict()
+                cis_links_df['atac_mean_gc_bin_5.5'] = cis_links_df.peak.map(atac_bin_dict)
+                cis_links_df['rna_mean_var_bin_5.5'] = cis_links_df.gene.map(rna_bin_dict)
+                cis_links_df['combined_bin_5.5.5.5'] = cis_links_df['atac_mean_gc_bin_5.5'].astype(str) + '_' + cis_links_df['rna_mean_var_bin_5.5'].astype(str)
+
+            cis_links_df = ctar.data_loader.combine_peak_gene_bins(cis_links_df, atac_bins_df, rna_bins_df, 
+                atac_bins=[n_atac_mean,n_atac_gc], 
+                rna_bins=[n_rna_mean,n_rna_var]
+            )
+
             cis_links_dic, cis_idx_dic = ctar.data_loader.groupby_combined_bins(cis_links_df, 
                 combined_bin_col=f'combined_bin_{BIN_CONFIG.rsplit(".",1)[0]}', 
                 return_dic=True
@@ -786,6 +805,7 @@ def main(args):
                 pickle.dump(cis_idx_dic, f)
             with open(f'{results_folder}/cis_links_dic{file_suffix}.pkl', 'wb') as f:
                 pickle.dump(cis_links_dic, f)
+            cis_links_df.to_csv(f'{results_folder}/cis_links_df.csv')
                 
         if not RESULTS_PATH:
             cis_links_df.to_csv(f'{results_folder}/cis_links_df.csv')
@@ -901,6 +921,7 @@ def main(args):
             # Standard binned mode
             if ARRAY_IDX is None: 
 
+                print(f'# Computing control pairs for {BIN_CONFIG}...')
                 ctrl_links_dic, atac_bins_df, rna_bins_df = ctar.method.create_ctrl_pairs(
                     adata_atac, adata_rna, atac_bins=[n_atac_mean,n_atac_gc], rna_bins=[n_rna_mean,n_rna_var],
                     atac_type=atac_type, rna_type=rna_type, b=n_ctrl,
@@ -926,13 +947,13 @@ def main(args):
                     ctrl_links_dic = pickle.load(file)
                 ctrl_links_dic = dict(sorted(ctrl_links_dic.items()))
                 ctrl_links_dic = dict(list(ctrl_links_dic.items())[ARRAY_IDX*BATCH_SIZE : (ARRAY_IDX+1)*BATCH_SIZE])
-                print('# Running %d controls...' % (len(list(ctrl_links_dic.keys()))))
 
                 file_suffix = f'_{ARRAY_IDX}'
 
             rna_sparse = adata_rna.layers['counts']
             atac_sparse = adata_atac.layers['counts']
 
+            print('# Running %d controls...' % (len(list(ctrl_links_dic.keys()))))
             print('# Starting control links IRLS...')
             print(f'# ATAC and RNA dtype: {atac_sparse.dtype}, {rna_sparse.dtype}')
             start_time = time.time()
@@ -969,11 +990,14 @@ def main(args):
         else:
             with open(f'{results_folder}/ctrl_coeff_dic{file_suffix}.pkl', 'wb') as f:
                 pickle.dump(ctrl_coeff_dic, f)
+            print(f'# Saved file(s) ./ctrl_coeff_dic{file_suffix}.pkl')
 
             if ARRAY_IDX is None:
                 with open(f'{results_folder}/ctrl_links_dic.pkl', 'wb') as f:
                     pickle.dump(ctrl_links_dic, f)
                 cis_links_df.to_csv(f'{results_folder}cis_links_df.csv')
+
+                print(f'# Saved file(s) ./ctrl_links_dic.pkl, ./cis_links_df.csv')
 
 
     if JOB == "compute_pval":
@@ -1136,6 +1160,7 @@ if __name__ == "__main__":
     parser.add_argument("--binning_type", type=str, required=False, default='mean_var', help='mean_var, cholesky')
     parser.add_argument("--pybedtools_path", type=str, required=False, default=None)
     parser.add_argument("--array_idx", type=str, required=False, default=None)
+    parser.add_argument("--n_cores", type=str, required=False, default=None)
 
     args = parser.parse_args()
     main(args)
