@@ -6,18 +6,19 @@ from ctar.data_loader import get_gene_coords
 
 
 
-def null_peak_gene_pairs(rna, atac):
+def null_peak_gene_pairs(rna, atac, gene_tss=None, gene_col='gene_name', peak_col='gene_ids'):
 
     ''' Generate null peak gene pairs in which genes and peaks are on different chromosomes.
 
     Parameters
     ----------
     rna : an.AnnData
-        AnnData of len (#genes). Must contain rna.var DataFrame with 'intervals' describing
-        gene region and 'gene_name' listing gene names.
+        AnnData of len (#genes). Must contain rna.var DataFrame with `gene_tss` describing
+        gene region and `gene_col` listing gene names. If gene_tss is None, uses ctar
+        get_gene_coords to find gene body.
     atac : an.AnnData
-        AnnData of len (#peaks). Must contain rna.var DataFrame with 'gene_ids' describing
-        peak region and 'gene_ids' listing gene names.
+        AnnData of len (#peaks). Must contain rna.var DataFrame with `peak_col` describing
+        peak region.
 
     Returns
     -------
@@ -33,8 +34,11 @@ def null_peak_gene_pairs(rna, atac):
     rna.var['index_y'] = range(len(rna.var))
 
     # Add chrom information to rna and atac var
-    atac.var[['chr','range']] = atac.var['gene_ids'].str.split(':', n=1, expand=True)
-    rna.var[['chr','range']] = rna.var['interval'].str.split(':', n=1, expand=True)
+    atac.var[['chr','range']] = atac.var[peak_col].str.split(':', n=1, expand=True)
+    if gene_tss is None:
+        rna.var = get_gene_coords(rna.var, add_tss=False)
+        gene_tss = 'interval'
+    rna.var[['chr','range']] = rna.var[gene_tss].str.split(':', n=1, expand=True)
 
     df_list = []
 
@@ -42,11 +46,11 @@ def null_peak_gene_pairs(rna, atac):
     for chrom in atac.var.chr.unique():
         
         # Find corresponding chrom
-        chrm_peaks = atac.var.loc[atac.var['chr'] == chrom][['index_x','gene_ids']]
+        chrm_peaks = atac.var.loc[atac.var['chr'] == chrom][['index_x',peak_col]]
         # Find genes NOT on that chrom
-        nonchrm_genes = rna.var.loc[rna.var['chr'] != chrom][['index_y','gene_name']]
+        nonchrm_genes = rna.var.loc[rna.var['chr'] != chrom][['index_y',gene_col]]
         # Sample random genes
-        rand_genes = nonchrm_genes.sample(n=len(chrm_peaks))
+        rand_genes = nonchrm_genes.sample(n=len(chrm_peaks), replace=True)
         # Concat into one df
         rand_peak_gene_pairs = pd.concat([chrm_peaks.reset_index(drop=True),rand_genes.reset_index(drop=True)],axis=1)
         df_list += [rand_peak_gene_pairs]
