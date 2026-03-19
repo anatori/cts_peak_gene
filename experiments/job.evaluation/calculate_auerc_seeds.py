@@ -124,6 +124,7 @@ def main(args):
                 handle_dup="consensus",
                 dup_key_cols=["pg_pair"],
                 tie="zero",
+                stratified_bootstrap=True,
             )
 
             # annotate output

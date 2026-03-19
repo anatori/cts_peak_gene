@@ -375,6 +375,42 @@ def _paired_boot_summary(
     return {"diff_ci_lower": float(lo), "diff_ci_upper": float(hi), "p_value": pval}
 
 
+def _bootstrap_indices(
+    N: int,
+    rng: np.random.Generator,
+    labels: Optional[np.ndarray] = None,
+    stratified: bool = False,
+) -> np.ndarray:
+    """
+    Bootstrap row indices.
+    If stratified=True, sample positives and negatives separately to preserve class counts.
+    """
+    if (not stratified) or (labels is None):
+        return rng.integers(0, N, size=N)
+
+    y = np.asarray(labels, dtype=float)
+    pos_idx = np.flatnonzero(y > 0)
+    neg_idx = np.flatnonzero(y <= 0)
+
+    if pos_idx.size == 0 or neg_idx.size == 0:
+        return rng.integers(0, N, size=N)
+
+    draw_pos = rng.choice(pos_idx, size=pos_idx.size, replace=True)
+    draw_neg = rng.choice(neg_idx, size=neg_idx.size, replace=True)
+    idx = np.concatenate([draw_pos, draw_neg])
+    rng.shuffle(idx)
+    return idx
+
+
+def _safe_mean_finite(values: np.ndarray) -> float:
+    """Mean over finite values; returns NaN if none are finite."""
+    arr = np.asarray(values, dtype=float)
+    finite = np.isfinite(arr)
+    if not finite.any():
+        return np.nan
+    return float(np.mean(arr[finite]))
+
+
 def _prepare_work_df(
     all_df: pd.DataFrame,
     methods: List[str],
@@ -427,6 +463,8 @@ def _paired_bootstrap_est_and_samples(
     metrics_list: List[MetricSpec],
     n_bootstrap: int,
     rng: np.random.Generator,
+    gold_col: str = "label",
+    stratified_bootstrap: bool = False,
 ) -> Tuple[Dict[Tuple[str, str], float], Dict[str, Dict[str, np.ndarray]]]:
     """Shared paired bootstrap core. Returns point estimates + bootstrap samples per metric/method."""
     N = len(work_df)
@@ -440,8 +478,15 @@ def _paired_bootstrap_est_and_samples(
         for ms in metrics_list
     }
 
+    label_arr = work_df[gold_col].to_numpy() if stratified_bootstrap else None
+
     for b in range(n_bootstrap):
-        idx = rng.integers(0, N, size=N)
+        idx = _bootstrap_indices(
+            N=N,
+            rng=rng,
+            labels=label_arr,
+            stratified=stratified_bootstrap,
+        )
         sample = work_df.iloc[idx].reset_index(drop=True)
         for ms in metrics_list:
             for m in methods:
@@ -465,6 +510,7 @@ def compute_bootstrap_table(
     handle_dup: Optional[str] = None,
     dup_key_cols: Optional[List[str]] = None,
     tie: str = "zero",
+    stratified_bootstrap: bool = False,
 ) -> pd.DataFrame:
     """
     Paired bootstrap across methods for multiple metrics.
@@ -510,6 +556,8 @@ def compute_bootstrap_table(
         metrics_list=metrics_list,
         n_bootstrap=n_bootstrap,
         rng=rng,
+        gold_col=gold_col,
+        stratified_bootstrap=stratified_bootstrap,
     )
 
     rows = []
@@ -520,14 +568,20 @@ def compute_bootstrap_table(
         for m in methods:
             m_boot = boot[ms.name][m]
             m_est = est[(ms.name, m)]
+            finite = np.isfinite(m_boot)
+            n_finite = int(finite.sum())
+            n_nonfinite = int((~finite).sum())
 
             row = {
                 "method": m,
                 "metric": ms.name,
                 "estimate": float(m_est) if np.isfinite(m_est) else np.nan,
-                "ci_lower": float(np.nanquantile(m_boot[np.isfinite(m_boot)], alpha/2)) if np.isfinite(m_boot).any() else np.nan,
-                "ci_upper": float(np.nanquantile(m_boot[np.isfinite(m_boot)], 1-alpha/2)) if np.isfinite(m_boot).any() else np.nan,
+                "ci_lower": float(np.nanquantile(m_boot[finite], alpha/2)) if finite.any() else np.nan,
+                "ci_upper": float(np.nanquantile(m_boot[finite], 1-alpha/2)) if finite.any() else np.nan,
                 "diff_estimate": float(ref_est - m_est) if (np.isfinite(ref_est) and np.isfinite(m_est)) else np.nan,
+                "n_bootstrap_finite": n_finite,
+                "n_bootstrap_nonfinite": n_nonfinite,
+                "frac_bootstrap_nonfinite": float(n_nonfinite / n_bootstrap) if n_bootstrap > 0 else np.nan,
                 "n_bootstrap": int(n_bootstrap),
             }
 
@@ -558,6 +612,7 @@ def compute_bootstrap_table_seed_avg(
     tie: str = "zero",
     bootstrap_random_state: int = 0,
     ddof: int = 1,
+    stratified_bootstrap: bool = False,
 ) -> pd.DataFrame:
     """
     Paired bootstrap with seed-averaged evaluation.
@@ -608,7 +663,7 @@ def compute_bootstrap_table_seed_avg(
             vals = np.array([ms.fn(df, m) for df in seed_work], dtype=float)
             per_seed_est[(ms.name, m)] = vals
 
-    seed_mean = {(k): float(np.nanmean(v)) for k, v in per_seed_est.items()}
+    seed_mean = {(k): _safe_mean_finite(v) for k, v in per_seed_est.items()}
     seed_sd = {
         (k): float(np.nanstd(v, ddof=ddof))
         if np.isfinite(v).sum() > 1 else np.nan
@@ -623,12 +678,18 @@ def compute_bootstrap_table_seed_avg(
         for ms in metrics_list
     }
 
+    label_arr = seed_work[0][gold_col].to_numpy() if stratified_bootstrap else None
     for b in range(n_bootstrap):
-        idx = rng.integers(0, N, size=N)
+        idx = _bootstrap_indices(
+            N=N,
+            rng=rng,
+            labels=label_arr,
+            stratified=stratified_bootstrap,
+        )
         for ms in metrics_list:
             for m in methods:
                 vals = [ms.fn(df.iloc[idx].reset_index(drop=True), m) for df in seed_work]
-                boot[ms.name][m][b] = float(np.nanmean(vals))
+                boot[ms.name][m][b] = _safe_mean_finite(np.asarray(vals, dtype=float))
 
     # Summarize as in compute_bootstrap_table, plus seed_sd
     rows = []
@@ -641,6 +702,8 @@ def compute_bootstrap_table_seed_avg(
             m_est = seed_mean[(ms.name, m)]
 
             finite = np.isfinite(m_boot)
+            n_finite = int(finite.sum())
+            n_nonfinite = int((~finite).sum())
             row = {
                 "method": m,
                 "metric": ms.name,
@@ -650,6 +713,9 @@ def compute_bootstrap_table_seed_avg(
                 "ci_lower": float(np.nanquantile(m_boot[finite], alpha/2)) if finite.any() else np.nan,
                 "ci_upper": float(np.nanquantile(m_boot[finite], 1-alpha/2)) if finite.any() else np.nan,
                 "diff_estimate": float(ref_est - m_est) if (np.isfinite(ref_est) and np.isfinite(m_est)) else np.nan,
+                "n_bootstrap_finite": n_finite,
+                "n_bootstrap_nonfinite": n_nonfinite,
+                "frac_bootstrap_nonfinite": float(n_nonfinite / n_bootstrap) if n_bootstrap > 0 else np.nan,
                 "n_bootstrap": int(n_bootstrap),
             }
 
