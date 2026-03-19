@@ -10,6 +10,8 @@ import pickle
 import re
 import os
 
+from ctar.method import get_bins
+
 
 def peak_to_gene(peaks_df,genes_df,clean=True,split_peaks=True,distance=500000,col_names=['chr','start','end'],
                 gene_col='gene',peak_col='peak',genome='hg38',sep=';'):
@@ -328,6 +330,77 @@ def combine_peak_gene_bins(
         '_' + links_df[f'rna_{rna_type}_bin_{rna_suffix}'].astype(str)
 
     return links_df
+
+
+def attach_link_indices(links_df, adata_atac, adata_rna, peak_col='peak', gene_col='gene'):
+    """Fill link indices from currently loaded ATAC/RNA features."""
+    if not {peak_col, gene_col}.issubset(links_df.columns):
+        raise ValueError(f"links_df must contain '{peak_col}' and '{gene_col}' columns.")
+
+    adata_atac.var['atac_idx'] = range(len(adata_atac.var))
+    adata_rna.var['rna_idx'] = range(len(adata_rna.var))
+
+    atac_idx_map = adata_atac.var.set_index(peak_col)['atac_idx'].to_dict()
+    rna_idx_map = adata_rna.var.set_index(gene_col)['rna_idx'].to_dict()
+
+    links_df['index_x'] = links_df[peak_col].map(atac_idx_map)
+    links_df['index_y'] = links_df[gene_col].map(rna_idx_map)
+
+    if links_df['index_x'].isna().any():
+        missing_peaks = links_df.loc[links_df['index_x'].isna(), peak_col].astype(str).unique()[:5]
+        raise ValueError(f"Some peaks in cis_links_df.csv were not found in loaded ATAC features: {missing_peaks}")
+    if links_df['index_y'].isna().any():
+        missing_genes = links_df.loc[links_df['index_y'].isna(), gene_col].astype(str).unique()[:5]
+        raise ValueError(f"Some genes in cis_links_df.csv were not found in loaded RNA features: {missing_genes}")
+
+    links_df['index_x'] = links_df['index_x'].astype(int)
+    links_df['index_y'] = links_df['index_y'].astype(int)
+    links_df['atac_idx'] = links_df['index_x']
+    links_df['rna_idx'] = links_df['index_y']
+
+    return links_df
+
+
+def ensure_combined_bin_column(
+    links_df,
+    adata_atac,
+    adata_rna,
+    bin_config,
+    atac_type,
+    rna_type,
+    n_atac_mean,
+    n_atac_gc,
+    n_rna_mean,
+    n_rna_var,
+    genome_file,
+):
+    """Add combined_bin column if missing using current ATAC/RNA bins."""
+    combined_bin_col = f'combined_bin_{bin_config.rsplit(".", 1)[0]}'
+    if combined_bin_col in links_df.columns:
+        return links_df
+
+    atac_bins_df = get_bins(
+        adata_atac,
+        num_bins=[n_atac_mean, n_atac_gc],
+        type=atac_type,
+        col='peak',
+        layer='counts',
+        genome_file=genome_file,
+    )
+    rna_bins_df = get_bins(
+        adata_rna,
+        num_bins=[n_rna_mean, n_rna_var],
+        type=rna_type,
+        col='gene',
+        layer='counts',
+    )
+    return combine_peak_gene_bins(
+        links_df,
+        atac_bins_df,
+        rna_bins_df,
+        atac_bins=[n_atac_mean, n_atac_gc],
+        rna_bins=[n_rna_mean, n_rna_var],
+    )
 
 
 def groupby_combined_bins(links_df, combined_bin_col='combined_bin_5.5.5.5', return_dic=False):

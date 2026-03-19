@@ -241,6 +241,26 @@ def main(args):
             raise FileNotFoundError(f"Expected cis_links_df.csv at {csv_file}, but it was not found.")
         cis_links_df = pd.read_csv(csv_file, index_col=0)
 
+        # Allow custom peak-gene tables to be supplied for jobs that load the multiome object.
+        if JOB in ["compute_cis_only", "compute_ctrl_only", "generate_controls"]:
+            if {'peak', 'gene'}.issubset(cis_links_df.columns):
+                cis_links_df = ctar.data_loader.attach_link_indices(cis_links_df, adata_atac, adata_rna)
+
+                if not USE_INF_MODE:
+                    cis_links_df = ctar.data_loader.ensure_combined_bin_column(
+                        cis_links_df,
+                        adata_atac,
+                        adata_rna,
+                        BIN_CONFIG,
+                        atac_type,
+                        rna_type,
+                        n_atac_mean,
+                        n_atac_gc,
+                        n_rna_mean,
+                        n_rna_var,
+                        GENOME_FILE,
+                    )
+
     if JOB in ["compute_ctar", "compute_ctrl_only", "compute_cis_only"]:
 
         if N_CORES:
@@ -361,11 +381,7 @@ def main(args):
             )
             
             # Get cis links indices
-            adata_atac.var['atac_idx'] = range(len(adata_atac.var))
-            adata_rna.var['rna_idx'] = range(len(adata_rna.var))
-            cis_links_df['atac_idx'] = cis_links_df['peak'].map(adata_atac.var['atac_idx'])
-            cis_links_df['rna_idx'] = cis_links_df['gene'].map(adata_rna.var['rna_idx'])
-            
+            cis_links_df = ctar.data_loader.attach_link_indices(cis_links_df, adata_atac, adata_rna)
             cis_links_array = cis_links_df[['atac_idx', 'rna_idx']].to_numpy()
             link_ids = cis_links_df.index.to_numpy()
 
@@ -776,10 +792,7 @@ def main(args):
         if USE_INF_MODE:
 
             # For inf.inf mode, compute all cis links
-            adata_atac.var['atac_idx'] = range(len(adata_atac.var))
-            adata_rna.var['rna_idx'] = range(len(adata_rna.var))
-            cis_links_df['atac_idx'] = cis_links_df['peak'].map(adata_atac.var['atac_idx'])
-            cis_links_df['rna_idx'] = cis_links_df['gene'].map(adata_rna.var['rna_idx'])
+            cis_links_df = ctar.data_loader.attach_link_indices(cis_links_df, adata_atac, adata_rna)
             cis_links_array = cis_links_df[['atac_idx', 'rna_idx']].to_numpy()
             link_ids = cis_links_df.index.to_numpy()
 
@@ -835,21 +848,19 @@ def main(args):
         else:
             
             # Standard binned mode
-
-            if f'combined_bin_{BIN_CONFIG.rsplit(".",1)[0]}' not in cis_links_df.columns:
-
-                # Add combined_bin column if not present
-                atac_bins_df = ctar.method.get_bins(adata_atac, num_bins=[n_atac_mean,n_atac_gc], type=atac_type, col='peak', layer='counts', genome_file=GENOME_FILE)
-                rna_bins_df = ctar.method.get_bins(adata_rna, num_bins=[n_rna_mean,n_rna_var], type=rna_type, col='gene', layer='counts')
-                atac_bin_dict = atac_bins_df.set_index('peak')[f'{atac_type}_bin'].to_dict()
-                rna_bin_dict = rna_bins_df.set_index('gene')[f'{rna_type}_bin'].to_dict()
-                cis_links_df['atac_mean_gc_bin_5.5'] = cis_links_df.peak.map(atac_bin_dict)
-                cis_links_df['rna_mean_var_bin_5.5'] = cis_links_df.gene.map(rna_bin_dict)
-                cis_links_df['combined_bin_5.5.5.5'] = cis_links_df['atac_mean_gc_bin_5.5'].astype(str) + '_' + cis_links_df['rna_mean_var_bin_5.5'].astype(str)
-                cis_links_df = ctar.data_loader.combine_peak_gene_bins(cis_links_df, atac_bins_df, rna_bins_df, 
-                    atac_bins=[n_atac_mean,n_atac_gc], 
-                    rna_bins=[n_rna_mean,n_rna_var]
-                )
+            cis_links_df = ctar.data_loader.ensure_combined_bin_column(
+                cis_links_df,
+                adata_atac,
+                adata_rna,
+                BIN_CONFIG,
+                atac_type,
+                rna_type,
+                n_atac_mean,
+                n_atac_gc,
+                n_rna_mean,
+                n_rna_var,
+                GENOME_FILE,
+            )
 
             cis_links_dic, cis_idx_dic = ctar.data_loader.groupby_combined_bins(cis_links_df, 
                 combined_bin_col=f'combined_bin_{BIN_CONFIG.rsplit(".",1)[0]}', 
@@ -943,10 +954,7 @@ def main(args):
                 )
             
             # Get cis links indices
-            adata_atac.var['atac_idx'] = range(len(adata_atac.var))
-            adata_rna.var['rna_idx'] = range(len(adata_rna.var))
-            cis_links_df['atac_idx'] = cis_links_df['peak'].map(adata_atac.var['atac_idx'])
-            cis_links_df['rna_idx'] = cis_links_df['gene'].map(adata_rna.var['rna_idx'])
+            cis_links_df = ctar.data_loader.attach_link_indices(cis_links_df, adata_atac, adata_rna)
             
             # Determine batch range
             if ARRAY_IDX is not None: 
