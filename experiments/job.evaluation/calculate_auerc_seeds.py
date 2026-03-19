@@ -39,11 +39,11 @@ def main(args):
 
     os.makedirs(RES_PATH, exist_ok=True)
     files = [f for f in os.listdir(MERGE_PATH) if os.path.isfile(f"{MERGE_PATH}/{f}")]
-    print("Using merge files:", files)
-    print("With methods:", METHOD_COLS)
-    print("GTEx/oneK1K pip thresholds:", EQTL_PIP_THRES_LIST)
-    print("Neg threshold:", EQTL_NEG_THRES)
-    print("Fillna:", FILLNA, "Bootstrap:", N_BOOTSTRAP)
+    print("Using merge files:", files, flush=True)
+    print("With methods:", METHOD_COLS, flush=True)
+    print("GTEx/oneK1K pip thresholds:", EQTL_PIP_THRES_LIST, flush=True)
+    print("Neg threshold:", EQTL_NEG_THRES, flush=True)
+    print("Fillna:", FILLNA, "Bootstrap:", N_BOOTSTRAP, flush=True)
 
 
     for file in files:
