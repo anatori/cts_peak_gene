@@ -464,7 +464,7 @@ def _paired_bootstrap_est_and_samples(
     n_bootstrap: int,
     rng: np.random.Generator,
     gold_col: str = "label",
-    stratified_bootstrap: bool = False,
+    stratified_bootstrap: bool = True,
 ) -> Tuple[Dict[Tuple[str, str], float], Dict[str, Dict[str, np.ndarray]]]:
     """Shared paired bootstrap core. Returns point estimates + bootstrap samples per metric/method."""
     N = len(work_df)
@@ -510,7 +510,7 @@ def compute_bootstrap_table(
     handle_dup: Optional[str] = None,
     dup_key_cols: Optional[List[str]] = None,
     tie: str = "zero",
-    stratified_bootstrap: bool = False,
+    stratified_bootstrap: bool = True,
 ) -> pd.DataFrame:
     """
     Paired bootstrap across methods for multiple metrics.
@@ -612,7 +612,7 @@ def compute_bootstrap_table_seed_avg(
     tie: str = "zero",
     bootstrap_random_state: int = 0,
     ddof: int = 1,
-    stratified_bootstrap: bool = False,
+    stratified_bootstrap: bool = True,
 ) -> pd.DataFrame:
     """
     Paired bootstrap with seed-averaged evaluation.
