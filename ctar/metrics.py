@@ -576,12 +576,12 @@ def compute_bootstrap_table(
                 "method": m,
                 "metric": ms.name,
                 "estimate": float(m_est) if np.isfinite(m_est) else np.nan,
+                "bootstrap_sd": float(np.nanstd(m_boot[finite], ddof=1)) if n_finite > 1 else np.nan,
                 "ci_lower": float(np.nanquantile(m_boot[finite], alpha/2)) if finite.any() else np.nan,
                 "ci_upper": float(np.nanquantile(m_boot[finite], 1-alpha/2)) if finite.any() else np.nan,
                 "diff_estimate": float(ref_est - m_est) if (np.isfinite(ref_est) and np.isfinite(m_est)) else np.nan,
                 "n_bootstrap_finite": n_finite,
                 "n_bootstrap_nonfinite": n_nonfinite,
-                "frac_bootstrap_nonfinite": float(n_nonfinite / n_bootstrap) if n_bootstrap > 0 else np.nan,
                 "n_bootstrap": int(n_bootstrap),
             }
 
@@ -710,12 +710,12 @@ def compute_bootstrap_table_seed_avg(
                 "estimate": float(m_est) if np.isfinite(m_est) else np.nan,
                 "seed_sd": float(seed_sd[(ms.name, m)]) if np.isfinite(seed_sd[(ms.name, m)]) else np.nan,
                 "n_seeds": int(len(seeds)),
+                "bootstrap_sd": float(np.nanstd(m_boot[finite], ddof=1)) if n_finite > 1 else np.nan,
                 "ci_lower": float(np.nanquantile(m_boot[finite], alpha/2)) if finite.any() else np.nan,
                 "ci_upper": float(np.nanquantile(m_boot[finite], 1-alpha/2)) if finite.any() else np.nan,
                 "diff_estimate": float(ref_est - m_est) if (np.isfinite(ref_est) and np.isfinite(m_est)) else np.nan,
                 "n_bootstrap_finite": n_finite,
                 "n_bootstrap_nonfinite": n_nonfinite,
-                "frac_bootstrap_nonfinite": float(n_nonfinite / n_bootstrap) if n_bootstrap > 0 else np.nan,
                 "n_bootstrap": int(n_bootstrap),
             }
 
