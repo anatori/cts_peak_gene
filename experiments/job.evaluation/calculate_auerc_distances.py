@@ -61,7 +61,7 @@ def _parse_distance_bins(raw_bins: str):
 
 
 def main(args):
-    OVERLAP_PATH = args.overlap_path
+    MERGE_PATH = args.merge_path
     RES_PATH = args.res_path
     DATASET_NAME = args.dataset_name
 
@@ -99,8 +99,8 @@ def main(args):
         raise ValueError(f"gene_tss_path is missing required columns: {sorted(missing_gene_cols)}")
 
     files = [
-        f for f in os.listdir(OVERLAP_PATH)
-        if os.path.isfile(f"{OVERLAP_PATH}/{f}") and f.endswith(".csv")
+        f for f in os.listdir(MERGE_PATH)
+        if os.path.isfile(f"{MERGE_PATH}/{f}") and f.endswith(".csv")
     ]
     files.sort()
 
@@ -111,7 +111,7 @@ def main(args):
     print("Fillna:", FILLNA, "Bootstrap:", N_BOOTSTRAP, flush=True)
 
     for file in files:
-        overlap_df0 = pd.read_csv(f"{OVERLAP_PATH}/{file}")
+        overlap_df0 = pd.read_csv(f"{MERGE_PATH}/{file}")
         label = _parse_label(file, DATASET_NAME)
 
         if label in ["ctcf_chiapet", "rnap2_chiapet", "intact_hic"]:
@@ -224,10 +224,16 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
 
     parser.add_argument(
-        "--overlap_path",
+        "--merge_path",
         type=str,
         default="/projects/zhanglab/users/ana/multiome/validation/neat",
-        help="Path containing aggregated overlap CSVs.",
+        help="Path containing merged evaluation CSVs.",
+    )
+    parser.add_argument(
+        "--overlap_path",
+        dest="merge_path",
+        type=str,
+        help=argparse.SUPPRESS,
     )
     parser.add_argument(
         "--res_path",
