@@ -1,4 +1,4 @@
-Metadata-Version: 2.1
+Metadata-Version: 2.4
 Name: ctar
 Version: 0.0.1
 Summary: Cell type-specific ATAC-RNA links
@@ -20,6 +20,16 @@ Requires-Dist: statsmodels>=0.11.0
 Requires-Dist: muon>=0.1.5
 Requires-Dist: pybedtools>=0.9.1
 Requires-Dist: biomart>=0.9.2
+Dynamic: author
+Dynamic: author-email
+Dynamic: classifier
+Dynamic: description
+Dynamic: description-content-type
+Dynamic: home-page
+Dynamic: license-file
+Dynamic: requires-dist
+Dynamic: requires-python
+Dynamic: summary
 
 ### Installation
 Install `ctar` in developer mode: go to the repo and use `pip install -e .`
