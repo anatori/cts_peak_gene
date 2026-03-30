@@ -4,6 +4,7 @@ import scipy as sp
 from statsmodels import stats
 import pybedtools
 from pybedtools import BedTool
+import gzip
 import os
 import matplotlib.pyplot as plt
 import matplotlib_venn as venn
@@ -412,6 +413,71 @@ def find_gene_tss():
     return gene_df
 
 
+def strip_gene_version(values):
+    """Remove Ensembl version suffixes like ENSG000001.5 -> ENSG000001."""
+    if isinstance(values, pd.Series):
+        return values.astype(str).str.split(".", n=1).str[0]
+    return str(values).split(".", 1)[0]
+
+
+def _parse_gtf_attributes(attr_field):
+    attrs = {}
+    for item in str(attr_field).strip().split(";"):
+        item = item.strip()
+        if not item or " " not in item:
+            continue
+        key, value = item.split(" ", 1)
+        attrs[key] = value.strip().strip('"')
+    return attrs
+
+
+def _normalize_gtf_chr(chrom):
+    chrom = str(chrom).strip()
+    if chrom.startswith("chr"):
+        return chrom
+    return f"chr{chrom}"
+
+
+def load_gene_tss_from_gencode(gtf_path):
+    """
+    Parse a GENCODE GTF/GTF.GZ and return gene-level TSS coordinates.
+
+    Returns
+    -------
+    gene_df : pd.DataFrame
+        Columns: ['gene', 'gene_chr', 'tss']
+    """
+    open_fn = gzip.open if str(gtf_path).endswith(".gz") else open
+    rows = []
+
+    with open_fn(gtf_path, "rt") as handle:
+        for line in handle:
+            if not line or line.startswith("#"):
+                continue
+            fields = line.rstrip("\n").split("\t")
+            if len(fields) < 9 or fields[2] != "gene":
+                continue
+
+            chrom, _, _, start, end, _, strand, _, attrs_raw = fields
+            attrs = _parse_gtf_attributes(attrs_raw)
+            gene_id = attrs.get("gene_id")
+            if gene_id is None:
+                continue
+
+            start = pd.to_numeric(start, errors="coerce")
+            end = pd.to_numeric(end, errors="coerce")
+            if pd.isna(start) or pd.isna(end):
+                continue
+
+            tss = int(start) if strand == "+" else int(end)
+            rows.append((strip_gene_version(gene_id), _normalize_gtf_chr(chrom), tss))
+
+    gene_df = pd.DataFrame(rows, columns=["gene", "gene_chr", "tss"]).drop_duplicates(subset=["gene"])
+    if gene_df.empty:
+        raise ValueError(f"No gene entries were parsed from GENCODE GTF: {gtf_path}")
+    return gene_df
+
+
 def add_tss_distances(query_df, gene_df, gene_col="gene"):
     """
     Adds gene TSS and calculates distance from query interval to TSS.
@@ -656,4 +722,3 @@ def annot_enhancer(query_df,enh_df,label='enh',return_intersect=False,sep=';',en
             query_df[f'{label}_{enh_col}'] = query_grpby[enh_col].agg(list).values 
 
     return query_df
-
