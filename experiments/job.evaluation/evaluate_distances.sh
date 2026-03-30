@@ -16,7 +16,7 @@ SCRIPTS_DIR="${SCRIPTS_DIR:-${REPO_ROOT}/experiments/job.evaluation}"
 # Inputs / outputs
 MERGE_DIR="${MERGE_DIR:-/projects/zhanglab/users/ana/multiome/validation/evaluation/${DATASET_NAME}}"
 AURC_DIR="${AURC_DIR:-/projects/zhanglab/users/ana/multiome/validation/evaluation/tables/metrics_jitter_distance/${DATASET_NAME}}"
-GENE_TSS_PATH="${GENE_TSS_PATH:-/projects/zhanglab/users/ana/reference/gene_tss.tsv.gz}"
+GENCODE_GTF="${GENCODE_GTF:-/projects/zhanglab/users/ana/reference/gencode.gtf.gz}"
 
 # Evaluation settings
 METHOD_COLS="${METHOD_COLS:-scmm,signac,ctar_filt_z,ctar_filt}"
@@ -70,7 +70,7 @@ AURC_JOB_ID=$(submit \
             --merge_path '${MERGE_DIR}' \
             --res_path '${AURC_DIR}' \
             --dataset_name '${DATASET_NAME}' \
-            --gene_tss_path '${GENE_TSS_PATH}' \
+            --gencode_gtf '${GENCODE_GTF}' \
             --n_bootstrap '${N_BOOTSTRAP}' \
             --reference_method '${REFERENCE_METHOD}' \
             --method_cols '${METHOD_COLS}' \

@@ -74,7 +74,7 @@ def main(args):
     GTEX_SCORE_THRES = float(args.gtex_score_thres)
     ABC_SCORE_THRES = float(args.abc_score_thres)
 
-    GENE_TSS_PATH = args.gene_tss_path
+    GENCODE_GTF = args.gencode_gtf
     PEAK_COL = args.peak_col
     GENE_COL = args.gene_col
 
@@ -88,15 +88,7 @@ def main(args):
 
     os.makedirs(RES_PATH, exist_ok=True)
 
-    gene_df = pd.read_csv(
-        GENE_TSS_PATH,
-        sep=args.gene_tss_sep,
-        compression=args.gene_tss_compression,
-    )
-    required_gene_cols = {"gene", "gene_chr", "tss"}
-    missing_gene_cols = required_gene_cols - set(gene_df.columns)
-    if missing_gene_cols:
-        raise ValueError(f"gene_tss_path is missing required columns: {sorted(missing_gene_cols)}")
+    gene_df = ctar.gentruth.load_gene_tss_from_gencode(GENCODE_GTF)
 
     files = [
         f for f in os.listdir(MERGE_PATH)
@@ -130,6 +122,7 @@ def main(args):
             raise ValueError(f"Unrecognized dataset label prefix for file {file} -> label={label}")
 
         overlap_df["label"] = overlap_df["label"].astype(bool)
+        overlap_df[GENE_COL] = ctar.gentruth.strip_gene_version(overlap_df[GENE_COL])
 
         if not {"chr", "start", "end"}.issubset(overlap_df.columns):
             overlap_df = _parse_peak_coords_from_peak_col(overlap_df, peak_col=PEAK_COL)
@@ -257,13 +250,17 @@ if __name__ == "__main__":
     parser.add_argument("--abc_score_thres", type=str, default="0.2")
 
     parser.add_argument(
-        "--gene_tss_path",
+        "--gencode_gtf",
         type=str,
         required=True,
-        help="Path to a gene TSS table with columns gene,gene_chr,tss.",
+        help="Path to a GENCODE GTF or GTF.GZ annotation file.",
     )
-    parser.add_argument("--gene_tss_sep", type=str, default="\t")
-    parser.add_argument("--gene_tss_compression", type=str, default="infer")
+    parser.add_argument(
+        "--gene_tss_path",
+        dest="gencode_gtf",
+        type=str,
+        help=argparse.SUPPRESS,
+    )
     parser.add_argument("--peak_col", type=str, default="peak")
     parser.add_argument("--gene_col", type=str, default="gene")
 
