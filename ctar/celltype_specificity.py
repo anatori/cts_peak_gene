@@ -135,13 +135,121 @@ def attach_link_specificity(link_df,
     return out
 
 
-def pip_entropy_specificity(pip_matrix, eps=1e-6):
+def attach_ground_truth_specificity(
+    link_df,
+    truth_spec_df,
+    link_key_cols=('tenk10k_id', 'gt_gene'),
+    truth_key_cols=('tenk10k_id', 'gt_gene'),
+    truth_spec_col='specificity',
+    out_col='specificity',
+    duplicate_strategy='error',
+):
+    """
+    Attach a ground-truth specificity metric to evaluation rows by key columns.
+
+    Parameters
+    ----------
+    link_df
+        Evaluation dataframe to annotate.
+    truth_spec_df
+        Specificity table keyed by ground-truth identifiers.
+    link_key_cols
+        Column names in link_df used for the join.
+    truth_key_cols
+        Column names in truth_spec_df used for the join.
+    truth_spec_col
+        Specificity column in truth_spec_df.
+    out_col
+        Output specificity column name in the returned dataframe.
+    duplicate_strategy
+        How to handle duplicated keys in truth_spec_df:
+        'error', 'first', or 'mean'.
+    """
+    link_key_cols = list(link_key_cols)
+    truth_key_cols = list(truth_key_cols)
+
+    if len(link_key_cols) != len(truth_key_cols):
+        raise ValueError("link_key_cols and truth_key_cols must have the same length.")
+
+    missing_link = [c for c in link_key_cols if c not in link_df.columns]
+    if missing_link:
+        raise ValueError(f"Missing link_df key columns: {missing_link}")
+
+    required_truth_cols = truth_key_cols + [truth_spec_col]
+    missing_truth = [c for c in required_truth_cols if c not in truth_spec_df.columns]
+    if missing_truth:
+        raise ValueError(f"Missing truth_spec_df columns: {missing_truth}")
+
+    truth = truth_spec_df[required_truth_cols].copy()
+
+    dup_mask = truth.duplicated(truth_key_cols, keep=False)
+    if dup_mask.any():
+        if duplicate_strategy == 'error':
+            dup_rows = truth.loc[dup_mask, truth_key_cols].drop_duplicates()
+            raise ValueError(
+                "Duplicate keys found in truth_spec_df. "
+                f"Example duplicated keys: {dup_rows.head().to_dict(orient='records')}"
+            )
+        if duplicate_strategy == 'first':
+            truth = truth.drop_duplicates(truth_key_cols, keep='first')
+        elif duplicate_strategy == 'mean':
+            truth = (
+                truth.groupby(truth_key_cols, as_index=False)[truth_spec_col]
+                .mean()
+            )
+        else:
+            raise ValueError(
+                "duplicate_strategy must be one of {'error', 'first', 'mean'}."
+            )
+
+    rename_map = {
+        truth_key_col: link_key_col
+        for link_key_col, truth_key_col in zip(link_key_cols, truth_key_cols)
+        if link_key_col != truth_key_col
+    }
+    truth = truth.rename(columns=rename_map)
+
+    out = link_df.merge(truth, on=link_key_cols, how='left')
+    if truth_spec_col != out_col:
+        out = out.rename(columns={truth_spec_col: out_col})
+    return out
+
+
+def pip_entropy_specificity(pip_matrix, eps=1e-12):
     """
     pip_matrix: (n, k) matrix where n is #links, k is #subtypes
-    """
-    q = pip_matrix / pip_matrix.sum(axis=1).reshape(-1,1)
-    k = pip_matrix.shape[1]
-    h = -(q * np.log(q + eps)).sum(axis=1)
-    h_norm = h / np.log(k)
 
-    return 1.0 - h_norm
+    Returns normalized entropy specificity in [0, 1] when defined.
+    Rows with zero total signal return np.nan.
+    """
+    pip_matrix = np.asarray(pip_matrix, dtype=float)
+
+    if pip_matrix.ndim != 2:
+        raise ValueError("pip_matrix must be a 2D array.")
+
+    if np.any(pip_matrix < 0):
+        raise ValueError("pip_matrix must be nonnegative.")
+
+    k = pip_matrix.shape[1]
+    if k <= 1:
+        return np.full(pip_matrix.shape[0], np.nan, dtype=float)
+
+    row_sums = pip_matrix.sum(axis=1)
+    out = np.full(pip_matrix.shape[0], np.nan, dtype=float)
+
+    valid = row_sums > eps
+    if not np.any(valid):
+        return out
+
+    q = pip_matrix[valid] / row_sums[valid, None]
+
+    # Use the standard convention 0 * log(0) = 0.
+    log_q = np.zeros_like(q)
+    positive = q > 0
+    log_q[positive] = np.log(q[positive])
+
+    h = -(q * log_q).sum(axis=1)
+    h_norm = h / np.log(k)
+    out[valid] = 1.0 - h_norm
+
+    return out
