@@ -133,3 +133,15 @@ def attach_link_specificity(link_df,
     ).astype(float)
 
     return out
+
+
+def pip_entropy_specificity(pip_matrix, eps=1e-6):
+    """
+    pip_matrix: (n, k) matrix where n is #links, k is #subtypes
+    """
+    q = pip_matrix / pip_matrix.sum(axis=1).reshape(-1,1)
+    k = pip_matrix.shape[1]
+    h = -(q * np.log(q + eps)).sum(axis=1)
+    h_norm = h / np.log(k)
+
+    return 1.0 - h_norm
