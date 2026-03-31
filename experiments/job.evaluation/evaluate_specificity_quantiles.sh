@@ -16,8 +16,7 @@ SCRIPTS_DIR="${SCRIPTS_DIR:-${REPO_ROOT}/experiments/job.evaluation}"
 # Inputs / outputs
 MERGE_DIR="${MERGE_DIR:-/projects/zhanglab/users/ana/multiome/validation/evaluation/${DATASET_NAME}}"
 AURC_DIR="${AURC_DIR:-/projects/zhanglab/users/ana/multiome/validation/evaluation/tables/metrics_jitter_specificity/${DATASET_NAME}}"
-GENE_SPEC_PATH="${GENE_SPEC_PATH:-}"
-PEAK_SPEC_PATH="${PEAK_SPEC_PATH:-}"
+TRUTH_SPEC_PATH="${TRUTH_SPEC_PATH:-}"
 
 # Evaluation settings
 METHOD_COLS="${METHOD_COLS:-scmm,signac,ctar_filt_z,ctar_filt}"
@@ -27,7 +26,7 @@ N_BOOTSTRAP="${N_BOOTSTRAP:-1000}"
 # Optional specificity-script settings
 GTEX_SCORE_THRES="${GTEX_SCORE_THRES:-0.5}"
 ABC_SCORE_THRES="${ABC_SCORE_THRES:-0.2}"
-SPECIFICITY_COL="${SPECIFICITY_COL:-link_specificity_geom}"
+SPECIFICITY_COL="${SPECIFICITY_COL:-specificity}"
 SPECIFICITY_QUANTILES="${SPECIFICITY_QUANTILES:-0,0.25,0.5,0.75,1}"
 SPECIFICITY_QUANTILE_LABELS="${SPECIFICITY_QUANTILE_LABELS:-}"
 QUANTILE_RANK_METHOD="${QUANTILE_RANK_METHOD:-average}"
@@ -39,6 +38,12 @@ DROP_MISSING_METHOD_SCORES="${DROP_MISSING_METHOD_SCORES:-0}"
 FORCE_RECOMPUTE_SPECIFICITY="${FORCE_RECOMPUTE_SPECIFICITY:-0}"
 PEAK_COL="${PEAK_COL:-peak}"
 GENE_COL="${GENE_COL:-gene}"
+MERGE_TRUTH_ID_COL="${MERGE_TRUTH_ID_COL:-tenk10k_id}"
+MERGE_TRUTH_GENE_COL="${MERGE_TRUTH_GENE_COL:-gt_gene}"
+TRUTH_ID_COL="${TRUTH_ID_COL:-tenk10k_id}"
+TRUTH_GENE_COL="${TRUTH_GENE_COL:-gt_gene}"
+TRUTH_SPEC_COL="${TRUTH_SPEC_COL:-specificity}"
+TRUTH_DUPLICATE_STRATEGY="${TRUTH_DUPLICATE_STRATEGY:-error}"
 
 echo "Evaluating specificity-quantile-stratified AUERC for ${DATASET_NAME}..."
 
@@ -49,11 +54,8 @@ submit() {
 }
 
 EXTRA_ARGS=()
-if [[ -n "${GENE_SPEC_PATH}" ]]; then
-  EXTRA_ARGS+=(--gene_specificity_path "${GENE_SPEC_PATH}")
-fi
-if [[ -n "${PEAK_SPEC_PATH}" ]]; then
-  EXTRA_ARGS+=(--peak_specificity_path "${PEAK_SPEC_PATH}")
+if [[ -n "${TRUTH_SPEC_PATH}" ]]; then
+  EXTRA_ARGS+=(--truth_specificity_path "${TRUTH_SPEC_PATH}")
 fi
 if [[ "${PRINT_BIN_SUMMARY}" == "1" ]]; then
   EXTRA_ARGS+=(--print_bin_summary)
@@ -92,6 +94,12 @@ AURC_JOB_ID=$(submit \
             --quantile_rank_method '${QUANTILE_RANK_METHOD}' \
             --peak_col '${PEAK_COL}' \
             --gene_col '${GENE_COL}' \
+            --merge_truth_id_col '${MERGE_TRUTH_ID_COL}' \
+            --merge_truth_gene_col '${MERGE_TRUTH_GENE_COL}' \
+            --truth_id_col '${TRUTH_ID_COL}' \
+            --truth_gene_col '${TRUTH_GENE_COL}' \
+            --truth_specificity_col '${TRUTH_SPEC_COL}' \
+            --truth_duplicate_strategy '${TRUTH_DUPLICATE_STRATEGY}' \
             --min_bin_n '${MIN_BIN_N}' \
             --min_bin_pos '${MIN_BIN_POS}' \
             ${EXTRA_ARGS[*]}")
