@@ -140,7 +140,7 @@ def sortby_ct_adata(adata,obs_col='celltype'):
 
 def multiome_trackplot(df, atac = None, rna = None, sortby = 'poiss_coeff', coeff_label = 'coeff', coeff = 'poiss_coeff', pval_label = 'pval', pval = 'mc_pval', 
                         ascending = False, top_n = 10, adata_sort = False, presorted = False, sort_cells = 'rna', obs_col='celltype',
-                        height = 5, width = 18, axlim = None):
+                        height = 5, width = None, axlim = None):
 
     """Custom trackplot for showing ATAC and RNA information for top peak-gene pairs across all cells, sorted by
     celltype. Within celltype, both ATAC and RNA results are sorted by cells with the highest RNA expression.
@@ -166,8 +166,9 @@ def multiome_trackplot(df, atac = None, rna = None, sortby = 'poiss_coeff', coef
         will call sortby_ct_mdata to sort it (takes longer).
     height : int
         Figure height passed into matplotlib.
-    width : int
-        Figure width passed into matplotlib.
+    width : int | None
+        Figure width passed into matplotlib. If None, width is scaled to the
+        number of cell types and capped to avoid overly wide plots.
 
     Returns
     -------
@@ -200,6 +201,8 @@ def multiome_trackplot(df, atac = None, rna = None, sortby = 'poiss_coeff', coef
 
     ct_labels = rna_sorted.obs[obs_col].drop_duplicates().to_numpy()
     max_tracks = min(top_n, len(ct_labels))
+    if width is None:
+        width = min(18, max(10, 6 + 0.6 * len(ct_labels)))
 
     # sort df by top values of sortby arg
     if not presorted:
