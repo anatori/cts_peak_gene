@@ -198,11 +198,14 @@ def multiome_trackplot(df, atac = None, rna = None, sortby = 'poiss_coeff', coef
         atac_sorted = sortby_ct_adata(atac,obs_col=obs_col)
         rna_sorted = sortby_ct_adata(rna,obs_col=obs_col)
 
+    ct_labels = rna_sorted.obs[obs_col].drop_duplicates().to_numpy()
+    max_tracks = min(top_n, len(ct_labels))
+
     # sort df by top values of sortby arg
     if not presorted:
-        sorted_df = df.sort_values(sortby,ascending=ascending).head(top_n).copy()
+        sorted_df = df.sort_values(sortby,ascending=ascending).head(max_tracks).copy()
     else:
-        sorted_df = df.head(top_n).copy()
+        sorted_df = df.head(max_tracks).copy()
     sorted_df = sorted_df.reset_index(drop=True)
 
     rna_feature_col = 'gene' if 'gene' in rna_sorted.var.columns else None
@@ -254,7 +257,6 @@ def multiome_trackplot(df, atac = None, rna = None, sortby = 'poiss_coeff', coef
 
     # get ct labels and number of cells
     cts = rna_sorted.obs[obs_col].reset_index(drop=True) # ct should be the same between groups so im using rna as ref
-    ct_labels = cts.drop_duplicates().to_numpy()
     ct_sizes = np.concatenate(([0], np.cumsum([(cts == ct).sum() for ct in ct_labels])))
     ct_centers = (ct_sizes[:-1] + ct_sizes[1:]) / 2
 
