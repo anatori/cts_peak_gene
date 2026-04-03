@@ -111,6 +111,20 @@ def _attach_specificity(
                 f"peaks_mapped={n_unique_peak_mapped}/{n_unique_peak_input}",
                 flush=True,
             )
+
+        # Link-specificity mode naturally creates link_specificity_geom/min rather than
+        # a generic 'specificity' column. Preserve backward compatibility by aliasing
+        # the default name to the geometric score unless the caller explicitly asked
+        # for another available output column.
+        if specificity_col not in out.columns and specificity_col == "specificity":
+            if "link_specificity_geom" in out.columns:
+                out[specificity_col] = out["link_specificity_geom"]
+                if verbose:
+                    print(
+                        "SPECIFICITY_COL was 'specificity' in link-specificity mode; "
+                        "using link_specificity_geom for binning.",
+                        flush=True,
+                    )
     else:
         if truth_spec_df is None:
             raise ValueError(
@@ -129,9 +143,19 @@ def _attach_specificity(
             duplicate_strategy=truth_duplicate_strategy,
         )
     if specificity_col not in out.columns:
+        available_specificity_cols = [
+            c for c in [
+                "specificity",
+                "link_specificity_geom",
+                "link_specificity_min",
+                "gene_specificity",
+                "peak_specificity",
+            ] if c in out.columns
+        ]
         raise ValueError(
             f"Expected specificity column '{specificity_col}' after attaching specificity, "
-            f"but only found: {list(out.columns)}"
+            f"but only found: {list(out.columns)}. "
+            f"Specificity-like columns available: {available_specificity_cols}"
         )
     return out
 
