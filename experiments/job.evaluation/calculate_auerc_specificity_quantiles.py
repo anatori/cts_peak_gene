@@ -43,7 +43,11 @@ def _default_quantile_labels(quantiles):
 def _attach_specificity(
     df: pd.DataFrame,
     truth_spec_df: pd.DataFrame | None,
+    gene_spec_df: pd.DataFrame | None,
+    peak_spec_df: pd.DataFrame | None,
     specificity_col: str,
+    gene_spec_col: str,
+    peak_spec_col: str,
     merge_truth_id_col: str,
     merge_truth_gene_col: str,
     truth_id_col: str,
@@ -51,28 +55,80 @@ def _attach_specificity(
     truth_specificity_col: str,
     truth_duplicate_strategy: str,
     force_recompute: bool,
+    verbose: bool = True,
 ) -> pd.DataFrame:
     if (specificity_col in df.columns) and not force_recompute:
         return df
 
-    if truth_spec_df is None:
-        raise ValueError(
-            f"Specificity column '{specificity_col}' is not already present, so both "
-            "--truth_specificity_path is required."
+    if (gene_spec_df is not None) or (peak_spec_df is not None):
+        if (gene_spec_df is None) or (peak_spec_df is None):
+            raise ValueError(
+                "Both --gene_specificity_path and --peak_specificity_path are required "
+                "when computing link specificity."
+            )
+        out = ctar.celltype_specificity.attach_link_specificity(
+            df.copy(),
+            gene_spec_df=gene_spec_df,
+            peak_spec_df=peak_spec_df,
+            gene_col=gene_col,
+            peak_col=peak_col,
+            gene_spec_col=gene_spec_col,
+            peak_spec_col=peak_spec_col,
         )
+        if verbose:
+            n_rows = len(out)
+            n_gene = int(out["gene_specificity"].notna().sum()) if "gene_specificity" in out.columns else 0
+            n_peak = int(out["peak_specificity"].notna().sum()) if "peak_specificity" in out.columns else 0
+            n_both = (
+                int((out["gene_specificity"].notna() & out["peak_specificity"].notna()).sum())
+                if {"gene_specificity", "peak_specificity"}.issubset(out.columns)
+                else 0
+            )
+            n_unique_gene_input = int(df[gene_col].nunique(dropna=True)) if gene_col in df.columns else 0
+            n_unique_peak_input = int(df[peak_col].nunique(dropna=True)) if peak_col in df.columns else 0
+            n_unique_gene_mapped = (
+                int(out.loc[out["gene_specificity"].notna(), gene_col].nunique(dropna=True))
+                if "gene_specificity" in out.columns and gene_col in out.columns
+                else 0
+            )
+            n_unique_peak_mapped = (
+                int(out.loc[out["peak_specificity"].notna(), peak_col].nunique(dropna=True))
+                if "peak_specificity" in out.columns and peak_col in out.columns
+                else 0
+            )
+            print(
+                "Link-specificity mapping summary: "
+                f"rows_with_gene_spec={n_gene}/{n_rows}, "
+                f"rows_with_peak_spec={n_peak}/{n_rows}, "
+                f"rows_with_both={n_both}/{n_rows}",
+                flush=True,
+            )
+            print(
+                "Unique feature mapping summary: "
+                f"genes_mapped={n_unique_gene_mapped}/{n_unique_gene_input}, "
+                f"peaks_mapped={n_unique_peak_mapped}/{n_unique_peak_input}",
+                flush=True,
+            )
+    else:
+        if truth_spec_df is None:
+            raise ValueError(
+                f"Specificity column '{specificity_col}' is not already present, so either "
+                "--truth_specificity_path or both --gene_specificity_path and "
+                "--peak_specificity_path are required."
+            )
 
-    out = ctar.celltype_specificity.attach_ground_truth_specificity(
-        df.copy(),
-        truth_spec_df=truth_spec_df,
-        link_key_cols=(merge_truth_id_col, merge_truth_gene_col),
-        truth_key_cols=(truth_id_col, truth_gene_col),
-        truth_spec_col=truth_specificity_col,
-        out_col=specificity_col,
-        duplicate_strategy=truth_duplicate_strategy,
-    )
+        out = ctar.celltype_specificity.attach_ground_truth_specificity(
+            df.copy(),
+            truth_spec_df=truth_spec_df,
+            link_key_cols=(merge_truth_id_col, merge_truth_gene_col),
+            truth_key_cols=(truth_id_col, truth_gene_col),
+            truth_spec_col=truth_specificity_col,
+            out_col=specificity_col,
+            duplicate_strategy=truth_duplicate_strategy,
+        )
     if specificity_col not in out.columns:
         raise ValueError(
-            f"Expected specificity column '{specificity_col}' after attach_ground_truth_specificity, "
+            f"Expected specificity column '{specificity_col}' after attaching specificity, "
             f"but only found: {list(out.columns)}"
         )
     return out
@@ -126,6 +182,10 @@ def main(args):
     specificity_col = args.specificity_col
     force_recompute_specificity = bool(args.force_recompute_specificity)
     truth_specificity_path = args.truth_specificity_path
+    gene_specificity_path = args.gene_specificity_path
+    peak_specificity_path = args.peak_specificity_path
+    gene_spec_col = args.gene_spec_col
+    peak_spec_col = args.peak_spec_col
     merge_truth_id_col = args.merge_truth_id_col
     merge_truth_gene_col = args.merge_truth_gene_col
     truth_id_col = args.truth_id_col
@@ -157,11 +217,15 @@ def main(args):
     print("Specificity labels:", quantile_labels, flush=True)
     print("Specificity column:", specificity_col, flush=True)
     print("Truth specificity path:", truth_specificity_path, flush=True)
+    print("Gene specificity path:", gene_specificity_path, flush=True)
+    print("Peak specificity path:", peak_specificity_path, flush=True)
     print("Merge truth key cols:", [merge_truth_id_col, merge_truth_gene_col], flush=True)
     print("Truth table key cols:", [truth_id_col, truth_gene_col], flush=True)
     print("Fillna:", fillna, "Bootstrap:", n_bootstrap, flush=True)
 
     truth_spec_df = pd.read_csv(truth_specificity_path) if truth_specificity_path else None
+    gene_spec_df = pd.read_csv(gene_specificity_path) if gene_specificity_path else None
+    peak_spec_df = pd.read_csv(peak_specificity_path) if peak_specificity_path else None
 
     for file in files:
         overlap_df0 = pd.read_csv(f"{merge_path}/{file}")
@@ -186,7 +250,11 @@ def main(args):
         overlap_df = _attach_specificity(
             overlap_df,
             truth_spec_df=truth_spec_df,
+            gene_spec_df=gene_spec_df,
+            peak_spec_df=peak_spec_df,
             specificity_col=specificity_col,
+            gene_spec_col=gene_spec_col,
+            peak_spec_col=peak_spec_col,
             merge_truth_id_col=merge_truth_id_col,
             merge_truth_gene_col=merge_truth_gene_col,
             truth_id_col=truth_id_col,
@@ -194,10 +262,11 @@ def main(args):
             truth_specificity_col=truth_specificity_col,
             truth_duplicate_strategy=truth_duplicate_strategy,
             force_recompute=force_recompute_specificity,
+            verbose=True,
         )
         n_specificity = int(overlap_df[specificity_col].notna().sum())
         print(
-            f"[{label}] mapped {n_specificity}/{len(overlap_df)} rows to truth specificity",
+            f"[{label}] mapped {n_specificity}/{len(overlap_df)} rows to specificity",
             flush=True,
         )
         overlap_df = _assign_quantile_bins(
@@ -330,6 +399,20 @@ if __name__ == "__main__":
         help="CSV containing truth specificity annotations.",
     )
     parser.add_argument("--specificity_col", type=str, default="specificity")
+    parser.add_argument(
+        "--gene_specificity_path",
+        type=str,
+        default="",
+        help="CSV containing gene specificity annotations with columns including feature,specificity.",
+    )
+    parser.add_argument(
+        "--peak_specificity_path",
+        type=str,
+        default="",
+        help="CSV containing peak specificity annotations with columns including feature,specificity.",
+    )
+    parser.add_argument("--gene_spec_col", type=str, default="specificity")
+    parser.add_argument("--peak_spec_col", type=str, default="specificity")
     parser.add_argument("--merge_truth_id_col", type=str, default="tenk10k_id")
     parser.add_argument("--merge_truth_gene_col", type=str, default="gt_gene")
     parser.add_argument("--truth_id_col", type=str, default="tenk10k_id")

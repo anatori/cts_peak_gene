@@ -17,6 +17,8 @@ SCRIPTS_DIR="${SCRIPTS_DIR:-${REPO_ROOT}/experiments/job.evaluation}"
 MERGE_DIR="${MERGE_DIR:-/projects/zhanglab/users/ana/multiome/validation/evaluation/${DATASET_NAME}}"
 AURC_DIR="${AURC_DIR:-/projects/zhanglab/users/ana/multiome/validation/evaluation/tables/metrics_jitter_specificity/${DATASET_NAME}}"
 TRUTH_SPEC_PATH="${TRUTH_SPEC_PATH:-}"
+GENE_SPEC_PATH="${GENE_SPEC_PATH:-}"
+PEAK_SPEC_PATH="${PEAK_SPEC_PATH:-}"
 
 # Evaluation settings
 METHOD_COLS="${METHOD_COLS:-scmm,signac,ctar_filt_z,ctar_filt}"
@@ -27,6 +29,8 @@ N_BOOTSTRAP="${N_BOOTSTRAP:-1000}"
 GTEX_SCORE_THRES="${GTEX_SCORE_THRES:-0.5}"
 ABC_SCORE_THRES="${ABC_SCORE_THRES:-0.2}"
 SPECIFICITY_COL="${SPECIFICITY_COL:-specificity}"
+GENE_SPEC_COL="${GENE_SPEC_COL:-specificity}"
+PEAK_SPEC_COL="${PEAK_SPEC_COL:-specificity}"
 SPECIFICITY_QUANTILES="${SPECIFICITY_QUANTILES:-0,0.25,0.5,0.75,1}"
 SPECIFICITY_QUANTILE_LABELS="${SPECIFICITY_QUANTILE_LABELS:-}"
 QUANTILE_RANK_METHOD="${QUANTILE_RANK_METHOD:-average}"
@@ -56,6 +60,12 @@ submit() {
 EXTRA_ARGS=()
 if [[ -n "${TRUTH_SPEC_PATH}" ]]; then
   EXTRA_ARGS+=(--truth_specificity_path "${TRUTH_SPEC_PATH}")
+fi
+if [[ -n "${GENE_SPEC_PATH}" ]]; then
+  EXTRA_ARGS+=(--gene_specificity_path "${GENE_SPEC_PATH}")
+fi
+if [[ -n "${PEAK_SPEC_PATH}" ]]; then
+  EXTRA_ARGS+=(--peak_specificity_path "${PEAK_SPEC_PATH}")
 fi
 if [[ "${PRINT_BIN_SUMMARY}" == "1" ]]; then
   EXTRA_ARGS+=(--print_bin_summary)
@@ -90,6 +100,8 @@ AURC_JOB_ID=$(submit \
             --gtex_score_thres '${GTEX_SCORE_THRES}' \
             --abc_score_thres '${ABC_SCORE_THRES}' \
             --specificity_col '${SPECIFICITY_COL}' \
+            --gene_spec_col '${GENE_SPEC_COL}' \
+            --peak_spec_col '${PEAK_SPEC_COL}' \
             --specificity_quantiles '${SPECIFICITY_QUANTILES}' \
             --quantile_rank_method '${QUANTILE_RANK_METHOD}' \
             --peak_col '${PEAK_COL}' \
