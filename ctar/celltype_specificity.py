@@ -99,6 +99,7 @@ def compute_feature_specificity(mean_df, feature_col='feature', subtype_cols=Non
 
 def attach_link_specificity(link_df,
                             gene_spec_df, peak_spec_df,
+                            subtypes_dict=None,
                             gene_col='gene', peak_col='peak',
                             gene_spec_col='specificity',
                             peak_spec_col='specificity'):
@@ -119,6 +120,10 @@ def attach_link_specificity(link_df,
         'dominant_subtype': 'peak_dominant_subtype'
     })[[peak_col, 'peak_specificity', 'peak_dominant_subtype']]
 
+    if subtypes_dict is not None:
+        g['gene_dominant_celltype'] = g['gene_dominant_subtype'].map(subtypes_dict)
+        p['peak_dominant_celltype'] = p['peak_dominant_subtype'].map(subtypes_dict)
+
     out = link_df.merge(g, on=gene_col, how='left').merge(p, on=peak_col, how='left')
 
     out['link_specificity_min'] = np.minimum(
@@ -131,6 +136,11 @@ def attach_link_specificity(link_df,
     out['dominant_subtype_concordant'] = (
         out['gene_dominant_subtype'] == out['peak_dominant_subtype']
     ).astype(float)
+
+    if subtypes_dict is not None:
+        out['dominant_celltype_concordant'] = (
+            out['gene_dominant_celltype'] == out['peak_dominant_celltype']
+        ).astype(float)
 
     return out
 
