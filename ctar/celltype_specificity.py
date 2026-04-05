@@ -102,7 +102,8 @@ def attach_link_specificity(link_df,
                             subtypes_dict=None,
                             gene_col='gene', peak_col='peak',
                             gene_spec_col='specificity',
-                            peak_spec_col='specificity'):
+                            peak_spec_col='specificity',
+                            out_col='link_specificity'):
     """
     link_df: one row per peak-gene link
     gene_spec_df: feature specificity table for genes
@@ -126,10 +127,10 @@ def attach_link_specificity(link_df,
 
     out = link_df.merge(g, on=gene_col, how='left').merge(p, on=peak_col, how='left')
 
-    out['link_specificity_min'] = np.minimum(
+    out[f'{out_col}_min'] = np.minimum(
         out['gene_specificity'], out['peak_specificity']
     )
-    out['link_specificity_geom'] = np.sqrt(
+    out[f'{out_col}_geom'] = np.sqrt(
         out['gene_specificity'] * out['peak_specificity']
     )
 
