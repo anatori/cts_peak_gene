@@ -140,12 +140,31 @@ def attach_link_specificity(link_df,
     ).astype(float)
 
     if subtypes_dict is not None:
-        out['dominant_celltype_concordant'] = (
-            out['gene_dominant_celltype'] == out['peak_dominant_celltype']
+        mapped_celltypes = (
+            out['gene_dominant_celltype'].notna() &
+            out['peak_dominant_celltype'].notna()
+        )
+        out['dominant_celltype_concordant'] = np.nan
+        out.loc[mapped_celltypes, 'dominant_celltype_concordant'] = (
+            out.loc[mapped_celltypes, 'gene_dominant_celltype'] ==
+            out.loc[mapped_celltypes, 'peak_dominant_celltype']
         ).astype(float)
 
     if weight_concordance:
-        out[f'{out_col}_geom'] = out[f'{out_col}_geom'] * out['dominant_celltype_concordant']
+        if subtypes_dict is not None:
+            print(
+                "Weighting link specificity by dominant_celltype_concordant; "
+                "rows with unmapped celltypes remain NaN-weighted.",
+                flush=True,
+            )
+            out[f'{out_col}_geom'] = out[f'{out_col}_geom'] * out['dominant_celltype_concordant']
+        else:
+            print(
+                "weight_concordance requested without subtypes_dict; "
+                "falling back to dominant_subtype_concordant.",
+                flush=True,
+            )
+            out[f'{out_col}_geom'] = out[f'{out_col}_geom'] * out['dominant_subtype_concordant']
 
     return out
 
