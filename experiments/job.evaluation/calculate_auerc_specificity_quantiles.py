@@ -61,7 +61,12 @@ def _attach_specificity(
     verbose: bool = True,
     weight_concordance: bool = False,
 ) -> pd.DataFrame:
-    if (specificity_col in df.columns) and not force_recompute:
+    should_compute_link_specificity = (gene_spec_df is not None) or (peak_spec_df is not None)
+    if (
+        (specificity_col in df.columns)
+        and not force_recompute
+        and not should_compute_link_specificity
+    ):
         return df
 
     if (gene_spec_df is not None) or (peak_spec_df is not None):
