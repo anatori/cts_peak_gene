@@ -103,7 +103,8 @@ def attach_link_specificity(link_df,
                             gene_col='gene', peak_col='peak',
                             gene_spec_col='specificity',
                             peak_spec_col='specificity',
-                            out_col='link_specificity'):
+                            out_col='link_specificity',
+                            weight_concordance=False):
     """
     link_df: one row per peak-gene link
     gene_spec_df: feature specificity table for genes
@@ -142,6 +143,9 @@ def attach_link_specificity(link_df,
         out['dominant_celltype_concordant'] = (
             out['gene_dominant_celltype'] == out['peak_dominant_celltype']
         ).astype(float)
+
+    if weight_concordance:
+        out[f'{out_col}_geom'] = out[f'{out_col}_geom'] * out['dominant_celltype_concordant']
 
     return out
 
