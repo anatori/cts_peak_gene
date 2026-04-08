@@ -24,8 +24,8 @@ def _parse_quantiles(raw_quantiles: str):
         return [0.0, 0.25, 0.5, 0.75, 1.0]
 
     quantiles = [float(x.strip()) for x in raw_quantiles.split(",") if x.strip()]
-    if len(quantiles) < 3:
-        raise ValueError("specificity_quantiles must contain at least 3 values.")
+    if len(quantiles) < 2:
+        raise ValueError("specificity_quantiles must contain at least 2 values.")
     if quantiles[0] != 0.0 or quantiles[-1] != 1.0:
         raise ValueError("specificity_quantiles must start at 0 and end at 1.")
     if any(q2 <= q1 for q1, q2 in zip(quantiles[:-1], quantiles[1:])):
@@ -45,6 +45,7 @@ def _attach_specificity(
     truth_spec_df: pd.DataFrame | None,
     gene_spec_df: pd.DataFrame | None,
     peak_spec_df: pd.DataFrame | None,
+    subtypes_dict: dict | None,
     specificity_col: str,
     gene_col: str,
     peak_col: str,
@@ -58,6 +59,7 @@ def _attach_specificity(
     truth_duplicate_strategy: str,
     force_recompute: bool,
     verbose: bool = True,
+    weight_concordance: bool = False,
 ) -> pd.DataFrame:
     if (specificity_col in df.columns) and not force_recompute:
         return df
@@ -76,6 +78,8 @@ def _attach_specificity(
             peak_col=peak_col,
             gene_spec_col=gene_spec_col,
             peak_spec_col=peak_spec_col,
+            subtypes_dict=subtypes_dict,
+            weight_concordance=weight_concordance,
         )
         if verbose:
             n_rows = len(out)
@@ -166,6 +170,7 @@ def _assign_quantile_bins(
     quantiles,
     quantile_labels,
     rank_method: str = "average",
+    verbose: bool = True,
 ) -> pd.DataFrame:
     out = df.copy()
     scores = pd.to_numeric(out[specificity_col], errors="coerce")
@@ -188,6 +193,20 @@ def _assign_quantile_bins(
         include_lowest=True,
         right=True,
     )
+
+    if verbose:
+        print(f"\nSpecificity ranges for '{specificity_col}':")
+        bin_ranges = (
+            out.loc[valid]
+            .groupby("specificity_bin", observed=False)[specificity_col]
+            .agg(["min", "max", "count"])
+        )
+        for bin_name, row in bin_ranges.iterrows():
+            print(
+                f"  {bin_name}: "
+                f"min={row['min']:.4f}, max={row['max']:.4f}, n={int(row['count'])}"
+            )
+
     return out
 
 
@@ -210,6 +229,8 @@ def main(args):
     truth_specificity_path = args.truth_specificity_path
     gene_specificity_path = args.gene_specificity_path
     peak_specificity_path = args.peak_specificity_path
+    subtypes_map_path = args.subtypes_map_path
+    subtypes_map_col = args.subtypes_map_col
     gene_spec_col = args.gene_spec_col
     peak_spec_col = args.peak_spec_col
     merge_truth_id_col = args.merge_truth_id_col
@@ -220,6 +241,7 @@ def main(args):
     truth_duplicate_strategy = args.truth_duplicate_strategy
     peak_col = args.peak_col
     gene_col = args.gene_col
+    weight_concordance = _parse_bool(args.weight_concordance)
 
     quantiles = _parse_quantiles(args.specificity_quantiles)
     if args.specificity_quantile_labels:
@@ -245,13 +267,16 @@ def main(args):
     print("Truth specificity path:", truth_specificity_path, flush=True)
     print("Gene specificity path:", gene_specificity_path, flush=True)
     print("Peak specificity path:", peak_specificity_path, flush=True)
+    print("Subtypes map path:", subtypes_map_path, flush=True)
     print("Merge truth key cols:", [merge_truth_id_col, merge_truth_gene_col], flush=True)
     print("Truth table key cols:", [truth_id_col, truth_gene_col], flush=True)
     print("Fillna:", fillna, "Bootstrap:", n_bootstrap, flush=True)
+    print("Weight concordance:", weight_concordance, flush=True)
 
     truth_spec_df = pd.read_csv(truth_specificity_path) if truth_specificity_path else None
     gene_spec_df = pd.read_csv(gene_specificity_path) if gene_specificity_path else None
     peak_spec_df = pd.read_csv(peak_specificity_path) if peak_specificity_path else None
+    subtypes_dict = pd.read_csv(subtypes_map_path,index_col=0)[subtypes_map_col].to_dict() if subtypes_map_path else None
 
     for file in files:
         overlap_df0 = pd.read_csv(f"{merge_path}/{file}")
@@ -265,6 +290,8 @@ def main(args):
 
         if ("gtex" in label) or ("onek1k" in label) or ("tenk10k" in label):
             overlap_df["label"] = overlap_df["score"] >= gtex_score_thres
+        elif "hichip" in label:
+            overlap_df["label"] = overlap_df["score"] <= 0.1
         elif label.startswith("abc"):
             overlap_df["label"] = overlap_df["score"] >= abc_score_thres
         elif label.startswith("crispr"):
@@ -281,6 +308,7 @@ def main(args):
             specificity_col=specificity_col,
             gene_col=gene_col,
             peak_col=peak_col,
+            subtypes_dict=subtypes_dict,
             gene_spec_col=gene_spec_col,
             peak_spec_col=peak_spec_col,
             merge_truth_id_col=merge_truth_id_col,
@@ -291,6 +319,7 @@ def main(args):
             truth_duplicate_strategy=truth_duplicate_strategy,
             force_recompute=force_recompute_specificity,
             verbose=True,
+            weight_concordance=weight_concordance,
         )
         n_specificity = int(overlap_df[specificity_col].notna().sum())
         print(
@@ -453,6 +482,15 @@ if __name__ == "__main__":
         choices=["error", "first", "mean"],
     )
     parser.add_argument("--force_recompute_specificity", action="store_true")
+
+    parser.add_argument(
+        "--subtypes_map_path",
+        type=str,
+        default="",
+        help="CSV containing mapping from fine subtype (in index) to broad celltype (in broad_ct column).",
+    )
+    parser.add_argument("--weight_concordance", type=str, default=True)
+    parser.add_argument("--subtypes_map_col", type=str, default='broad_ct')
 
     parser.add_argument(
         "--specificity_quantiles",

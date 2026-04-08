@@ -19,6 +19,7 @@ AURC_DIR="${AURC_DIR:-/projects/zhanglab/users/ana/multiome/validation/evaluatio
 TRUTH_SPEC_PATH="${TRUTH_SPEC_PATH:-}"
 GENE_SPEC_PATH="${GENE_SPEC_PATH:-}"
 PEAK_SPEC_PATH="${PEAK_SPEC_PATH:-}"
+SUBTYPES_MAP_PATH="${SUBTYPES_MAP_PATH:-}"
 
 # Evaluation settings
 METHOD_COLS="${METHOD_COLS:-scmm,signac,ctar_filt_z,ctar_filt}"
@@ -48,6 +49,7 @@ TRUTH_ID_COL="${TRUTH_ID_COL:-tenk10k_id}"
 TRUTH_GENE_COL="${TRUTH_GENE_COL:-gt_gene}"
 TRUTH_SPEC_COL="${TRUTH_SPEC_COL:-specificity}"
 TRUTH_DUPLICATE_STRATEGY="${TRUTH_DUPLICATE_STRATEGY:-error}"
+WEIGHT_CONCORDANCE="${WEIGHT_CONCORDANCE:-true}"
 
 echo "Evaluating specificity-quantile-stratified AUERC for ${DATASET_NAME}..."
 
@@ -66,6 +68,12 @@ if [[ -n "${GENE_SPEC_PATH}" ]]; then
 fi
 if [[ -n "${PEAK_SPEC_PATH}" ]]; then
   EXTRA_ARGS+=(--peak_specificity_path "${PEAK_SPEC_PATH}")
+fi
+if [[ -n "${SUBTYPES_MAP_PATH}" ]]; then
+  EXTRA_ARGS+=(--subtypes_map_path "${SUBTYPES_MAP_PATH}")
+fi
+if [[ -n "${WEIGHT_CONCORDANCE}" ]]; then
+  EXTRA_ARGS+=(--weight_concordance "${WEIGHT_CONCORDANCE}")
 fi
 if [[ "${PRINT_BIN_SUMMARY}" == "1" ]]; then
   EXTRA_ARGS+=(--print_bin_summary)
