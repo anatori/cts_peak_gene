@@ -97,6 +97,37 @@ def compute_feature_specificity(mean_df, feature_col='feature', subtype_cols=Non
     return out
 
 
+def joint_entropy_specificity(rna_x, atac_x, eps=1e-6, min_total=0.0):
+    """
+    Compute link specificity from the entropy of the subtype-wise joint signal.
+
+    Parameters
+    ----------
+    rna_x
+        1D array-like RNA subtype vector for one gene.
+    atac_x
+        1D array-like ATAC subtype vector for one peak.
+
+    Notes
+    -----
+    This uses the aligned subtype-wise product of the two vectors as the
+    link-level signal and then computes entropy specificity on that joint
+    subtype profile. Although this is sometimes described informally as a
+    "dot product", the entropy is computed on the per-subtype product vector,
+    not on a collapsed scalar.
+    """
+    rna_x = np.asarray(rna_x, dtype=float)
+    atac_x = np.asarray(atac_x, dtype=float)
+
+    if rna_x.shape != atac_x.shape:
+        raise ValueError(
+            "rna_x and atac_x must have the same shape to compute joint entropy specificity."
+        )
+
+    joint_x = np.clip(rna_x, 0, None) * np.clip(atac_x, 0, None)
+    return entropy_specificity(joint_x, eps=eps, min_total=min_total)
+
+
 def attach_link_specificity(link_df,
                             gene_spec_df, peak_spec_df,
                             subtypes_dict=None,
@@ -128,6 +159,44 @@ def attach_link_specificity(link_df,
 
     out = link_df.merge(g, on=gene_col, how='left').merge(p, on=peak_col, how='left')
 
+    subtype_cols = [
+        c for c in gene_spec_df.columns
+        if c in peak_spec_df.columns and c not in {gene_col, peak_col, 'feature'}
+    ]
+    subtype_cols = [
+        c for c in subtype_cols
+        if pd.api.types.is_numeric_dtype(gene_spec_df[c])
+        and pd.api.types.is_numeric_dtype(peak_spec_df[c])
+        and c not in {
+            gene_spec_col,
+            peak_spec_col,
+            'dominant_subtype_idx',
+        }
+    ]
+
+    out[f'{out_col}_joint'] = np.nan
+
+    if subtype_cols:
+        g_joint = gene_spec_df[[gene_col, *subtype_cols]].copy() if gene_col in gene_spec_df.columns else (
+            gene_spec_df.rename(columns={'feature': gene_col})[[gene_col, *subtype_cols]].copy()
+        )
+        p_joint = peak_spec_df[[peak_col, *subtype_cols]].copy() if peak_col in peak_spec_df.columns else (
+            peak_spec_df.rename(columns={'feature': peak_col})[[peak_col, *subtype_cols]].copy()
+        )
+
+        g_joint = g_joint.rename(columns={c: f'{c}_rna' for c in subtype_cols})
+        p_joint = p_joint.rename(columns={c: f'{c}_atac' for c in subtype_cols})
+
+        out = out.merge(g_joint, on=gene_col, how='left').merge(p_joint, on=peak_col, how='left')
+
+        out[f'{out_col}_joint'] = [
+            joint_entropy_specificity(
+                row[[f'{c}_rna' for c in subtype_cols]].to_numpy(dtype=float),
+                row[[f'{c}_atac' for c in subtype_cols]].to_numpy(dtype=float),
+            )
+            for _, row in out.iterrows()
+        ]
+
     out[f'{out_col}_min'] = np.minimum(
         out['gene_specificity'], out['peak_specificity']
     )
@@ -158,6 +227,7 @@ def attach_link_specificity(link_df,
                 flush=True,
             )
             out[f'{out_col}_geom'] = out[f'{out_col}_geom'] * out['dominant_celltype_concordant']
+            out[f'{out_col}_joint'] = out[f'{out_col}_joint'] * out['dominant_celltype_concordant']
         else:
             print(
                 "weight_concordance requested without subtypes_dict; "
@@ -165,6 +235,7 @@ def attach_link_specificity(link_df,
                 flush=True,
             )
             out[f'{out_col}_geom'] = out[f'{out_col}_geom'] * out['dominant_subtype_concordant']
+            out[f'{out_col}_joint'] = out[f'{out_col}_joint'] * out['dominant_subtype_concordant']
 
     return out
 
