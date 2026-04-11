@@ -417,10 +417,12 @@ def _prepare_work_df(
     gold_col: str,
     random_state: Optional[int],
     fillna: bool,
+    fillna_value: float,
     jitter_amount: Optional[float],
     clip_min: Optional[float],
     handle_dup: Optional[str],
     dup_key_cols: Optional[List[str]],
+    score_agg: str,
     tie: str,
 ) -> pd.DataFrame:
     """
@@ -437,7 +439,7 @@ def _prepare_work_df(
         if clip_min is not None:
             work_df[m] = work_df[m].clip(lower=clip_min)
         if fillna:
-            work_df[m] = work_df[m].fillna(1.0)
+            work_df[m] = work_df[m].fillna(fillna_value)
         if jitter_amount is not None:
             mask = work_df[m].notna()
             work_df.loc[mask, m] = work_df.loc[mask, m] + noise[mask]
@@ -451,6 +453,7 @@ def _prepare_work_df(
             gold_col=gold_col,
             score_cols=methods,
             handle_dup=handle_dup,
+            score_agg=score_agg,
             tie=tie,
         )
 
@@ -505,10 +508,12 @@ def compute_bootstrap_table(
     ci: float = 0.95,
     random_state: Optional[int] = None,
     fillna: bool = False,
+    fillna_value: float = 1.0,
     jitter_amount: Optional[float] = None,
     clip_min: Optional[float] = 1e-300,
     handle_dup: Optional[str] = None,
     dup_key_cols: Optional[List[str]] = None,
+    score_agg: str = "min",
     tie: str = "zero",
     stratified_bootstrap: bool = True,
 ) -> pd.DataFrame:
@@ -537,10 +542,12 @@ def compute_bootstrap_table(
         gold_col=gold_col,
         random_state=random_state,
         fillna=fillna,
+        fillna_value=fillna_value,
         jitter_amount=jitter_amount,
         clip_min=clip_min,
         handle_dup=handle_dup,
         dup_key_cols=dup_key_cols,
+        score_agg=score_agg,
         tie=tie,
     )
 
@@ -605,10 +612,12 @@ def compute_bootstrap_table_seed_avg(
     ci: float = 0.95,
     seeds: List[int] = None,
     fillna: bool = False,
+    fillna_value: float = 1.0,
     jitter_amount: Optional[float] = None,
     clip_min: Optional[float] = 1e-300,
     handle_dup: Optional[str] = None,
     dup_key_cols: Optional[List[str]] = None,
+    score_agg: str = "min",
     tie: str = "zero",
     bootstrap_random_state: int = 0,
     ddof: int = 1,
@@ -641,10 +650,12 @@ def compute_bootstrap_table_seed_avg(
             gold_col=gold_col,
             random_state=s,
             fillna=fillna,
+            fillna_value=fillna_value,
             jitter_amount=jitter_amount,
             clip_min=clip_min,
             handle_dup=handle_dup,
             dup_key_cols=dup_key_cols,
+            score_agg=score_agg,
             tie=tie,
         )
         for s in seeds
@@ -739,10 +750,11 @@ def dedup_df(
     gold_col: str = "label",
     score_cols: Optional[List[str]] = None,
     handle_dup: str = "any",
+    score_agg: str = "min",
     tie: str = "zero",
 ) -> pd.DataFrame:
     """
-    Deduplicate rows by key_cols, aggregating gold_col and taking min() of score cols.
+    Deduplicate rows by key_cols, aggregating gold_col and score cols.
     """
     if key_cols is None or len(key_cols) == 0:
         raise ValueError("Provide key_cols for grouping.")
@@ -773,10 +785,13 @@ def dedup_df(
     else:
         raise ValueError("handle_dup must be one of: 'any', 'consensus', 'proportion'")
 
+    if score_agg not in {"min", "max"}:
+        raise ValueError("score_agg must be one of: 'min', 'max'")
+
     agg_dic = {gold_col: label_agg}
     if score_cols:
         for sc in score_cols:
-            agg_dic[sc] = "min"
+            agg_dic[sc] = score_agg
 
     return work_df.groupby(list(key_cols), as_index=False).agg(agg_dic)
 
@@ -802,6 +817,7 @@ def build_default_metric_specs(
     ascending = True if pvals_smaller_is_better else False
     k_values = default_k_values(all_df, gold_col=gold_col)
     print(f'Top-k for AUORC_log: {k_values}')
+    score_transform = default_score_transform_pvalue if pvals_smaller_is_better else None
 
     def _auerc_full(df: pd.DataFrame, m: str) -> float:
         return auerc(df, m, gold_col=gold_col, ascending=ascending,
@@ -820,11 +836,11 @@ def build_default_metric_specs(
                      epsilon=0.5, weighted=True)
 
     def _ap(df: pd.DataFrame, m: str) -> float:
-        return average_precision(df, m, gold_col=gold_col, score_transform=default_score_transform_pvalue)
+        return average_precision(df, m, gold_col=gold_col, score_transform=score_transform)
 
     def _pap(df: pd.DataFrame, m: str) -> float:
         return partial_average_precision(df, m, R=early_R, gold_col=gold_col, normalize=True,
-                                         score_transform=default_score_transform_pvalue)
+                                         score_transform=score_transform)
 
     return [
         MetricSpec("AUERC", _auerc_full),
