@@ -195,15 +195,16 @@ def main(args):
             adata_atac.layers['counts'] = adata_atac.X
 
         # Preferentially use ENSEMBL ID
-        if 'gene_id' in adata_rna.var.columns:
-            adata_rna.var['gene'] = adata_rna.var.gene_id
-            adata_rna.var.index = adata_rna.var.gene_id
-            print("# Using gene_id columns for RNA genes...")
-        elif 'gene_ids' in adata_rna.var.columns:
-            adata_rna.var['gene'] = adata_rna.var.gene_ids
-            adata_rna.var.index = adata_rna.var.gene_ids
-            print("# Using gene_ids columns for RNA genes...")
-        assert adata_rna.var.gene.str.startswith('ENSG').all(), "Must use ENSEMBL IDs for genes"
+        if not adata_rna.var.gene.str.startswith('ENSG').all():
+            if 'gene_id' in adata_rna.var.columns:
+                adata_rna.var['gene'] = adata_rna.var.gene_id
+                adata_rna.var.index = adata_rna.var.gene_id
+                print("# Using gene_id columns for RNA genes...")
+            elif 'gene_ids' in adata_rna.var.columns:
+                adata_rna.var['gene'] = adata_rna.var.gene_ids
+                adata_rna.var.index = adata_rna.var.gene_ids
+                print("# Using gene_ids columns for RNA genes...")
+            assert adata_rna.var.gene.str.startswith('ENSG').all(), "Must use ENSEMBL IDs for genes"
             
         # Setting atac bin type
         if BIN_TYPE == 'cholesky':
