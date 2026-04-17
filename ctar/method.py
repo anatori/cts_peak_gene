@@ -85,6 +85,30 @@ def pearson_corr_sparse(mat_X, mat_Y, var_filter=False):
     return mat_corr
 
 
+def pearson_corr_dense(mat_X, mat_Y):
+    """Pairwise Pearson correlation between aligned columns of mat_X and mat_Y.
+    Designed for dense pseudobulk matrices (n_metacells x n_links).
+    """
+    # convert sparse to dense if needed (leftover from aggregate)
+    if sp.sparse.issparse(mat_X):
+        mat_X = mat_X.toarray()
+    if sp.sparse.issparse(mat_Y):
+        mat_Y = mat_Y.toarray()
+
+    # center columns
+    mat_X = mat_X - mat_X.mean(axis=0)
+    mat_Y = mat_Y - mat_Y.mean(axis=0)
+
+    # column norms
+    norm_X = np.sqrt((mat_X ** 2).sum(axis=0)).clip(1e-8)
+    norm_Y = np.sqrt((mat_Y ** 2).sum(axis=0)).clip(1e-8)
+
+    # pairwise column dot products (only diagonal of full cross-correlation)
+    corr = (mat_X * mat_Y).sum(axis=0) / (norm_X * norm_Y)
+
+    return corr.astype(np.float32)
+
+
 def poisson_irls_loop_sparse(mat_x_full, mat_y_full, links=None, max_iter=100, tol=1e-3,
                              flag_float32=True, flag_se=False, flag_ll=False, ridge=False):
     """
