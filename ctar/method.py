@@ -1538,6 +1538,114 @@ def binned_mcpval(
     return mcpval_dic, ppval_dic
 
 
+def empirical_fdr(stat, ctrl_stat, target_fdr=0.1, B=None):
+    ''' 
+    Compute empirical/local FDR. Find a threshold t s.t. 
+        FDR = (#{ctrl_stat >= t} / B) / (#{stat >= t})
+
+    Parameters
+    ----------
+    stat : np.array
+        Array of shape (M,) containing statistic of interest, where M are the number of tests.
+    ctrl_stat : np.array
+        Array of shape (B,) containing null statistic, where B is the number of permutation tests.
+    target_fdr : float
+        FDR cutoff.
+    B : int
+        Number of controls.
+
+    Returns
+    ----------
+    q_values : np.array
+        Array of shape (M,) containing empirical FDR for each statistic (nan where stat is nan).
+    t_star : float
+        FDR threshold used.
+    '''
+    if B is None:
+        B = len(ctrl_stat)
+
+    # remove nan values
+    nan_mask = np.isnan(stat)
+    stat_clean = stat[~nan_mask]
+    ctrl_clean = ctrl_stat[~np.isnan(ctrl_stat)]
+
+    # threshold as unique input values
+    thresholds = np.sort(np.unique(stat_clean))[::-1]
+    stat_asc = np.sort(stat_clean)
+    ctrl_asc = np.sort(ctrl_clean)
+
+    # number of discoveries at all possible thresholds
+    n_disc = len(stat_asc) - np.searchsorted(stat_asc, thresholds, side='left')
+    # number of null discoveries at all possible thresholds
+    null_counts = len(ctrl_asc) - np.searchsorted(ctrl_asc, thresholds, side='left')
+
+    # calculate estimated fdr
+    fdr_vals = (null_counts / B) / n_disc
+    fdr_vals = np.minimum.accumulate(fdr_vals)
+
+    # find original fdr order
+    thresh_asc = thresholds[::-1]
+    fdr_asc = fdr_vals[::-1]
+    idx = np.clip(np.searchsorted(thresh_asc, stat_clean, side='left'), 0, len(fdr_asc) - 1)
+    q_clean = fdr_asc[idx]
+
+    q_values = np.full(len(stat), np.nan)
+    q_values[~nan_mask] = q_clean
+
+    # results at target fdr
+    valid = np.where(fdr_vals <= target_fdr)[0]
+    t_star = float(thresholds[valid[0]]) if len(valid) else None
+
+    return q_values, t_star, thresholds, fdr_vals
+
+
+def binned_empirical_fdr(
+    cis_pairs_df, 
+    ctrl_pairs_dic, 
+    target_fdr=0.1, 
+    B=None, 
+    stat_col='poissonb', 
+    bin_col='combined_bin_5.5.5.5',
+    qval_col='q_value',
+):
+    '''
+    Compute empirical FDR per bin null.
+
+    Parameters
+    ----------
+    cis_pairs_df : pd.DataFrame
+        Dataframe containing cis peak-gene pairs. Must contain column stat_col and bin_col.
+    ctrl_pairs_dic : dict
+        Dictionary of numpy arrays where keys are bins and values are null statistics
+        for control peak-gene pairs.
+    stat_col : str
+        Name of column containing observed statistics. Should be the same statistic as ctrl_pairs_dic.values().
+    bin_col : str
+        Name of column from which to group stat_col. Unique values must match ctrl_pairs_dic.keys().
+    qval_col : str
+        Name of column to be added containing q-values/FDR.
+    target_fdr, B 
+        Inputs to empirical_fdr.
+
+    Returns
+    ----------
+    cis_pairs_df : pd.DataFrame
+        Copy of input dataframe containing q-values from binned empirical FDR estimation.
+    '''
+
+    cis_pairs_ls = []
+    for bin_id, bin_df in cis_pairs_df.groupby(bin_col):
+        ctrl_stat = ctrl_pairs_dic[bin_id]
+        cis_stat = bin_df[stat_col].values
+        q_values, t_star, thresholds, fdr_vals = empirical_fdr(cis_stat, ctrl_stat, target_fdr=target_fdr, B=B)
+        bin_df[qval_col] = q_values
+        cis_pairs_ls.append(bin_df)
+
+    return pd.concat(cis_pairs_ls)    
+
+    
+
+
 ######################### clustering #########################
 
 
