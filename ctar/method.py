@@ -1580,8 +1580,9 @@ def empirical_fdr(stat, ctrl_stat, target_fdr=0.1, B=None):
     null_counts = len(ctrl_asc) - np.searchsorted(ctrl_asc, thresholds, side='left')
 
     # calculate estimated fdr
-    fdr_vals = (null_counts / B) / n_disc
-    fdr_vals = np.minimum.accumulate(fdr_vals)
+    M = len(stat_clean)
+    fdr_vals = np.minimum((null_counts / B) / (n_disc / M), 1.0)
+    fdr_vals = np.minimum.accumulate(fdr_vals[::-1])[::-1]
 
     # find original fdr order
     thresh_asc = thresholds[::-1]
