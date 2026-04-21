@@ -1,7 +1,7 @@
 import numpy as np
 import pandas as pd 
 import scipy as sp
-import warnings
+import anndata as ad
 from ctar.data_loader import get_gene_coords
 
 
@@ -60,222 +60,66 @@ def null_peak_gene_pairs(rna, atac, gene_tss=None, gene_col='gene_name', peak_co
     return null_pairs
 
 
-def topk_or_by_regime(
-    df,
-    score_col,            # p-values or scores for ONE method
-    regime_mask,          # boolean mask for the regime
-    truth_col="score",
-    K=100,
-    smaller_is_better=True,
-    continuity=0.5,
-    alpha=0.05
-):
-    d = df[regime_mask].copy()
-    d[truth_col] = d[truth_col].astype(bool)
-
-    if len(d) == 0:
-        return None
-
-    # rank within regime
-    if smaller_is_better:
-        d["rank"] = d[score_col].rank(method="average")
-    else:
-        d["rank"] = (-d[score_col]).rank(method="average")
-
-    d["topK"] = d["rank"] <= min(K, len(d))  # avoid empty "not topK" when n<K
-
-    # contingency table counts
-    a = int(((d["topK"]) & (d[truth_col])).sum())
-    b = int(((d["topK"]) & (~d[truth_col])).sum())
-    c = int(((~d["topK"]) & (d[truth_col])).sum())
-    d_ = int(((~d["topK"]) & (~d[truth_col])).sum())
-
-    table = np.array([[a, b],
-                      [c, d_]])
-
-    # Fisher test (exact; may return inf/0 when zeros)
-    try:
-        or_val, p = sp.stats.fisher_exact(table)
-    except Exception:
-        or_val, p = np.nan, np.nan
-
-    # continuity-corrected OR (stable for display + CI)
-    ac, bc, cc, dc = (a + continuity, b + continuity, c + continuity, d_ + continuity)
-    or_cc = (ac * dc) / (bc * cc)
-
-    # Wald CI on log(OR_cc)
-    z = sp.stats.norm.ppf(1 - alpha / 2)
-    se_logOR_cc = np.sqrt(1/ac + 1/bc + 1/cc + 1/dc)
-    logOR_cc = np.log(or_cc)
-    ci_low = np.exp(logOR_cc - z * se_logOR_cc)
-    ci_high = np.exp(logOR_cc + z * se_logOR_cc)
-
-    # log2 scale versions (handy for heatmaps if you prefer)
-    log2OR = np.log2(or_cc)
-    log2_ci_low = np.log2(ci_low)
-    log2_ci_high = np.log2(ci_high)
-
-    return {
-        "a": a, "b": b, "c": c, "d": d_,
-        "OR": or_val,
-        "OR_cc": or_cc,
-        "OR_ci_low": ci_low,
-        "OR_ci_high": ci_high,
-        "logOR_cc": logOR_cc,
-        "se_logOR_cc": se_logOR_cc,
-        "log2OR": log2OR,
-        "log2OR_ci_low": log2_ci_low,
-        "log2OR_ci_high": log2_ci_high,
-        "p": p,
-        "n": int(a + b + c + d_)
-    }
-
-
-def global_topk_or_by_regime(
-    df,
-    score_col,
-    regimes, # list of (regime_name, mask) or dict {name: mask}
-    truth_col="score",
-    K=100,
-    smaller_is_better=True,
-    continuity=0.5,
-    alpha=0.05,
-):
+def simulate_full_dataset(n_cells, n_tp_per_level, n_tn_per_level, n_bg_peaks,
+                          alpha_levels, mean_expr_levels, beta, p_peak, seed=None):
     """
-    Global Top-K is computed ONCE over all rows.
-    Then for each regime mask, compute 2x2 OR of True vs False for TopK vs not-TopK
-    restricted to that regime.
+    Simulate different expression levels together in one dataset.
 
-    regimes: list of tuples [("regime1", mask1), ...] OR dict {"regime1": mask1, ...}
+    TP genes: RNA ~ Poisson(exp(alpha + beta * assigned_peak))
+    TN genes: RNA ~ Poisson(exp(alpha))   — no peak dependency
+
+    Returns
+    -------
+    atac_sparse  : csc_matrix  (n_cells, n_bg_peaks)
+    rna_sparse   : csc_matrix  (n_cells, n_total_genes)
+    cis_links_df : DataFrame   columns: atac_idx, rna_idx, is_tp, mean_expr, alpha
     """
-    d = df.copy()
-    d[truth_col] = d[truth_col].astype(bool)
+    rng = np.random.default_rng(seed)
+    n_per_level   = n_tp_per_level + n_tn_per_level
+    n_total_genes = len(alpha_levels) * n_per_level
 
-    # global rank + global topK
-    if smaller_is_better:
-        d["_rank"] = d[score_col].rank(method="average")
-    else:
-        d["_rank"] = (-d[score_col]).rank(method="average")
+    # Peak accessibility: Bernoulli(p_peak) for all cells and peaks
+    atac_dense = rng.binomial(1, p_peak, size=(n_cells, n_bg_peaks)).astype(np.float32)
+    rna_dense  = np.zeros((n_cells, n_total_genes), dtype=np.float32)
 
-    d["_topK_global"] = d["_rank"] <= K
+    rows        = []
+    gene_offset = 0
 
-    # normalize regimes input
-    if isinstance(regimes, dict):
-        regimes_iter = list(regimes.items())
-    else:
-        regimes_iter = list(regimes)
+    for alpha, mean_expr in zip(alpha_levels, mean_expr_levels):
 
-    rows = []
-    z = sp.stats.norm.ppf(1 - alpha/2)
+        # TP: each gene is assigned a specific peak; RNA depends on that peak
+        tp_peak_idxs = rng.choice(n_bg_peaks, size=n_tp_per_level, replace=False)
+        for j in range(n_tp_per_level):
+            gene_idx = gene_offset + j
+            peak_idx = int(tp_peak_idxs[j])
+            lam = np.exp(alpha + beta * atac_dense[:, peak_idx])
+            rna_dense[:, gene_idx] = rng.poisson(lam).astype(np.float32)
+            rows.append(dict(atac_idx=peak_idx, rna_idx=gene_idx,
+                             is_tp=True, mean_expr=mean_expr, alpha=alpha))
+        gene_offset += n_tp_per_level
 
-    for regime_name, mask in regimes_iter:
-        sub = d.loc[mask].copy()
-        if len(sub) == 0:
-            continue
+        # TN: RNA is independent of any peak
+        tn_peak_idxs = rng.integers(0, n_bg_peaks, size=n_tn_per_level)
+        for j in range(n_tn_per_level):
+            gene_idx = gene_offset + j
+            peak_idx = int(tn_peak_idxs[j])
+            rna_dense[:, gene_idx] = rng.poisson(np.exp(alpha), size=n_cells).astype(np.float32)
+            rows.append(dict(atac_idx=peak_idx, rna_idx=gene_idx,
+                             is_tp=False, mean_expr=mean_expr, alpha=alpha))
+        gene_offset += n_tn_per_level
 
-        a = int(((sub["_topK_global"]) & (sub[truth_col])).sum())
-        b = int(((sub["_topK_global"]) & (~sub[truth_col])).sum())
-        c = int(((~sub["_topK_global"]) & (sub[truth_col])).sum())
-        d_ = int(((~sub["_topK_global"]) & (~sub[truth_col])).sum())
+    atac_sparse  = sp.sparse.csc_matrix(atac_dense)
+    rna_sparse   = sp.sparse.csc_matrix(rna_dense)
+    cis_links_df = pd.DataFrame(rows).reset_index(drop=True)
 
-        table = np.array([[a, b],
-                          [c, d_]])
-
-        # Fisher exact
-        try:
-            or_val, p = sp.stats.fisher_exact(table)
-        except Exception:
-            or_val, p = np.nan, np.nan
-
-        # continuity-corrected OR + Wald CI on log(OR_cc)
-        ac, bc, cc, dc = a+continuity, b+continuity, c+continuity, d_+continuity
-        or_cc = (ac * dc) / (bc * cc)
-        se = np.sqrt(1/ac + 1/bc + 1/cc + 1/dc)
-        ci_low = np.exp(np.log(or_cc) - z*se)
-        ci_high = np.exp(np.log(or_cc) + z*se)
-
-        rows.append({
-            "regime": regime_name,
-            "a": a, "b": b, "c": c, "d": d_,
-            "OR": or_val,
-            "OR_cc": or_cc,
-            "OR_ci_low": ci_low,
-            "OR_ci_high": ci_high,
-            "log2OR": np.log2(or_cc),
-            "p": p,
-            "n_regime": int(a+b+c+d_),
-            "K_global": int(K),
-        })
-
-    return pd.DataFrame(rows)
+    return atac_sparse, rna_sparse, cis_links_df
 
 
-def global_fdr_or_by_regime(
-    df,
-    fdr_col,
-    regimes, # list of (regime_name, mask) or dict {name: mask}
-    truth_col="score",
-    fdr_level=0.1,
-    continuity=0.5,
-    alpha=0.05,
-):
-    """
-    Global Top-K is computed ONCE over all rows.
-    Then for each regime mask, compute 2x2 OR of True vs False for TopK vs not-TopK
-    restricted to that regime.
-
-    regimes: list of tuples [("regime1", mask1), ...] OR dict {"regime1": mask1, ...}
-    """
-    d = df.copy()
-    d[truth_col] = d[truth_col].astype(bool)
-
-    d["_fdr_global"] = d[fdr_col] <= fdr_level
-
-    # normalize regimes input
-    if isinstance(regimes, dict):
-        regimes_iter = list(regimes.items())
-    else:
-        regimes_iter = list(regimes)
-
-    rows = []
-    z = sp.stats.norm.ppf(1 - alpha/2)
-
-    for regime_name, mask in regimes_iter:
-        sub = d.loc[mask].copy()
-        if len(sub) == 0:
-            continue
-
-        a = int(((sub["_fdr_global"]) & (sub[truth_col])).sum())
-        b = int(((sub["_fdr_global"]) & (~sub[truth_col])).sum())
-        c = int(((~sub["_fdr_global"]) & (sub[truth_col])).sum())
-        d_ = int(((~sub["_fdr_global"]) & (~sub[truth_col])).sum())
-
-        table = np.array([[a, b],
-                          [c, d_]])
-
-        # Fisher exact
-        try:
-            or_val, p = sp.stats.fisher_exact(table)
-        except Exception:
-            or_val, p = np.nan, np.nan
-
-        # continuity-corrected OR + Wald CI on log(OR_cc)
-        ac, bc, cc, dc = a+continuity, b+continuity, c+continuity, d_+continuity
-        or_cc = (ac * dc) / (bc * cc)
-        se = np.sqrt(1/ac + 1/bc + 1/cc + 1/dc)
-        ci_low = np.exp(np.log(or_cc) - z*se)
-        ci_high = np.exp(np.log(or_cc) + z*se)
-
-        rows.append({
-            "regime": regime_name,
-            "a": a, "b": b, "c": c, "d": d_,
-            "OR": or_val,
-            "OR_cc": or_cc,
-            "OR_ci_low": ci_low,
-            "OR_ci_high": ci_high,
-            "log2OR": np.log2(or_cc),
-            "p": p,
-            "n_regime": int(a+b+c+d_)
-        })
-
-    return pd.DataFrame(rows)
+def build_anndata(sparse_mat, feature_ids, feature_col, layer='counts'):
+    """Minimal AnnData wrapper."""
+    n_cells = sparse_mat.shape[0]
+    var  = pd.DataFrame({feature_col: feature_ids}, index=feature_ids)
+    obs  = pd.DataFrame(index=[f'cell_{i}' for i in range(n_cells)])
+    adata = ad.AnnData(X=sparse_mat, obs=obs, var=var)
+    adata.layers[layer] = sparse_mat
+    return adata
