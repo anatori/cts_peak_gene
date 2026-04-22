@@ -49,6 +49,118 @@ def odds_ratio(y_bool: np.ndarray,
     return stat, pval
 
 
+def bootstrap_odds_ratio(
+    y_bool: np.ndarray,
+    label_arr: np.ndarray,
+    n_bootstrap: int = 1000,
+    ci: float = 0.95,
+    smoothed: bool = True,
+    epsilon: float = 0.5,
+    stratified: bool = True,
+    random_state: Optional[int] = 0,
+) -> Dict[str, float]:
+    """
+    Bootstrap CI and p-value for the smoothed odds ratio.
+ 
+    Parameters
+    ----------
+    y_bool     : boolean prediction array
+    label_arr  : 0/1 ground-truth array
+    n_bootstrap: number of bootstrap replicates
+    ci         : confidence level (e.g. 0.95 → 95 % CI)
+    smoothed   : use Haldane-Anscombe smoothing (recommended; same as odds_ratio)
+    epsilon    : smoothing constant (default 0.5, same as odds_ratio default)
+    stratified : if True, resample positives and negatives separately
+    random_state: RNG seed for reproducibility
+ 
+    Returns
+    -------
+    dict with keys:
+        or_point   : point estimate (smoothed OR on the full data)
+        fisher_p   : exact Fisher p-value on the full data
+        ci_lower   : bootstrap percentile CI lower bound
+        ci_upper   : bootstrap percentile CI upper bound
+        boot_p     : two-sided bootstrap p-value (H0: log-OR = 0, i.e. OR = 1)
+        n_boot_finite : number of finite bootstrap replicates used
+    """
+    y_bool = np.asarray(y_bool, dtype=bool)
+    label_arr = np.asarray(label_arr, dtype=float)
+    N = len(y_bool)
+ 
+    # Point estimate on full data
+    _, or_point, fisher_p = odds_ratio(
+        y_bool, label_arr, return_table=True, smoothed=smoothed, epsilon=epsilon
+    )
+    # odds_ratio returns (table, stat, pval) when return_table=True
+    or_point = or_point  # already the smoothed OR
+ 
+    rng = np.random.default_rng(random_state)
+    alpha = 1.0 - ci
+ 
+    boot_log_ors = np.empty(n_bootstrap, dtype=float)
+    for b in range(n_bootstrap):
+        idx = _bootstrap_indices(N=N, rng=rng, labels=label_arr, stratified=stratified)
+        y_b = y_bool[idx]
+        l_b = label_arr[idx]
+ 
+        tp = int(np.sum((l_b == 1) & y_b))
+        fp = int(np.sum((l_b == 0) & y_b))
+        fn = int(np.sum((l_b == 1) & (~y_b)))
+        tn = int(np.sum((l_b == 0) & (~y_b)))
+ 
+        if smoothed:
+            log_or = np.log(
+                ((tp + epsilon) * (tn + epsilon)) / ((fp + epsilon) * (fn + epsilon))
+            )
+        else:
+            if fp == 0 or fn == 0:
+                log_or = np.nan
+            else:
+                log_or = np.log((tp * tn) / (fp * fn)) if (tp * tn) > 0 else np.nan
+ 
+        boot_log_ors[b] = log_or
+ 
+    finite = np.isfinite(boot_log_ors)
+    n_finite = int(finite.sum())
+ 
+    if n_finite < 2:
+        return {
+            "or_point": float(or_point),
+            "fisher_p": float(fisher_p),
+            "ci_lower": np.nan,
+            "ci_upper": np.nan,
+            "boot_p": np.nan,
+            "n_boot_finite": n_finite,
+        }
+ 
+    boot_finite = boot_log_ors[finite]
+    ci_lower = float(np.exp(np.nanquantile(boot_finite, alpha / 2)))
+    ci_upper = float(np.exp(np.nanquantile(boot_finite, 1 - alpha / 2)))
+ 
+    # Two-sided p-value: fraction of replicates on the opposite side of 0
+    # (shifted by the point estimate to center the null at log-OR = 0)
+    log_or_point = np.log(or_point) if or_point > 0 else np.nan
+    if np.isfinite(log_or_point):
+        shifted = boot_finite - log_or_point
+        n_lt = np.sum(shifted < 0)
+        n_gt = np.sum(shifted > 0)
+        n_eq = n_finite - n_lt - n_gt
+        p_lower = (n_lt + 0.5 * n_eq) / n_finite
+        p_upper = (n_gt + 0.5 * n_eq) / n_finite
+        boot_p = float(min(1.0, 2.0 * min(p_lower, p_upper)))
+    else:
+        boot_p = np.nan
+ 
+    return {
+        "or_point": float(or_point),
+        "fisher_p": float(fisher_p),
+        "ci_lower": ci_lower,
+        "ci_upper": ci_upper,
+        "boot_p": boot_p,
+        "n_boot_finite": n_finite,
+    }
+
+
 def trap_area(
     x: np.ndarray,
     y: np.ndarray,
