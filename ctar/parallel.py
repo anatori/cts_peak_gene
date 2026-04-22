@@ -357,6 +357,69 @@ def multiprocess_poisson_irls(
     return results_dict
 
 
+def _pearson_corr_worker(subatch_links, atac_sparse, rna_sparse):
+    """Worker: compute Pearson correlation for a batch of link pairs."""
+    from ctar.method import pearson_corr_sparse
+    atac = atac_sparse[:, subatch_links[:, 0]]
+    rna  = rna_sparse[:,  subatch_links[:, 1]]
+    return pearson_corr_sparse(rna, atac).flatten()
+
+
+def multiprocess_pearson_corr(
+    links_dict: Dict[str, np.ndarray],
+    atac_sparse,
+    rna_sparse,
+    batch_size: int = 50,
+    n_workers: Optional[int] = None,
+    **compute_kwargs,
+):
+    """Parallel Pearson correlation across link batches using Dask.
+
+    Parameters
+    ----------
+    links_dict : dict
+        Dictionary mapping batch/bin keys to link arrays of shape (n_links, 2).
+        ATAC index in column 0, RNA index in column 1.
+    atac_sparse : scipy.sparse matrix
+        ATAC-seq matrix (cells x peaks).
+    rna_sparse : scipy.sparse matrix
+        RNA-seq matrix (cells x genes).
+    batch_size : int
+        Number of dict entries to process per Dask batch.
+    n_workers : int, optional
+        Number of parallel workers.
+
+    Returns
+    -------
+    dict[key, np.ndarray]
+        Mapping from link batch key to 1-D correlation array of shape (n_links,).
+    """
+    if n_workers is None:
+        n_workers = max(cpu_count() - 1, 1)
+
+    results_dict = {}
+    n_total = math.ceil(len(links_dict) / batch_size)
+
+    with ProgressBar():
+        for batch_idx, batch in enumerate(batched_iterable(links_dict.items(), batch_size), start=1):
+            print(f"# Pearson batch {batch_idx} / {n_total}", flush=True)
+            tasks, keys = [], []
+
+            for bin_key, link_array in batch:
+                links_re, atac_sub, rna_sub = preprocess_batch(link_array, atac_sparse, rna_sparse)
+                tasks.append(delayed(_pearson_corr_worker)(links_re, atac_sub, rna_sub))
+                keys.append(bin_key)
+                del atac_sub, rna_sub, links_re
+
+            results = compute(*tasks, num_workers=n_workers, **compute_kwargs)
+            for k, r in zip(keys, results):
+                results_dict[k] = r
+            del tasks, results
+            gc.collect()
+
+    return results_dict
+
+
 def process_sub_batch_multi(subatch_links, atac_sparse, rna_sparse, covar_mat, bin_name=None, out_path=None, save_files=False, **irls_kwargs):
     """
     Worker task to process one sub-batch of links, run poisson IRLS, and save output if save_files.
