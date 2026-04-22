@@ -12,7 +12,7 @@ from multiprocessing import cpu_count
 from typing import Union, Optional, List, Dict
 from itertools import islice
 
-from ctar.method import poisson_irls_loop, poisson_irls_loop_multi, poisson_irls_loop_sparse
+from ctar.method import poisson_irls_loop, poisson_irls_loop_multi, poisson_irls_loop_sparse, pearson_corr_sparse
 
 
 
@@ -359,7 +359,6 @@ def multiprocess_poisson_irls(
 
 def _pearson_corr_worker(subatch_links, atac_sparse, rna_sparse):
     """Worker: compute Pearson correlation for a batch of link pairs."""
-    from ctar.method import pearson_corr_sparse
     atac = atac_sparse[:, subatch_links[:, 0]]
     rna  = rna_sparse[:,  subatch_links[:, 1]]
     return pearson_corr_sparse(rna, atac).flatten()
