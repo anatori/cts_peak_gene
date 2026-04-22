@@ -173,7 +173,8 @@ def get_gene_coords(
     col_names=['chr','start','end','strand'],
     gene_col='gene',
     add_tss=True,
-    tss_col='tss'
+    tss_col='tss',
+    verbose=True
 ):
     
     ''' Uses BioMart API to insert gene coordinates based on a given gene_id_type.
@@ -199,6 +200,8 @@ def get_gene_coords(
         Optionally add gene TSS.
     tss_col : 'tss'
         What to label TSS column.
+    verbose : bool
+        If True, prints BioMart query stats and reports genes missing coordinates.
 
     Returns
     -------
@@ -224,15 +227,26 @@ def get_gene_coords(
 
     # develop a dictionary to map positions
     gene_positions = {}
-    for line in responses.splitlines():                                              
+    skipped = 0
+    for line in responses.splitlines():
         line = line.split('\t')
-        gene_id = line[0] 
-        gene_positions[gene_id] = {attribute:line[i+1] for i,attribute in enumerate(attributes)}
+        if len(line) < len(attributes_all):
+            skipped += 1
+            continue
+        gene_id = line[0]
+        gene_positions[gene_id] = {attribute: line[i+1] for i, attribute in enumerate(attributes)}
+
+    if verbose:
+        print(f'BioMart returned {len(gene_positions)} gene records ({skipped} rows skipped due to missing fields)')
 
     # add attributes to dataframe
     gene_df[col_names] = gene_df.apply(add_gene_positions, axis=1, result_type='expand',
                                               args=(gene_positions,gene_col,attributes))
     gene_df['chr'] = gene_df['chr'].apply(normalize_chr)
+
+    if verbose:
+        missing = gene_df[gene_df['chr'].isna()]
+        print(f'{len(missing)} genes had no BioMart coordinates: {missing[gene_col].tolist()[:10]}')
 
     for c in ('start','end'):
         if c in gene_df.columns:
