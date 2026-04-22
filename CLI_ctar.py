@@ -70,6 +70,7 @@ def main(args):
     ARRAY_IDX = args.array_idx
     FLAG_SE = (args.flag_se == 'True')
     FLAG_LL = (args.flag_ll == 'True')
+    FLAG_CORR = (args.flag_corr == 'True')
     N_CORES = int(args.n_cores) if args.n_cores is not None else None
 
     # Parse and check arguments
@@ -122,6 +123,7 @@ def main(args):
     header += "--array_idx %s\\\n" % ARRAY_IDX
     header += "--flag_se %s\\\n" % FLAG_SE
     header += "--flag_ll %s\\\n" % FLAG_LL
+    header += "--flag_corr %s\\\n" % FLAG_CORR
     print(header)
 
     ###########################################################################################
@@ -273,19 +275,22 @@ def main(args):
     if JOB in ["compute_pval"]:
         
         print("# Loading cis coefficients...")
-        cis_coeff_file = os.path.join(RESULTS_PATH, 'cis_coeff.npy' if USE_INF_MODE else 'cis_coeff_dic.pkl')
-        
+        if FLAG_CORR:
+            cis_coeff_file = os.path.join(RESULTS_PATH, 'cis_corr.npy' if USE_INF_MODE else 'cis_corr_dic.pkl')
+        else:
+            cis_coeff_file = os.path.join(RESULTS_PATH, 'cis_coeff.npy' if USE_INF_MODE else 'cis_coeff_dic.pkl')
+
         if USE_INF_MODE:
             if not os.path.exists(cis_coeff_file):
-                raise FileNotFoundError(f"cis_coeff.npy not found at {cis_coeff_file}")
+                raise FileNotFoundError(f"{os.path.basename(cis_coeff_file)} not found at {cis_coeff_file}")
             cis_coeff = np.load(cis_coeff_file)
-            print(f"# Loaded cis_coeff.npy with shape {cis_coeff.shape}")
+            print(f"# Loaded {os.path.basename(cis_coeff_file)} with shape {cis_coeff.shape}")
         else:
             if not os.path.exists(cis_coeff_file):
-                raise FileNotFoundError(f"cis_coeff_dic.pkl not found at {cis_coeff_file}")
+                raise FileNotFoundError(f"{os.path.basename(cis_coeff_file)} not found at {cis_coeff_file}")
             with open(cis_coeff_file, 'rb') as f:
                 cis_coeff_dic = pickle.load(f)
-            print(f"# Loaded cis_coeff_dic with {len(cis_coeff_dic)} bins")
+            print(f"# Loaded {os.path.basename(cis_coeff_file)} with {len(cis_coeff_dic)} bins")
 
             cis_idx_file = os.path.join(RESULTS_PATH, 'cis_idx_dic.pkl')
             if not os.path.exists(cis_idx_file):
@@ -293,20 +298,22 @@ def main(args):
             with open(cis_idx_file, 'rb') as f:
                 cis_idx_dic = pickle.load(f)
             print(f"# Loaded cis_idx_dic with {len(cis_idx_dic)} bins")
-        
+
         print("# Loading control coefficients...")
-        prefix = 'ctrl_coeff_' if USE_INF_MODE else 'ctrl_coeff_dic_'
+        if FLAG_CORR:
+            prefix = 'ctrl_corr_' if USE_INF_MODE else 'ctrl_corr_dic_'
+        else:
+            prefix = 'ctrl_coeff_' if USE_INF_MODE else 'ctrl_coeff_dic_'
         suffix = '.npy' if USE_INF_MODE else '.pkl'
         ctrl_coeff_files = [
-            f for f in os.listdir(RESULTS_PATH) 
+            f for f in os.listdir(RESULTS_PATH)
             if f.startswith(prefix) and f.endswith(suffix)
         ]
         print(f"# Found {len(ctrl_coeff_files)} ctrl coefficient files")
-        
-        if USE_INF_MODE: 
+
+        if USE_INF_MODE:
             if ctrl_coeff_files:
                 print("# Consolidating array outputs...")
-                # consolidate ctrl chunks + ids chunks using the SAME ordering
                 ctrl_coeff, coeff_ranges = ctar.data_loader.consolidate_ranged_npy(
                     RESULTS_PATH, startswith=prefix, allow_pickle=False
                 )
@@ -331,16 +338,18 @@ def main(args):
                 else:
                     print("WARNING: link id files not found; alignment not guaranteed.")
 
-                assert ctrl_coeff.ndim == 3 and ctrl_coeff.shape[1] == n_ctrl, f"ctrl_coeff shape unexpected: {ctrl_coeff.shape}"
+                if not FLAG_CORR:
+                    assert ctrl_coeff.ndim == 3 and ctrl_coeff.shape[1] == n_ctrl, f"ctrl_coeff shape unexpected: {ctrl_coeff.shape}"
                 assert cis_coeff.shape[0] == ctrl_coeff.shape[0], "cis/ctrl link count mismatch"
 
             else:
-                ctrl_coeff_file = os.path.join(RESULTS_PATH, 'ctrl_coeff.npy')
+                single_fname = 'ctrl_corr.npy' if FLAG_CORR else 'ctrl_coeff.npy'
+                ctrl_coeff_file = os.path.join(RESULTS_PATH, single_fname)
                 if not os.path.exists(ctrl_coeff_file):
-                    raise FileNotFoundError(f"No ctrl_coeff files found in {RESULTS_PATH}")
+                    raise FileNotFoundError(f"No ctrl files found in {RESULTS_PATH}")
                 ctrl_coeff = np.load(ctrl_coeff_file)
-                print(f"# Loaded single ctrl_coeff.npy with shape {ctrl_coeff.shape}")
-        
+                print(f"# Loaded single {single_fname} with shape {ctrl_coeff.shape}")
+
         else:
             if ctrl_coeff_files:
                 print("# Consolidating dictionary outputs...")
@@ -351,12 +360,13 @@ def main(args):
                     print_missing=False
                 )
             else:
-                ctrl_coeff_file = os.path.join(RESULTS_PATH, 'ctrl_coeff_dic.pkl')
+                single_fname = 'ctrl_corr_dic.pkl' if FLAG_CORR else 'ctrl_coeff_dic.pkl'
+                ctrl_coeff_file = os.path.join(RESULTS_PATH, single_fname)
                 if not os.path.exists(ctrl_coeff_file):
-                    raise FileNotFoundError(f"No ctrl_coeff_dic files found in {RESULTS_PATH}")
+                    raise FileNotFoundError(f"No ctrl dic files found in {RESULTS_PATH}")
                 with open(ctrl_coeff_file, 'rb') as f:
                     ctrl_coeff_dic = pickle.load(f)
-                print(f"# Loaded single ctrl_coeff_dic.pkl with {len(ctrl_coeff_dic)} bins")
+                print(f"# Loaded single {single_fname} with {len(ctrl_coeff_dic)} bins")
 
 
     ###########################################################################################
@@ -416,131 +426,178 @@ def main(args):
             rna_sparse = adata_rna.layers['counts']
             atac_sparse = adata_atac.layers['counts']
 
-            print('# Starting cis-links IRLS...')
-            start_time = time.time()
-
-            if COVAR_FILE:
-                cis_coeff_dic = ctar.parallel.multiprocess_poisson_irls_multivar(
-                    links_dict=cis_links_dic,
-                    atac_sparse=atac_sparse,
-                    rna_sparse=rna_sparse,
-                    covar_mat=covar_mat,
-                    batch_size=BATCH_SIZE,
-                    scheduler="processes",
-                    n_workers=n_cores,
-                    flag_se=FLAG_SE,
-                    flag_ll=FLAG_LL
-                )
-            else:
-                cis_coeff_dic = ctar.parallel.multiprocess_poisson_irls(
-                    links_dict=cis_links_dic,
-                    atac_sparse=atac_sparse,
-                    rna_sparse=rna_sparse,
-                    batch_size=BATCH_SIZE,
-                    scheduler="processes",
-                    n_workers=n_cores,
-                    flag_se=FLAG_SE,
-                    flag_ll=FLAG_LL
-                )
-            print('# Cis-links IRLS time = %0.2fs' % (time.time() - start_time))
-
             n_links = len(cis_links_array)
-            first_cis_key = list(cis_coeff_dic.keys())[0]
-            first_cis_val = np.asarray(cis_coeff_dic[first_cis_key])
-            if first_cis_val.ndim == 2:
-                cis_coeff = np.empty((n_links, first_cis_val.shape[1]), dtype=np.float32)
-                for batch_key, coeffs in cis_coeff_dic.items():
-                    for i, idx in enumerate(cis_idx_map[batch_key]):
-                        cis_coeff[idx, :] = coeffs[i]
-            else:
-                cis_coeff = np.empty((n_links,), dtype=np.float32)
-                for batch_key, coeffs in cis_coeff_dic.items():
-                    for i, idx in enumerate(cis_idx_map[batch_key]):
-                        cis_coeff[idx] = coeffs[i]
 
-            print('# Starting control links IRLS...')
-            start_time = time.time()
-
-            if COVAR_FILE:
-                ctrl_coeff_dic = ctar.parallel.multiprocess_poisson_irls_multivar(
-                    links_dict=ctrl_links_dic,
+            if FLAG_CORR:
+                print('# Starting cis-links Pearson correlation...')
+                start_time = time.time()
+                cis_corr_dic = ctar.parallel.multiprocess_pearson_corr(
+                    links_dict=cis_links_dic,
                     atac_sparse=atac_sparse,
                     rna_sparse=rna_sparse,
-                    covar_mat=covar_mat,
                     batch_size=BATCH_SIZE,
-                    scheduler="processes",
                     n_workers=n_cores,
                 )
-            else:
-                ctrl_coeff_dic = ctar.parallel.multiprocess_poisson_irls(
+                print('# Cis Pearson time = %0.2fs' % (time.time() - start_time))
+                cis_coeff = np.empty(n_links, dtype=np.float32)
+                for batch_key, corrs in cis_corr_dic.items():
+                    for i, idx in enumerate(cis_idx_map[batch_key]):
+                        cis_coeff[idx] = corrs[i]
+
+                print('# Starting control links Pearson correlation...')
+                start_time = time.time()
+                ctrl_corr_dic = ctar.parallel.multiprocess_pearson_corr(
                     links_dict=ctrl_links_dic,
                     atac_sparse=atac_sparse,
                     rna_sparse=rna_sparse,
-                    batch_size=(BATCH_SIZE//10)+1,
-                    scheduler="processes",
+                    batch_size=BATCH_SIZE,
                     n_workers=n_cores,
-                    flag_se=FLAG_SE,
-                    flag_ll=FLAG_LL,
                 )
-            print('# Control links IRLS time = %0.2fs' % (time.time() - start_time))
-
-            first_ctrl_key = list(ctrl_coeff_dic.keys())[0]
-            first_ctrl_val = np.asarray(ctrl_coeff_dic[first_ctrl_key])
-            n_rows = len(cis_links_df) * n_ctrl
-
-            if first_ctrl_val.ndim == 2:
-                ctrl_coeff_flat = np.empty((n_rows, first_ctrl_val.shape[1]), dtype=np.float32)
-                for batch_key, coeffs in ctrl_coeff_dic.items():
+                print('# Control Pearson time = %0.2fs' % (time.time() - start_time))
+                n_rows = len(cis_links_df) * n_ctrl
+                ctrl_coeff_flat = np.empty(n_rows, dtype=np.float32)
+                for batch_key, corrs in ctrl_corr_dic.items():
                     for i, idx in enumerate(ctrl_idx_map[batch_key]):
-                        ctrl_coeff_flat[idx, :] = coeffs[i]
-                ctrl_coeff = ctrl_coeff_flat.reshape(len(cis_links_df), n_ctrl, first_ctrl_val.shape[1])
-            else:
-                ctrl_coeff_flat = np.empty((n_rows,), dtype=np.float32)
-                for batch_key, coeffs in ctrl_coeff_dic.items():
-                    for i, idx in enumerate(ctrl_idx_map[batch_key]):
-                        ctrl_coeff_flat[idx] = coeffs[i]
+                        ctrl_coeff_flat[idx] = corrs[i]
                 ctrl_coeff = ctrl_coeff_flat.reshape(len(cis_links_df), n_ctrl)
 
-            MAX_VAL = 100
-            if ctrl_coeff.ndim == 3 and ctrl_coeff.shape[2] == 2:
-                ctrl_se = ctrl_coeff[:, :, 0]
-                ctrl_beta = ctrl_coeff[:, :, 1]
+                cis_links_df['corr'] = cis_coeff
+                cis_links_df[f'{BIN_CONFIG}_mcpval'] = ctar.method.initial_mcpval(ctrl_coeff, cis_coeff)
+                cis_links_df[f'{BIN_CONFIG}_ppval'] = ctar.method.pooled_mcpval(ctrl_coeff, cis_coeff)
 
-                cis_links_df[f'{BIN_CONFIG}_mcpval'] = ctar.method.initial_mcpval(ctrl_beta, cis_coeff[:, 1])
-                cis_links_df[f'{BIN_CONFIG}_ppval'] = ctar.method.pooled_mcpval(ctrl_beta, cis_coeff[:, 1])
+                print(f'# Saving files to {results_folder}')
+                os.makedirs(results_folder, exist_ok=True)
+                np.save(f'{results_folder}/ctrl_peaks.npy', ctrl_peaks)
+                np.save(f'{results_folder}/cis_corr.npy', cis_coeff)
+                np.save(f'{results_folder}/ctrl_corr.npy', ctrl_coeff)
+                np.save(f'{results_folder}/cis_link_ids.npy', link_ids, allow_pickle=True)
+                cis_links_df.to_csv(f'{results_folder}/cis_links_df.csv')
 
-                cis_studentized = np.clip(cis_coeff[:, 1] / cis_coeff[:, 0], -MAX_VAL, MAX_VAL)
-                ctrl_studentized = np.clip(ctrl_beta / ctrl_se, -MAX_VAL, MAX_VAL)
-
-                cis_links_df[f'{BIN_CONFIG}_mcpval_z'] = ctar.method.initial_mcpval(ctrl_studentized, cis_studentized)
-                cis_links_df[f'{BIN_CONFIG}_ppval_z'] = ctar.method.pooled_mcpval(ctrl_studentized, cis_studentized)
-
-                cis_links_df['poissonb'] = cis_coeff[:, 1]
-                cis_links_df['poissonb_se'] = cis_coeff[:, 0]
             else:
-                if cis_coeff.ndim == 1:
-                    cis_beta = cis_coeff
-                elif cis_coeff.ndim == 2 and cis_coeff.shape[1] == 2:
-                    cis_beta = cis_coeff[:, 1]
+                print('# Starting cis-links IRLS...')
+                start_time = time.time()
+
+                if COVAR_FILE:
+                    cis_coeff_dic = ctar.parallel.multiprocess_poisson_irls_multivar(
+                        links_dict=cis_links_dic,
+                        atac_sparse=atac_sparse,
+                        rna_sparse=rna_sparse,
+                        covar_mat=covar_mat,
+                        batch_size=BATCH_SIZE,
+                        scheduler="processes",
+                        n_workers=n_cores,
+                        flag_se=FLAG_SE,
+                        flag_ll=FLAG_LL
+                    )
+                else:
+                    cis_coeff_dic = ctar.parallel.multiprocess_poisson_irls(
+                        links_dict=cis_links_dic,
+                        atac_sparse=atac_sparse,
+                        rna_sparse=rna_sparse,
+                        batch_size=BATCH_SIZE,
+                        scheduler="processes",
+                        n_workers=n_cores,
+                        flag_se=FLAG_SE,
+                        flag_ll=FLAG_LL
+                    )
+                print('# Cis-links IRLS time = %0.2fs' % (time.time() - start_time))
+
+                first_cis_key = list(cis_coeff_dic.keys())[0]
+                first_cis_val = np.asarray(cis_coeff_dic[first_cis_key])
+                if first_cis_val.ndim == 2:
+                    cis_coeff = np.empty((n_links, first_cis_val.shape[1]), dtype=np.float32)
+                    for batch_key, coeffs in cis_coeff_dic.items():
+                        for i, idx in enumerate(cis_idx_map[batch_key]):
+                            cis_coeff[idx, :] = coeffs[i]
+                else:
+                    cis_coeff = np.empty((n_links,), dtype=np.float32)
+                    for batch_key, coeffs in cis_coeff_dic.items():
+                        for i, idx in enumerate(cis_idx_map[batch_key]):
+                            cis_coeff[idx] = coeffs[i]
+
+                print('# Starting control links IRLS...')
+                start_time = time.time()
+
+                if COVAR_FILE:
+                    ctrl_coeff_dic = ctar.parallel.multiprocess_poisson_irls_multivar(
+                        links_dict=ctrl_links_dic,
+                        atac_sparse=atac_sparse,
+                        rna_sparse=rna_sparse,
+                        covar_mat=covar_mat,
+                        batch_size=BATCH_SIZE,
+                        scheduler="processes",
+                        n_workers=n_cores,
+                    )
+                else:
+                    ctrl_coeff_dic = ctar.parallel.multiprocess_poisson_irls(
+                        links_dict=ctrl_links_dic,
+                        atac_sparse=atac_sparse,
+                        rna_sparse=rna_sparse,
+                        batch_size=(BATCH_SIZE//10)+1,
+                        scheduler="processes",
+                        n_workers=n_cores,
+                        flag_se=FLAG_SE,
+                        flag_ll=FLAG_LL,
+                    )
+                print('# Control links IRLS time = %0.2fs' % (time.time() - start_time))
+
+                first_ctrl_key = list(ctrl_coeff_dic.keys())[0]
+                first_ctrl_val = np.asarray(ctrl_coeff_dic[first_ctrl_key])
+                n_rows = len(cis_links_df) * n_ctrl
+
+                if first_ctrl_val.ndim == 2:
+                    ctrl_coeff_flat = np.empty((n_rows, first_ctrl_val.shape[1]), dtype=np.float32)
+                    for batch_key, coeffs in ctrl_coeff_dic.items():
+                        for i, idx in enumerate(ctrl_idx_map[batch_key]):
+                            ctrl_coeff_flat[idx, :] = coeffs[i]
+                    ctrl_coeff = ctrl_coeff_flat.reshape(len(cis_links_df), n_ctrl, first_ctrl_val.shape[1])
+                else:
+                    ctrl_coeff_flat = np.empty((n_rows,), dtype=np.float32)
+                    for batch_key, coeffs in ctrl_coeff_dic.items():
+                        for i, idx in enumerate(ctrl_idx_map[batch_key]):
+                            ctrl_coeff_flat[idx] = coeffs[i]
+                    ctrl_coeff = ctrl_coeff_flat.reshape(len(cis_links_df), n_ctrl)
+
+                MAX_VAL = 100
+                if ctrl_coeff.ndim == 3 and ctrl_coeff.shape[2] == 2:
+                    ctrl_se = ctrl_coeff[:, :, 0]
+                    ctrl_beta = ctrl_coeff[:, :, 1]
+
+                    cis_links_df[f'{BIN_CONFIG}_mcpval'] = ctar.method.initial_mcpval(ctrl_beta, cis_coeff[:, 1])
+                    cis_links_df[f'{BIN_CONFIG}_ppval'] = ctar.method.pooled_mcpval(ctrl_beta, cis_coeff[:, 1])
+
+                    cis_studentized = np.clip(cis_coeff[:, 1] / cis_coeff[:, 0], -MAX_VAL, MAX_VAL)
+                    ctrl_studentized = np.clip(ctrl_beta / ctrl_se, -MAX_VAL, MAX_VAL)
+
+                    cis_links_df[f'{BIN_CONFIG}_mcpval_z'] = ctar.method.initial_mcpval(ctrl_studentized, cis_studentized)
+                    cis_links_df[f'{BIN_CONFIG}_ppval_z'] = ctar.method.pooled_mcpval(ctrl_studentized, cis_studentized)
+
                     cis_links_df['poissonb'] = cis_coeff[:, 1]
                     cis_links_df['poissonb_se'] = cis_coeff[:, 0]
                 else:
-                    cis_beta = cis_coeff
+                    if cis_coeff.ndim == 1:
+                        cis_beta = cis_coeff
+                    elif cis_coeff.ndim == 2 and cis_coeff.shape[1] == 2:
+                        cis_beta = cis_coeff[:, 1]
+                        cis_links_df['poissonb'] = cis_coeff[:, 1]
+                        cis_links_df['poissonb_se'] = cis_coeff[:, 0]
+                    else:
+                        cis_beta = cis_coeff
 
-                cis_links_df[f'{BIN_CONFIG}_mcpval'] = ctar.method.initial_mcpval(ctrl_coeff, cis_beta)
-                cis_links_df[f'{BIN_CONFIG}_ppval'] = ctar.method.pooled_mcpval(ctrl_coeff, cis_beta)
+                    cis_links_df[f'{BIN_CONFIG}_mcpval'] = ctar.method.initial_mcpval(ctrl_coeff, cis_beta)
+                    cis_links_df[f'{BIN_CONFIG}_ppval'] = ctar.method.pooled_mcpval(ctrl_coeff, cis_beta)
 
-                if 'poissonb' not in cis_links_df.columns:
-                    cis_links_df['poissonb'] = cis_beta
+                    if 'poissonb' not in cis_links_df.columns:
+                        cis_links_df['poissonb'] = cis_beta
 
-            print(f'# Saving files to {results_folder}')
-            os.makedirs(results_folder, exist_ok=True)
-            
-            np.save(f'{results_folder}/ctrl_peaks.npy', ctrl_peaks)
-            np.save(f'{results_folder}/cis_coeff.npy', cis_coeff)
-            np.save(f'{results_folder}/ctrl_coeff.npy', ctrl_coeff)
-            np.save(f'{results_folder}/cis_link_ids.npy', link_ids, allow_pickle=True)
-            cis_links_df.to_csv(f'{results_folder}/cis_links_df.csv')
+                print(f'# Saving files to {results_folder}')
+                os.makedirs(results_folder, exist_ok=True)
+
+                np.save(f'{results_folder}/ctrl_peaks.npy', ctrl_peaks)
+                np.save(f'{results_folder}/cis_coeff.npy', cis_coeff)
+                np.save(f'{results_folder}/ctrl_coeff.npy', ctrl_coeff)
+                np.save(f'{results_folder}/cis_link_ids.npy', link_ids, allow_pickle=True)
+                cis_links_df.to_csv(f'{results_folder}/cis_links_df.csv')
             
         else:
             # Standard binned mode
@@ -563,116 +620,157 @@ def main(args):
             rna_sparse = adata_rna.layers['counts']
             atac_sparse = adata_atac.layers['counts']
 
-            print('# Starting cis-links IRLS...')
-            start_time = time.time()
-
-            if COVAR_FILE:
-                cis_coeff_dic = ctar.parallel.multiprocess_poisson_irls_multivar(
-                    links_dict=cis_links_dic,
-                    atac_sparse=atac_sparse,
-                    rna_sparse=rna_sparse,
-                    covar_mat=covar_mat,
-                    batch_size=BATCH_SIZE,
-                    scheduler="processes",
-                    n_workers=n_cores,
-                )
-            else:
-                cis_coeff_dic = ctar.parallel.multiprocess_poisson_irls(
+            if FLAG_CORR:
+                print('# Starting cis-links Pearson correlation...')
+                start_time = time.time()
+                cis_coeff_dic = ctar.parallel.multiprocess_pearson_corr(
                     links_dict=cis_links_dic,
                     atac_sparse=atac_sparse,
                     rna_sparse=rna_sparse,
                     batch_size=BATCH_SIZE,
-                    scheduler="processes",
                     n_workers=n_cores,
-                    flag_se=FLAG_SE,
-                    flag_ll=FLAG_LL,
                 )
-            print('# Cis-links IRLS time = %0.2fs' % (time.time() - start_time))
+                print('# Cis Pearson time = %0.2fs' % (time.time() - start_time))
 
-            print('# Starting control links IRLS...')
-            start_time = time.time()
-
-            if COVAR_FILE:
-                ctrl_coeff_dic = ctar.parallel.multiprocess_poisson_irls_multivar(
+                print('# Starting control links Pearson correlation...')
+                start_time = time.time()
+                ctrl_coeff_dic = ctar.parallel.multiprocess_pearson_corr(
                     links_dict=ctrl_links_dic,
                     atac_sparse=atac_sparse,
                     rna_sparse=rna_sparse,
-                    covar_mat=covar_mat,
                     batch_size=BATCH_SIZE,
-                    scheduler="processes",
                     n_workers=n_cores,
                 )
-            else:
-                ctrl_coeff_dic = ctar.parallel.multiprocess_poisson_irls(
-                    links_dict=ctrl_links_dic,
-                    atac_sparse=atac_sparse,
-                    rna_sparse=rna_sparse,
-                    batch_size=(BATCH_SIZE//10)+1,
-                    scheduler="processes",
-                    n_workers=n_cores,
-                    flag_se=FLAG_SE,
-                    flag_ll=FLAG_LL,
-                )
-            print('# Control links IRLS time = %0.2fs' % (time.time() - start_time))
+                print('# Control Pearson time = %0.2fs' % (time.time() - start_time))
 
-            first_key = list(ctrl_coeff_dic.keys())[0]
-            if ctrl_coeff_dic[first_key].ndim == 2 and ctrl_coeff_dic[first_key].shape[1] == 2:
-                mcpval_dic, ppval_dic = ctar.method.binned_mcpval(
-                    {key: value[:, 1] for key, value in cis_coeff_dic.items()},
-                    {key: value[:, 1] for key, value in ctrl_coeff_dic.items()},
-                    b=n_ctrl,
-                )
-
-                cis_links_df = ctar.data_loader.map_dic_to_df(cis_links_df, cis_idx_dic, mcpval_dic, col_name=f'{BIN_CONFIG}_mcpval')
-                cis_links_df = ctar.data_loader.map_dic_to_df(cis_links_df, cis_idx_dic, ppval_dic, col_name=f'{BIN_CONFIG}_ppval')
-                cis_links_df = ctar.data_loader.map_dic_to_df(
-                    cis_links_df,
-                    cis_idx_dic,
-                    {key: value[:, 1] for key, value in cis_coeff_dic.items()},
-                    col_name='poissonb'
-                )
-                cis_links_df = ctar.data_loader.map_dic_to_df(
-                    cis_links_df,
-                    cis_idx_dic,
-                    {key: value[:, 0] for key, value in cis_coeff_dic.items()},
-                    col_name='poissonb_se'
-                )
-
-                MAX_VAL = 100
-                cis_coeff_dic_z = {}
-                ctrl_coeff_dic_z = {}
-                for key in cis_coeff_dic.keys():
-                    cis_coeff_dic_z[key] = np.clip(cis_coeff_dic[key][:, 1] / cis_coeff_dic[key][:, 0], -MAX_VAL, MAX_VAL)
-                    ctrl_coeff_dic_z[key] = np.clip(ctrl_coeff_dic[key][:, 1] / ctrl_coeff_dic[key][:, 0], -MAX_VAL, MAX_VAL)
-
-                mcpval_dic_z, ppval_dic_z = ctar.method.binned_mcpval(
-                    cis_coeff_dic_z,
-                    ctrl_coeff_dic_z,
-                    b=n_ctrl,
-                )
-
-                cis_links_df = ctar.data_loader.map_dic_to_df(cis_links_df, cis_idx_dic, mcpval_dic_z, col_name=f'{BIN_CONFIG}_mcpval_z')
-                cis_links_df = ctar.data_loader.map_dic_to_df(cis_links_df, cis_idx_dic, ppval_dic_z, col_name=f'{BIN_CONFIG}_ppval_z')
-            else:
                 mcpval_dic, ppval_dic = ctar.method.binned_mcpval(cis_coeff_dic, ctrl_coeff_dic, b=n_ctrl)
-
                 cis_links_df = ctar.data_loader.map_dic_to_df(cis_links_df, cis_idx_dic, mcpval_dic, col_name=f'{BIN_CONFIG}_mcpval')
                 cis_links_df = ctar.data_loader.map_dic_to_df(cis_links_df, cis_idx_dic, ppval_dic, col_name=f'{BIN_CONFIG}_ppval')
-                cis_links_df = ctar.data_loader.map_dic_to_df(cis_links_df, cis_idx_dic, cis_coeff_dic, col_name='poissonb')
+                cis_links_df = ctar.data_loader.map_dic_to_df(cis_links_df, cis_idx_dic, cis_coeff_dic, col_name='corr')
 
-            print(f'# Saving files to {results_folder}')
-            os.makedirs(results_folder, exist_ok=True)
-            
-            with open(f'{results_folder}/cis_coeff_dic.pkl', 'wb') as f:
-                pickle.dump(cis_coeff_dic, f)
-            with open(f'{results_folder}/cis_idx_dic.pkl', 'wb') as f:
-                pickle.dump(cis_idx_dic, f)
-            with open(f'{results_folder}/ctrl_coeff_dic.pkl', 'wb') as f:
-                pickle.dump(ctrl_coeff_dic, f)
-            with open(f'{results_folder}/ctrl_links_dic.pkl', 'wb') as f:
-                pickle.dump(ctrl_links_dic, f)
+                print(f'# Saving files to {results_folder}')
+                os.makedirs(results_folder, exist_ok=True)
+                with open(f'{results_folder}/cis_corr_dic.pkl', 'wb') as f:
+                    pickle.dump(cis_coeff_dic, f)
+                with open(f'{results_folder}/cis_idx_dic.pkl', 'wb') as f:
+                    pickle.dump(cis_idx_dic, f)
+                with open(f'{results_folder}/ctrl_corr_dic.pkl', 'wb') as f:
+                    pickle.dump(ctrl_coeff_dic, f)
+                with open(f'{results_folder}/ctrl_links_dic.pkl', 'wb') as f:
+                    pickle.dump(ctrl_links_dic, f)
+                cis_links_df.to_csv(f'{results_folder}/cis_links_df.csv')
 
-            cis_links_df.to_csv(f'{results_folder}/cis_links_df.csv')
+            else:
+                print('# Starting cis-links IRLS...')
+                start_time = time.time()
+
+                if COVAR_FILE:
+                    cis_coeff_dic = ctar.parallel.multiprocess_poisson_irls_multivar(
+                        links_dict=cis_links_dic,
+                        atac_sparse=atac_sparse,
+                        rna_sparse=rna_sparse,
+                        covar_mat=covar_mat,
+                        batch_size=BATCH_SIZE,
+                        scheduler="processes",
+                        n_workers=n_cores,
+                    )
+                else:
+                    cis_coeff_dic = ctar.parallel.multiprocess_poisson_irls(
+                        links_dict=cis_links_dic,
+                        atac_sparse=atac_sparse,
+                        rna_sparse=rna_sparse,
+                        batch_size=BATCH_SIZE,
+                        scheduler="processes",
+                        n_workers=n_cores,
+                        flag_se=FLAG_SE,
+                        flag_ll=FLAG_LL,
+                    )
+                print('# Cis-links IRLS time = %0.2fs' % (time.time() - start_time))
+
+                print('# Starting control links IRLS...')
+                start_time = time.time()
+
+                if COVAR_FILE:
+                    ctrl_coeff_dic = ctar.parallel.multiprocess_poisson_irls_multivar(
+                        links_dict=ctrl_links_dic,
+                        atac_sparse=atac_sparse,
+                        rna_sparse=rna_sparse,
+                        covar_mat=covar_mat,
+                        batch_size=BATCH_SIZE,
+                        scheduler="processes",
+                        n_workers=n_cores,
+                    )
+                else:
+                    ctrl_coeff_dic = ctar.parallel.multiprocess_poisson_irls(
+                        links_dict=ctrl_links_dic,
+                        atac_sparse=atac_sparse,
+                        rna_sparse=rna_sparse,
+                        batch_size=(BATCH_SIZE//10)+1,
+                        scheduler="processes",
+                        n_workers=n_cores,
+                        flag_se=FLAG_SE,
+                        flag_ll=FLAG_LL,
+                    )
+                print('# Control links IRLS time = %0.2fs' % (time.time() - start_time))
+
+                first_key = list(ctrl_coeff_dic.keys())[0]
+                if ctrl_coeff_dic[first_key].ndim == 2 and ctrl_coeff_dic[first_key].shape[1] == 2:
+                    mcpval_dic, ppval_dic = ctar.method.binned_mcpval(
+                        {key: value[:, 1] for key, value in cis_coeff_dic.items()},
+                        {key: value[:, 1] for key, value in ctrl_coeff_dic.items()},
+                        b=n_ctrl,
+                    )
+
+                    cis_links_df = ctar.data_loader.map_dic_to_df(cis_links_df, cis_idx_dic, mcpval_dic, col_name=f'{BIN_CONFIG}_mcpval')
+                    cis_links_df = ctar.data_loader.map_dic_to_df(cis_links_df, cis_idx_dic, ppval_dic, col_name=f'{BIN_CONFIG}_ppval')
+                    cis_links_df = ctar.data_loader.map_dic_to_df(
+                        cis_links_df,
+                        cis_idx_dic,
+                        {key: value[:, 1] for key, value in cis_coeff_dic.items()},
+                        col_name='poissonb'
+                    )
+                    cis_links_df = ctar.data_loader.map_dic_to_df(
+                        cis_links_df,
+                        cis_idx_dic,
+                        {key: value[:, 0] for key, value in cis_coeff_dic.items()},
+                        col_name='poissonb_se'
+                    )
+
+                    MAX_VAL = 100
+                    cis_coeff_dic_z = {}
+                    ctrl_coeff_dic_z = {}
+                    for key in cis_coeff_dic.keys():
+                        cis_coeff_dic_z[key] = np.clip(cis_coeff_dic[key][:, 1] / cis_coeff_dic[key][:, 0], -MAX_VAL, MAX_VAL)
+                        ctrl_coeff_dic_z[key] = np.clip(ctrl_coeff_dic[key][:, 1] / ctrl_coeff_dic[key][:, 0], -MAX_VAL, MAX_VAL)
+
+                    mcpval_dic_z, ppval_dic_z = ctar.method.binned_mcpval(
+                        cis_coeff_dic_z,
+                        ctrl_coeff_dic_z,
+                        b=n_ctrl,
+                    )
+
+                    cis_links_df = ctar.data_loader.map_dic_to_df(cis_links_df, cis_idx_dic, mcpval_dic_z, col_name=f'{BIN_CONFIG}_mcpval_z')
+                    cis_links_df = ctar.data_loader.map_dic_to_df(cis_links_df, cis_idx_dic, ppval_dic_z, col_name=f'{BIN_CONFIG}_ppval_z')
+                else:
+                    mcpval_dic, ppval_dic = ctar.method.binned_mcpval(cis_coeff_dic, ctrl_coeff_dic, b=n_ctrl)
+
+                    cis_links_df = ctar.data_loader.map_dic_to_df(cis_links_df, cis_idx_dic, mcpval_dic, col_name=f'{BIN_CONFIG}_mcpval')
+                    cis_links_df = ctar.data_loader.map_dic_to_df(cis_links_df, cis_idx_dic, ppval_dic, col_name=f'{BIN_CONFIG}_ppval')
+                    cis_links_df = ctar.data_loader.map_dic_to_df(cis_links_df, cis_idx_dic, cis_coeff_dic, col_name='poissonb')
+
+                print(f'# Saving files to {results_folder}')
+                os.makedirs(results_folder, exist_ok=True)
+
+                with open(f'{results_folder}/cis_coeff_dic.pkl', 'wb') as f:
+                    pickle.dump(cis_coeff_dic, f)
+                with open(f'{results_folder}/cis_idx_dic.pkl', 'wb') as f:
+                    pickle.dump(cis_idx_dic, f)
+                with open(f'{results_folder}/ctrl_coeff_dic.pkl', 'wb') as f:
+                    pickle.dump(ctrl_coeff_dic, f)
+                with open(f'{results_folder}/ctrl_links_dic.pkl', 'wb') as f:
+                    pickle.dump(ctrl_links_dic, f)
+
+                cis_links_df.to_csv(f'{results_folder}/cis_links_df.csv')
 
 
     if JOB == "generate_links":
@@ -810,42 +908,61 @@ def main(args):
             
             rna_sparse = adata_rna.layers['counts']
             atac_sparse = adata_atac.layers['counts']
-            
-            print('# Starting cis-links IRLS...')
-            start_time = time.time()
-
-            if COVAR_FILE:
-                cis_coeff_dic = ctar.parallel.multiprocess_poisson_irls_multivar(
-                    links_dict=cis_links_dic,
-                    atac_sparse=atac_sparse,
-                    rna_sparse=rna_sparse,
-                    covar_mat=covar_mat,
-                    batch_size=BATCH_SIZE,
-                    scheduler="processes",
-                    n_workers=n_cores,
-                    flag_se=FLAG_SE,
-                )
-            else:
-                cis_coeff_dic = ctar.parallel.multiprocess_poisson_irls(
-                    links_dict=cis_links_dic,
-                    atac_sparse=atac_sparse,
-                    rna_sparse=rna_sparse,
-                    batch_size=BATCH_SIZE,
-                    scheduler="processes",
-                    n_workers=n_cores,
-                    flag_se=FLAG_SE,
-                    flag_ll=FLAG_LL
-                )
-            print('# Cis-links IRLS time = %0.2fs' % (time.time() - start_time))
 
             n_links = len(cis_links_array)
-            cis_coeff = np.empty((n_links, 2), dtype=np.float32)
-            for batch_key, coeffs in cis_coeff_dic.items():
-                # Use cis_idx_map to restore coefficients and SE to the correct positions
-                for i, idx in enumerate(cis_idx_map[batch_key]):
-                    cis_coeff[idx, 0] = coeffs[i][0]
-                    cis_coeff[idx, 1] = coeffs[i][1]
-                
+
+            if FLAG_CORR:
+                print('# Starting cis-links Pearson correlation...')
+                start_time = time.time()
+                cis_corr_dic = ctar.parallel.multiprocess_pearson_corr(
+                    links_dict=cis_links_dic,
+                    atac_sparse=atac_sparse,
+                    rna_sparse=rna_sparse,
+                    batch_size=BATCH_SIZE,
+                    n_workers=n_cores,
+                )
+                print('# Cis Pearson time = %0.2fs' % (time.time() - start_time))
+                cis_coeff = np.empty(n_links, dtype=np.float32)
+                for batch_key, corrs in cis_corr_dic.items():
+                    for i, idx in enumerate(cis_idx_map[batch_key]):
+                        cis_coeff[idx] = corrs[i]
+                cis_links_df['corr'] = cis_coeff
+            else:
+                print('# Starting cis-links IRLS...')
+                start_time = time.time()
+
+                if COVAR_FILE:
+                    cis_coeff_dic = ctar.parallel.multiprocess_poisson_irls_multivar(
+                        links_dict=cis_links_dic,
+                        atac_sparse=atac_sparse,
+                        rna_sparse=rna_sparse,
+                        covar_mat=covar_mat,
+                        batch_size=BATCH_SIZE,
+                        scheduler="processes",
+                        n_workers=n_cores,
+                        flag_se=FLAG_SE,
+                    )
+                else:
+                    cis_coeff_dic = ctar.parallel.multiprocess_poisson_irls(
+                        links_dict=cis_links_dic,
+                        atac_sparse=atac_sparse,
+                        rna_sparse=rna_sparse,
+                        batch_size=BATCH_SIZE,
+                        scheduler="processes",
+                        n_workers=n_cores,
+                        flag_se=FLAG_SE,
+                        flag_ll=FLAG_LL
+                    )
+                print('# Cis-links IRLS time = %0.2fs' % (time.time() - start_time))
+
+                cis_coeff = np.empty((n_links, 2), dtype=np.float32)
+                for batch_key, coeffs in cis_coeff_dic.items():
+                    for i, idx in enumerate(cis_idx_map[batch_key]):
+                        cis_coeff[idx, 0] = coeffs[i][0]
+                        cis_coeff[idx, 1] = coeffs[i][1]
+                cis_links_df['poissonb'] = cis_coeff[:, 1]
+                cis_links_df['poissonb_se'] = cis_coeff[:, 0]
+
         else:
             
             # Standard binned mode
@@ -885,47 +1002,83 @@ def main(args):
             rna_sparse = adata_rna.layers['counts']
             atac_sparse = adata_atac.layers['counts']
 
-            print('# Starting cis-links IRLS...')
-            start_time = time.time()
-
-            if COVAR_FILE:
-                cis_coeff_dic = ctar.parallel.multiprocess_poisson_irls_multivar(
+            if FLAG_CORR:
+                print('# Starting cis-links Pearson correlation...')
+                start_time = time.time()
+                cis_corr_dic = ctar.parallel.multiprocess_pearson_corr(
                     links_dict=cis_links_dic,
                     atac_sparse=atac_sparse,
                     rna_sparse=rna_sparse,
-                    covar_mat=covar_mat,
                     batch_size=BATCH_SIZE,
-                    scheduler="processes",
                     n_workers=n_cores,
                 )
+                print('# Cis Pearson time = %0.2fs' % (time.time() - start_time))
+                cis_links_df = ctar.data_loader.map_dic_to_df(cis_links_df, cis_idx_dic, cis_corr_dic, col_name='corr')
             else:
-                cis_coeff_dic = ctar.parallel.multiprocess_poisson_irls(
-                    links_dict=cis_links_dic,
-                    atac_sparse=atac_sparse,
-                    rna_sparse=rna_sparse,
-                    batch_size=BATCH_SIZE,
-                    scheduler="processes",
-                    n_workers=n_cores,
-                    flag_se=FLAG_SE,
-                    flag_ll=FLAG_LL
-                )
-            print('# Cis-links IRLS time = %0.2fs' % (time.time() - start_time))
+                print('# Starting cis-links IRLS...')
+                start_time = time.time()
+
+                if COVAR_FILE:
+                    cis_coeff_dic = ctar.parallel.multiprocess_poisson_irls_multivar(
+                        links_dict=cis_links_dic,
+                        atac_sparse=atac_sparse,
+                        rna_sparse=rna_sparse,
+                        covar_mat=covar_mat,
+                        batch_size=BATCH_SIZE,
+                        scheduler="processes",
+                        n_workers=n_cores,
+                    )
+                else:
+                    cis_coeff_dic = ctar.parallel.multiprocess_poisson_irls(
+                        links_dict=cis_links_dic,
+                        atac_sparse=atac_sparse,
+                        rna_sparse=rna_sparse,
+                        batch_size=BATCH_SIZE,
+                        scheduler="processes",
+                        n_workers=n_cores,
+                        flag_se=FLAG_SE,
+                        flag_ll=FLAG_LL
+                    )
+                print('# Cis-links IRLS time = %0.2fs' % (time.time() - start_time))
+
+                first_key = list(cis_coeff_dic.keys())[0]
+                if cis_coeff_dic[first_key].ndim == 2 and cis_coeff_dic[first_key].shape[1] == 2:
+                    cis_links_df = ctar.data_loader.map_dic_to_df(
+                        cis_links_df, cis_idx_dic,
+                        {k: v[:, 1] for k, v in cis_coeff_dic.items()},
+                        col_name='poissonb'
+                    )
+                    cis_links_df = ctar.data_loader.map_dic_to_df(
+                        cis_links_df, cis_idx_dic,
+                        {k: v[:, 0] for k, v in cis_coeff_dic.items()},
+                        col_name='poissonb_se'
+                    )
+                else:
+                    cis_links_df = ctar.data_loader.map_dic_to_df(cis_links_df, cis_idx_dic, cis_coeff_dic, col_name='poissonb')
 
         print(f'# Saving files to {results_folder}')
         os.makedirs(results_folder, exist_ok=True)
 
-        if USE_INF_MODE: 
-            np.save(f'{results_folder}/cis_coeff{file_suffix}.npy', cis_coeff)
+        if USE_INF_MODE:
+            if FLAG_CORR:
+                np.save(f'{results_folder}/cis_corr{file_suffix}.npy', cis_coeff)
+            else:
+                np.save(f'{results_folder}/cis_coeff{file_suffix}.npy', cis_coeff)
             np.save(f'{results_folder}/cis_link_ids{file_suffix}.npy', link_ids, allow_pickle=True)
+            cis_links_df.to_csv(f'{results_folder}/cis_links_df.csv')
         else:
-            with open(f'{results_folder}/cis_coeff_dic{file_suffix}.pkl', 'wb') as f:
-                pickle.dump(cis_coeff_dic, f)
+            if FLAG_CORR:
+                with open(f'{results_folder}/cis_corr_dic{file_suffix}.pkl', 'wb') as f:
+                    pickle.dump(cis_corr_dic, f)
+            else:
+                with open(f'{results_folder}/cis_coeff_dic{file_suffix}.pkl', 'wb') as f:
+                    pickle.dump(cis_coeff_dic, f)
             with open(f'{results_folder}/cis_idx_dic{file_suffix}.pkl', 'wb') as f:
                 pickle.dump(cis_idx_dic, f)
             with open(f'{results_folder}/cis_links_dic{file_suffix}.pkl', 'wb') as f:
                 pickle.dump(cis_links_dic, f)
             cis_links_df.to_csv(f'{results_folder}/cis_links_df.csv')
-                
+
         if not RESULTS_PATH:
             cis_links_df.to_csv(f'{results_folder}/cis_links_df.csv')
 
@@ -993,45 +1146,63 @@ def main(args):
             
             rna_sparse = adata_rna.layers['counts']
             atac_sparse = adata_atac.layers['counts']
-            
-            print('# Starting control links IRLS...')
-            print(f'# ATAC and RNA dtype: {atac_sparse.dtype}, {rna_sparse.dtype}')
-            start_time = time.time()
 
-            if COVAR_FILE:
-                ctrl_coeff_dic = ctar.parallel.multiprocess_poisson_irls_multivar(
-                    links_dict=ctrl_links_dic,
-                    atac_sparse=atac_sparse,
-                    rna_sparse=rna_sparse,
-                    covar_mat=covar_mat,
-                    batch_size=(BATCH_SIZE//10)+1,
-                    scheduler="processes",
-                    n_workers=n_cores,
-                )
-            else:
-                ctrl_coeff_dic = ctar.parallel.multiprocess_poisson_irls(
-                    links_dict=ctrl_links_dic,
-                    atac_sparse=atac_sparse,
-                    rna_sparse=rna_sparse,
-                    batch_size=(BATCH_SIZE//10)+1,
-                    scheduler="processes",
-                    n_workers=n_cores,
-                    flag_se=FLAG_SE,
-                    flag_ll=FLAG_LL
-                )
-            print('# Control links IRLS time = %0.2fs' % (time.time() - start_time))
-            
-            # Map coefficients back to their original indices
             n_links = len(cis_links_subset)
             n_rows = n_links * n_ctrl
             assert ctrl_links_array.shape[0] == n_rows, "ctrl_links_array and cis_links_subset shape mismatch"
-            ctrl_coeff = np.empty((n_rows, 2), dtype=np.float32)
-            for batch_key, coeffs in ctrl_coeff_dic.items():
-                for i, idx in enumerate(ctrl_idx_map[batch_key]):
-                    ctrl_coeff[idx, 0] = coeffs[i][0]
-                    ctrl_coeff[idx, 1] = coeffs[i][1]
-            ctrl_coeff = ctrl_coeff.reshape(n_links, n_ctrl, 2)
-            
+
+            print(f'# ATAC and RNA dtype: {atac_sparse.dtype}, {rna_sparse.dtype}')
+
+            if FLAG_CORR:
+                print('# Starting control links Pearson correlation...')
+                start_time = time.time()
+                ctrl_corr_dic = ctar.parallel.multiprocess_pearson_corr(
+                    links_dict=ctrl_links_dic,
+                    atac_sparse=atac_sparse,
+                    rna_sparse=rna_sparse,
+                    batch_size=BATCH_SIZE,
+                    n_workers=n_cores,
+                )
+                print('# Control Pearson time = %0.2fs' % (time.time() - start_time))
+                ctrl_coeff_flat = np.empty(n_rows, dtype=np.float32)
+                for batch_key, corrs in ctrl_corr_dic.items():
+                    for i, idx in enumerate(ctrl_idx_map[batch_key]):
+                        ctrl_coeff_flat[idx] = corrs[i]
+                ctrl_coeff = ctrl_coeff_flat.reshape(n_links, n_ctrl)
+            else:
+                print('# Starting control links IRLS...')
+                start_time = time.time()
+
+                if COVAR_FILE:
+                    ctrl_coeff_dic = ctar.parallel.multiprocess_poisson_irls_multivar(
+                        links_dict=ctrl_links_dic,
+                        atac_sparse=atac_sparse,
+                        rna_sparse=rna_sparse,
+                        covar_mat=covar_mat,
+                        batch_size=(BATCH_SIZE//10)+1,
+                        scheduler="processes",
+                        n_workers=n_cores,
+                    )
+                else:
+                    ctrl_coeff_dic = ctar.parallel.multiprocess_poisson_irls(
+                        links_dict=ctrl_links_dic,
+                        atac_sparse=atac_sparse,
+                        rna_sparse=rna_sparse,
+                        batch_size=(BATCH_SIZE//10)+1,
+                        scheduler="processes",
+                        n_workers=n_cores,
+                        flag_se=FLAG_SE,
+                        flag_ll=FLAG_LL
+                    )
+                print('# Control links IRLS time = %0.2fs' % (time.time() - start_time))
+
+                ctrl_coeff = np.empty((n_rows, 2), dtype=np.float32)
+                for batch_key, coeffs in ctrl_coeff_dic.items():
+                    for i, idx in enumerate(ctrl_idx_map[batch_key]):
+                        ctrl_coeff[idx, 0] = coeffs[i][0]
+                        ctrl_coeff[idx, 1] = coeffs[i][1]
+                ctrl_coeff = ctrl_coeff.reshape(n_links, n_ctrl, 2)
+
         else:
             
             # Standard binned mode
@@ -1070,49 +1241,69 @@ def main(args):
             atac_sparse = adata_atac.layers['counts']
 
             print('# Running %d controls...' % (len(list(ctrl_links_dic.keys()))))
-            print('# Starting control links IRLS...')
             print(f'# ATAC and RNA dtype: {atac_sparse.dtype}, {rna_sparse.dtype}')
-            start_time = time.time()
 
-            if COVAR_FILE:
-                ctrl_coeff_dic = ctar.parallel.multiprocess_poisson_irls_multivar(
+            if FLAG_CORR:
+                print('# Starting control links Pearson correlation...')
+                start_time = time.time()
+                ctrl_coeff_dic = ctar.parallel.multiprocess_pearson_corr(
                     links_dict=ctrl_links_dic,
                     atac_sparse=atac_sparse,
                     rna_sparse=rna_sparse,
-                    covar_mat=covar_mat,
-                    batch_size=(BATCH_SIZE//10)+1,
+                    batch_size=BATCH_SIZE,
                     n_workers=n_cores,
-                    scheduler="processes",                
                 )
+                print('# Control Pearson time = %0.2fs' % (time.time() - start_time))
             else:
-                ctrl_coeff_dic = ctar.parallel.multiprocess_poisson_irls(
-                    links_dict=ctrl_links_dic,
-                    atac_sparse=atac_sparse,
-                    rna_sparse=rna_sparse,
-                    batch_size=(BATCH_SIZE//10)+1,
-                    scheduler="processes",
-                    n_workers=n_cores,
-                    flag_se=FLAG_SE,
-                    flag_ll=FLAG_LL
-                )
-            print('# Control links IRLS time = %0.2fs' % (time.time() - start_time))
+                print('# Starting control links IRLS...')
+                start_time = time.time()
+
+                if COVAR_FILE:
+                    ctrl_coeff_dic = ctar.parallel.multiprocess_poisson_irls_multivar(
+                        links_dict=ctrl_links_dic,
+                        atac_sparse=atac_sparse,
+                        rna_sparse=rna_sparse,
+                        covar_mat=covar_mat,
+                        batch_size=(BATCH_SIZE//10)+1,
+                        n_workers=n_cores,
+                        scheduler="processes",
+                    )
+                else:
+                    ctrl_coeff_dic = ctar.parallel.multiprocess_poisson_irls(
+                        links_dict=ctrl_links_dic,
+                        atac_sparse=atac_sparse,
+                        rna_sparse=rna_sparse,
+                        batch_size=(BATCH_SIZE//10)+1,
+                        scheduler="processes",
+                        n_workers=n_cores,
+                        flag_se=FLAG_SE,
+                        flag_ll=FLAG_LL
+                    )
+                print('# Control links IRLS time = %0.2fs' % (time.time() - start_time))
 
         print(f'# Saving files to {results_folder}')
         os.makedirs(results_folder, exist_ok=True)
 
         if USE_INF_MODE:
             np.save(f'{results_folder}/ctrl_link_ids{file_suffix}.npy', link_ids, allow_pickle=True)
-            np.save(f'{results_folder}/ctrl_coeff{file_suffix}.npy', ctrl_coeff)
+            if FLAG_CORR:
+                np.save(f'{results_folder}/ctrl_corr{file_suffix}.npy', ctrl_coeff)
+            else:
+                np.save(f'{results_folder}/ctrl_coeff{file_suffix}.npy', ctrl_coeff)
         else:
-            with open(f'{results_folder}/ctrl_coeff_dic{file_suffix}.pkl', 'wb') as f:
-                pickle.dump(ctrl_coeff_dic, f)
-            print(f'# Saved file(s) ./ctrl_coeff_dic{file_suffix}.pkl')
+            if FLAG_CORR:
+                with open(f'{results_folder}/ctrl_corr_dic{file_suffix}.pkl', 'wb') as f:
+                    pickle.dump(ctrl_coeff_dic, f)
+                print(f'# Saved file(s) ./ctrl_corr_dic{file_suffix}.pkl')
+            else:
+                with open(f'{results_folder}/ctrl_coeff_dic{file_suffix}.pkl', 'wb') as f:
+                    pickle.dump(ctrl_coeff_dic, f)
+                print(f'# Saved file(s) ./ctrl_coeff_dic{file_suffix}.pkl')
 
             if ARRAY_IDX is None:
                 with open(f'{results_folder}/ctrl_links_dic.pkl', 'wb') as f:
                     pickle.dump(ctrl_links_dic, f)
                 cis_links_df.to_csv(f'{results_folder}/cis_links_df.csv')
-
                 print(f'# Saved file(s) ./ctrl_links_dic.pkl, ./cis_links_df.csv')
 
 
@@ -1146,9 +1337,9 @@ def main(args):
                 cis_links_df['poissonb'] = cis_coeff[:, 1]
                 cis_links_df['poissonb_se'] = cis_coeff[:, 0]
                 
-            elif ctrl_coeff.ndim == 2: 
+            elif ctrl_coeff.ndim == 2:
                 print("# No SE found - computing only regular p-values")
-                
+
                 if cis_coeff.ndim == 1:
                     cis_beta = cis_coeff
                 elif cis_coeff.ndim == 2 and cis_coeff.shape[1] == 2:
@@ -1157,45 +1348,67 @@ def main(args):
                     cis_links_df['poissonb_se'] = cis_coeff[:, 0]
                 else:
                     cis_beta = cis_coeff
-                
+
                 cis_links_df[f'{BIN_CONFIG}_mcpval'] = ctar.method.initial_mcpval(ctrl_coeff, cis_beta)
                 cis_links_df[f'{BIN_CONFIG}_ppval'] = ctar.method.pooled_mcpval(ctrl_coeff, cis_beta)
-                
-                if 'poissonb' not in cis_links_df.columns:
-                    cis_links_df['poissonb'] = cis_beta
-            
+
+                stat_col_inf = 'corr' if FLAG_CORR else 'poissonb'
+                if stat_col_inf not in cis_links_df.columns:
+                    cis_links_df[stat_col_inf] = cis_beta
+
             else:
                 raise ValueError(f"Unexpected ctrl_coeff shape: {ctrl_coeff.shape}")
-        
+
+            # FDR (inf.inf mode)
+            print("# Computing empirical FDR (inf.inf mode)...")
+            if cis_coeff.ndim == 2:
+                cis_fdr_stat = cis_coeff[:, 1]
+                ctrl_fdr_stat = ctrl_coeff[:, :, 1].flatten() if ctrl_coeff.ndim == 3 else ctrl_coeff.flatten()
+            else:
+                cis_fdr_stat = cis_coeff
+                ctrl_fdr_stat = ctrl_coeff.flatten()
+            q_values, _, _, _ = ctar.method.empirical_fdr(cis_fdr_stat, ctrl_fdr_stat)
+            cis_links_df['q_value'] = q_values
+
         else:
             print("# Computing p-values for binned mode")
-            
+
             # Determine combined bin column name
             bin_config_only = BIN_CONFIG.rsplit('.', 1)[0]
             combined_bin_col = f'combined_bin_{bin_config_only}'
-            
+
             if combined_bin_col not in cis_links_df.columns:
                 raise ValueError(f"Column {combined_bin_col} not found in cis_links_df")
-            
+
             # Check if we have SE (2D arrays in dictionary)
             first_key = list(ctrl_coeff_dic.keys())[0]
             if ctrl_coeff_dic[first_key].ndim == 2 and ctrl_coeff_dic[first_key].shape[1] == 2:
                 print("# Found SE in coefficients - computing both regular and studentized p-values")
-                
+
                 # Regular p-values
                 mcpval_dic, ppval_dic = ctar.method.binned_mcpval(
-                    {key: value[: , 1] for key, value in cis_coeff_dic.items()},
-                    {key: value[: , 1] for key, value in ctrl_coeff_dic.items()},
+                    {key: value[:, 1] for key, value in cis_coeff_dic.items()},
+                    {key: value[:, 1] for key, value in ctrl_coeff_dic.items()},
                     b=n_ctrl,
                 )
-                
+
                 cis_links_df = ctar.data_loader.map_dic_to_df(cis_links_df, cis_idx_dic, mcpval_dic, col_name=f'{BIN_CONFIG}_mcpval')
                 cis_links_df = ctar.data_loader.map_dic_to_df(cis_links_df, cis_idx_dic, ppval_dic, col_name=f'{BIN_CONFIG}_ppval')
-                
+                cis_links_df = ctar.data_loader.map_dic_to_df(
+                    cis_links_df, cis_idx_dic,
+                    {k: v[:, 1] for k, v in cis_coeff_dic.items()},
+                    col_name='poissonb'
+                )
+                cis_links_df = ctar.data_loader.map_dic_to_df(
+                    cis_links_df, cis_idx_dic,
+                    {k: v[:, 0] for k, v in cis_coeff_dic.items()},
+                    col_name='poissonb_se'
+                )
+
                 # Studentized p-values
                 cis_coeff_dic_z = {}
                 ctrl_coeff_dic_z = {}
-                
+
                 for key in cis_coeff_dic.keys():
                     cis_coeff_dic_z[key] = np.clip(
                         cis_coeff_dic[key][:, 1] / cis_coeff_dic[key][:, 0],
@@ -1205,34 +1418,52 @@ def main(args):
                         ctrl_coeff_dic[key][:, 1] / ctrl_coeff_dic[key][:, 0],
                         -MAX_VAL, MAX_VAL
                     )
-                
+
                 mcpval_dic_z, ppval_dic_z = ctar.method.binned_mcpval(
                     cis_coeff_dic_z,
                     ctrl_coeff_dic_z,
                     b=n_ctrl,
                 )
-                
+
                 cis_links_df = ctar.data_loader.map_dic_to_df(cis_links_df, cis_idx_dic, mcpval_dic_z, col_name=f'{BIN_CONFIG}_mcpval_z')
                 cis_links_df = ctar.data_loader.map_dic_to_df(cis_links_df, cis_idx_dic, ppval_dic_z, col_name=f'{BIN_CONFIG}_ppval_z')
-                
+
             else:
                 print("# No SE found - computing only regular p-values")
-                
-                # Regular p-values
+
                 mcpval_dic, ppval_dic = ctar.method.binned_mcpval(
                     cis_coeff_dic,
                     ctrl_coeff_dic,
                     b=n_ctrl,
                 )
-                
+
                 cis_links_df = ctar.data_loader.map_dic_to_df(cis_links_df, cis_idx_dic, mcpval_dic, col_name=f'{BIN_CONFIG}_mcpval')
                 cis_links_df = ctar.data_loader.map_dic_to_df(cis_links_df, cis_idx_dic, ppval_dic, col_name=f'{BIN_CONFIG}_ppval')
-        
+
+                stat_col_bin = 'corr' if FLAG_CORR else 'poissonb'
+                if stat_col_bin not in cis_links_df.columns:
+                    cis_links_df = ctar.data_loader.map_dic_to_df(cis_links_df, cis_idx_dic, cis_coeff_dic, col_name=stat_col_bin)
+
+            # FDR (binned mode)
+            print("# Computing empirical FDR (binned mode)...")
+            stat_col_bin = 'corr' if FLAG_CORR else 'poissonb'
+            first_key = list(ctrl_coeff_dic.keys())[0]
+            if ctrl_coeff_dic[first_key].ndim == 2 and ctrl_coeff_dic[first_key].shape[1] == 2:
+                ctrl_fdr_dic = {k: v[:, 1] for k, v in ctrl_coeff_dic.items()}
+            else:
+                ctrl_fdr_dic = ctrl_coeff_dic
+            cis_links_df = ctar.method.binned_empirical_fdr(
+                cis_links_df, ctrl_fdr_dic,
+                stat_col=stat_col_bin,
+                bin_col=combined_bin_col,
+                qval_col='q_value',
+            )
+
         # Save updated dataframe
         output_file = os.path.join(RESULTS_PATH, 'cis_links_df.csv')
         print(f"# Saving updated cis_links_df to {output_file}")
         cis_links_df.to_csv(output_file)
-        print(f"# Added columns: {[col for col in cis_links_df.columns if BIN_CONFIG in col]}")
+        print(f"# Added columns: {[col for col in cis_links_df.columns if BIN_CONFIG in col or col == 'q_value']}")
 
 
     ###########################################################################################
@@ -1262,6 +1493,7 @@ if __name__ == "__main__":
     parser.add_argument("--results_path", type=str, required=False, default=None)
     parser.add_argument("--flag_ll", type=str, required=False, default='False')
     parser.add_argument("--flag_se", type=str, required=False, default='False')
+    parser.add_argument("--flag_corr", type=str, required=False, default='False')
     parser.add_argument(
         "--genome_file", type=str, required=False, default=None, help="GRCh38.p14.genome.fa.bgz reference"
     )
