@@ -1,4 +1,5 @@
 import argparse
+import itertools
 import os
 
 import ctar
@@ -215,6 +216,51 @@ def _assign_quantile_bins(
     return out
 
 
+def _assign_2d_bins(
+    df: pd.DataFrame,
+    atac_quantiles,
+    rna_quantiles,
+    atac_labels,
+    rna_labels,
+    rank_method: str = "average",
+    verbose: bool = True,
+) -> pd.DataFrame:
+    out = df.copy()
+    for axis, spec_col, quantiles, labels, bin_col, quant_col in [
+        ("ATAC/peak", "peak_specificity", atac_quantiles, atac_labels, "atac_bin", "atac_specificity_quantile"),
+        ("RNA/gene", "gene_specificity", rna_quantiles, rna_labels, "rna_bin", "rna_specificity_quantile"),
+    ]:
+        if spec_col not in out.columns:
+            raise ValueError(
+                f"Column '{spec_col}' not found. --stratify_2d requires both "
+                "--gene_specificity_path and --peak_specificity_path."
+            )
+        scores = pd.to_numeric(out[spec_col], errors="coerce")
+        valid = scores.notna()
+        if valid.sum() == 0:
+            raise ValueError(f"No valid values found in '{spec_col}'.")
+        pct = scores.loc[valid].rank(method=rank_method, pct=True).clip(0.0, 1.0)
+        pct = pct.mask(pct == 0.0, np.nextafter(0.0, 1.0))
+        out[quant_col] = np.nan
+        out.loc[valid, quant_col] = pct
+        out[bin_col] = pd.cut(
+            out[quant_col], bins=quantiles, labels=labels, include_lowest=True, right=True
+        )
+        if verbose:
+            print(f"\n{axis} specificity ranges:")
+            bin_ranges = (
+                out.loc[valid]
+                .groupby(bin_col, observed=False)[spec_col]
+                .agg(["min", "max", "count"])
+            )
+            for bin_name, row in bin_ranges.iterrows():
+                print(f"  {bin_name}: min={row['min']:.4f}, max={row['max']:.4f}, n={int(row['count'])}")
+
+    out["atac_rna_bin"] = out["atac_bin"].astype(str) + "_" + out["rna_bin"].astype(str)
+    out.loc[out["atac_bin"].isna() | out["rna_bin"].isna(), "atac_rna_bin"] = np.nan
+    return out
+
+
 def main(args):
     merge_path = args.merge_path
     res_path = args.res_path
@@ -255,6 +301,38 @@ def main(args):
             raise ValueError("specificity_quantile_labels must have length len(specificity_quantiles)-1.")
     else:
         quantile_labels = _default_quantile_labels(quantiles)
+
+    stratify_2d = _parse_bool(args.stratify_2d)
+    atac_quantiles = atac_labels = rna_quantiles = rna_labels = None
+    if stratify_2d:
+        if not (gene_specificity_path and peak_specificity_path):
+            raise ValueError(
+                "--stratify_2d requires both --gene_specificity_path and --peak_specificity_path."
+            )
+        atac_quantiles = _parse_quantiles(args.atac_quantiles)
+        rna_quantiles = _parse_quantiles(args.rna_quantiles)
+        if args.atac_quantile_labels:
+            atac_labels = [x.strip() for x in args.atac_quantile_labels.split(",") if x.strip()]
+            if len(atac_labels) != len(atac_quantiles) - 1:
+                raise ValueError("atac_quantile_labels must have len(atac_quantiles)-1 entries.")
+        else:
+            atac_labels = [
+                f"atac_q{int(round(q1 * 100)):02d}-{int(round(q2 * 100)):02d}"
+                for q1, q2 in zip(atac_quantiles[:-1], atac_quantiles[1:])
+            ]
+        if args.rna_quantile_labels:
+            rna_labels = [x.strip() for x in args.rna_quantile_labels.split(",") if x.strip()]
+            if len(rna_labels) != len(rna_quantiles) - 1:
+                raise ValueError("rna_quantile_labels must have len(rna_quantiles)-1 entries.")
+        else:
+            rna_labels = [
+                f"rna_q{int(round(q1 * 100)):02d}-{int(round(q2 * 100)):02d}"
+                for q1, q2 in zip(rna_quantiles[:-1], rna_quantiles[1:])
+            ]
+        print("2D mode: ATAC quantiles:", atac_quantiles, flush=True)
+        print("2D mode: RNA quantiles:", rna_quantiles, flush=True)
+        print("2D mode: ATAC labels:", atac_labels, flush=True)
+        print("2D mode: RNA labels:", rna_labels, flush=True)
 
     os.makedirs(res_path, exist_ok=True)
 
@@ -331,22 +409,36 @@ def main(args):
             f"[{label}] mapped {n_specificity}/{len(overlap_df)} rows to specificity",
             flush=True,
         )
-        overlap_df = _assign_quantile_bins(
-            overlap_df,
-            specificity_col=specificity_col,
-            quantiles=quantiles,
-            quantile_labels=quantile_labels,
-            rank_method=args.quantile_rank_method,
-        )
+        if stratify_2d:
+            overlap_df = _assign_2d_bins(
+                overlap_df,
+                atac_quantiles=atac_quantiles,
+                rna_quantiles=rna_quantiles,
+                atac_labels=atac_labels,
+                rna_labels=rna_labels,
+                rank_method=args.quantile_rank_method,
+            )
+            bin_col = "atac_rna_bin"
+            run_bins = [f"{a}_{r}" for a, r in itertools.product(atac_labels, rna_labels)]
+        else:
+            overlap_df = _assign_quantile_bins(
+                overlap_df,
+                specificity_col=specificity_col,
+                quantiles=quantiles,
+                quantile_labels=quantile_labels,
+                rank_method=args.quantile_rank_method,
+            )
+            bin_col = "specificity_bin"
+            run_bins = quantile_labels.copy()
+
         overlap_df["pg_pair"] = overlap_df[peak_col].astype(str) + ";" + overlap_df[gene_col].astype(str)
 
         if args.print_bin_summary:
-            summary = overlap_df.groupby("specificity_bin", observed=True)["label"].agg(["count", "sum"])
+            summary = overlap_df.groupby(bin_col, observed=True)["label"].agg(["count", "sum"])
             print(f"\n[{label}] specificity-bin summary:", flush=True)
             print(summary, flush=True)
             print("", flush=True)
 
-        run_bins = quantile_labels.copy()
         if args.compute_overall:
             run_bins.append("ALL")
 
@@ -354,7 +446,7 @@ def main(args):
             if specificity_bin == "ALL":
                 sub = overlap_df.copy()
             else:
-                sub = overlap_df.loc[overlap_df["specificity_bin"] == specificity_bin].copy()
+                sub = overlap_df.loc[overlap_df[bin_col] == specificity_bin].copy()
 
             if args.drop_missing_method_scores:
                 sub = sub.loc[sub[method_cols].notna().all(axis=1)].copy()
@@ -525,6 +617,37 @@ if __name__ == "__main__":
         "--drop_missing_method_scores",
         action="store_true",
         help="Within each bin, require all method columns to be non-null before evaluation.",
+    )
+
+    parser.add_argument(
+        "--stratify_2d",
+        type=str,
+        default="false",
+        help="Enable 2D (ATAC x RNA) specificity stratification instead of 1D quantile bins.",
+    )
+    parser.add_argument(
+        "--atac_quantiles",
+        type=str,
+        default="0,0.5,1",
+        help="Quantile edges for the ATAC/peak axis in 2D mode.",
+    )
+    parser.add_argument(
+        "--rna_quantiles",
+        type=str,
+        default="0,0.5,1",
+        help="Quantile edges for the RNA/gene axis in 2D mode.",
+    )
+    parser.add_argument(
+        "--atac_quantile_labels",
+        type=str,
+        default="",
+        help="Comma-separated labels for ATAC bins (len = len(atac_quantiles)-1).",
+    )
+    parser.add_argument(
+        "--rna_quantile_labels",
+        type=str,
+        default="",
+        help="Comma-separated labels for RNA bins (len = len(rna_quantiles)-1).",
     )
 
     args = parser.parse_args()
