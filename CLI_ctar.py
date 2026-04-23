@@ -485,6 +485,7 @@ def main(args):
                 cis_links_df['corr'] = cis_coeff
                 cis_links_df[f'{BIN_CONFIG}_mcpval'] = ctar.method.initial_mcpval(ctrl_coeff, cis_coeff)
                 cis_links_df[f'{BIN_CONFIG}_ppval'] = ctar.method.pooled_mcpval(ctrl_coeff, cis_coeff)
+                cis_links_df[f'{BIN_CONFIG}_zpval'] = ctar.method.zscore_pval(ctrl_coeff, cis_coeff)
 
                 print(f'# Saving files to {results_folder}')
                 os.makedirs(results_folder, exist_ok=True)
@@ -586,12 +587,14 @@ def main(args):
 
                     cis_links_df[f'{BIN_CONFIG}_mcpval'] = ctar.method.initial_mcpval(ctrl_beta, cis_coeff[:, 1])
                     cis_links_df[f'{BIN_CONFIG}_ppval'] = ctar.method.pooled_mcpval(ctrl_beta, cis_coeff[:, 1])
+                    cis_links_df[f'{BIN_CONFIG}_zpval'] = ctar.method.zscore_pval(ctrl_beta, cis_coeff[:, 1])
 
                     cis_studentized = np.clip(cis_coeff[:, 1] / cis_coeff[:, 0], -MAX_VAL, MAX_VAL)
                     ctrl_studentized = np.clip(ctrl_beta / ctrl_se, -MAX_VAL, MAX_VAL)
 
                     cis_links_df[f'{BIN_CONFIG}_mcpval_z'] = ctar.method.initial_mcpval(ctrl_studentized, cis_studentized)
                     cis_links_df[f'{BIN_CONFIG}_ppval_z'] = ctar.method.pooled_mcpval(ctrl_studentized, cis_studentized)
+                    cis_links_df[f'{BIN_CONFIG}_zpval_z'] = ctar.method.zscore_pval(ctrl_studentized, cis_studentized)
 
                     cis_links_df['poissonb'] = cis_coeff[:, 1]
                     cis_links_df['poissonb_se'] = cis_coeff[:, 0]
@@ -607,6 +610,7 @@ def main(args):
 
                     cis_links_df[f'{BIN_CONFIG}_mcpval'] = ctar.method.initial_mcpval(ctrl_coeff, cis_beta)
                     cis_links_df[f'{BIN_CONFIG}_ppval'] = ctar.method.pooled_mcpval(ctrl_coeff, cis_beta)
+                    cis_links_df[f'{BIN_CONFIG}_zpval'] = ctar.method.zscore_pval(ctrl_coeff, cis_beta)
 
                     if 'poissonb' not in cis_links_df.columns:
                         cis_links_df['poissonb'] = cis_beta
@@ -664,9 +668,10 @@ def main(args):
                 )
                 print('# Control Pearson time = %0.2fs' % (time.time() - start_time))
 
-                mcpval_dic, ppval_dic = ctar.method.binned_mcpval(cis_coeff_dic, ctrl_coeff_dic, b=n_ctrl)
+                mcpval_dic, ppval_dic, zpval_dic = ctar.method.binned_mcpval(cis_coeff_dic, ctrl_coeff_dic, b=n_ctrl)
                 cis_links_df = ctar.data_loader.map_dic_to_df(cis_links_df, cis_idx_dic, mcpval_dic, col_name=f'{BIN_CONFIG}_mcpval')
                 cis_links_df = ctar.data_loader.map_dic_to_df(cis_links_df, cis_idx_dic, ppval_dic, col_name=f'{BIN_CONFIG}_ppval')
+                cis_links_df = ctar.data_loader.map_dic_to_df(cis_links_df, cis_idx_dic, zpval_dic, col_name=f'{BIN_CONFIG}_zpval')
                 cis_links_df = ctar.data_loader.map_dic_to_df(cis_links_df, cis_idx_dic, cis_coeff_dic, col_name='corr')
 
                 print(f'# Saving files to {results_folder}')
@@ -736,7 +741,7 @@ def main(args):
 
                 first_key = list(ctrl_coeff_dic.keys())[0]
                 if ctrl_coeff_dic[first_key].ndim == 2 and ctrl_coeff_dic[first_key].shape[1] == 2:
-                    mcpval_dic, ppval_dic = ctar.method.binned_mcpval(
+                    mcpval_dic, ppval_dic, zpval_dic = ctar.method.binned_mcpval(
                         {key: value[:, 1] for key, value in cis_coeff_dic.items()},
                         {key: value[:, 1] for key, value in ctrl_coeff_dic.items()},
                         b=n_ctrl,
@@ -744,6 +749,7 @@ def main(args):
 
                     cis_links_df = ctar.data_loader.map_dic_to_df(cis_links_df, cis_idx_dic, mcpval_dic, col_name=f'{BIN_CONFIG}_mcpval')
                     cis_links_df = ctar.data_loader.map_dic_to_df(cis_links_df, cis_idx_dic, ppval_dic, col_name=f'{BIN_CONFIG}_ppval')
+                    cis_links_df = ctar.data_loader.map_dic_to_df(cis_links_df, cis_idx_dic, zpval_dic, col_name=f'{BIN_CONFIG}_zpval')
                     cis_links_df = ctar.data_loader.map_dic_to_df(
                         cis_links_df,
                         cis_idx_dic,
@@ -764,7 +770,7 @@ def main(args):
                         cis_coeff_dic_z[key] = np.clip(cis_coeff_dic[key][:, 1] / cis_coeff_dic[key][:, 0], -MAX_VAL, MAX_VAL)
                         ctrl_coeff_dic_z[key] = np.clip(ctrl_coeff_dic[key][:, 1] / ctrl_coeff_dic[key][:, 0], -MAX_VAL, MAX_VAL)
 
-                    mcpval_dic_z, ppval_dic_z = ctar.method.binned_mcpval(
+                    mcpval_dic_z, ppval_dic_z, zpval_dic_z = ctar.method.binned_mcpval(
                         cis_coeff_dic_z,
                         ctrl_coeff_dic_z,
                         b=n_ctrl,
@@ -772,11 +778,13 @@ def main(args):
 
                     cis_links_df = ctar.data_loader.map_dic_to_df(cis_links_df, cis_idx_dic, mcpval_dic_z, col_name=f'{BIN_CONFIG}_mcpval_z')
                     cis_links_df = ctar.data_loader.map_dic_to_df(cis_links_df, cis_idx_dic, ppval_dic_z, col_name=f'{BIN_CONFIG}_ppval_z')
+                    cis_links_df = ctar.data_loader.map_dic_to_df(cis_links_df, cis_idx_dic, zpval_dic_z, col_name=f'{BIN_CONFIG}_zpval_z')
                 else:
-                    mcpval_dic, ppval_dic = ctar.method.binned_mcpval(cis_coeff_dic, ctrl_coeff_dic, b=n_ctrl)
+                    mcpval_dic, ppval_dic, zpval_dic = ctar.method.binned_mcpval(cis_coeff_dic, ctrl_coeff_dic, b=n_ctrl)
 
                     cis_links_df = ctar.data_loader.map_dic_to_df(cis_links_df, cis_idx_dic, mcpval_dic, col_name=f'{BIN_CONFIG}_mcpval')
                     cis_links_df = ctar.data_loader.map_dic_to_df(cis_links_df, cis_idx_dic, ppval_dic, col_name=f'{BIN_CONFIG}_ppval')
+                    cis_links_df = ctar.data_loader.map_dic_to_df(cis_links_df, cis_idx_dic, zpval_dic, col_name=f'{BIN_CONFIG}_zpval')
                     cis_links_df = ctar.data_loader.map_dic_to_df(cis_links_df, cis_idx_dic, cis_coeff_dic, col_name='poissonb')
 
                 print(f'# Saving files to {results_folder}')
@@ -1347,6 +1355,7 @@ def main(args):
                 # Regular p-values
                 cis_links_df[f'{BIN_CONFIG}_mcpval'] = ctar.method.initial_mcpval(ctrl_beta, cis_coeff[: , 1])
                 cis_links_df[f'{BIN_CONFIG}_ppval'] = ctar.method.pooled_mcpval(ctrl_beta, cis_coeff[:, 1])
+                cis_links_df[f'{BIN_CONFIG}_zpval'] = ctar.method.zscore_pval(ctrl_beta, cis_coeff[:, 1])
                 
                 # Studentized p-values
                 cis_studentized = np.clip(cis_coeff[:, 1] / cis_coeff[:, 0], -MAX_VAL, MAX_VAL)
@@ -1354,6 +1363,7 @@ def main(args):
                 
                 cis_links_df[f'{BIN_CONFIG}_mcpval_z'] = ctar.method.initial_mcpval(ctrl_studentized, cis_studentized)
                 cis_links_df[f'{BIN_CONFIG}_ppval_z'] = ctar.method.pooled_mcpval(ctrl_studentized, cis_studentized)
+                cis_links_df[f'{BIN_CONFIG}_zpval_z'] = ctar.method.zscore_pval(ctrl_studentized, cis_studentized)
                 
                 cis_links_df['poissonb'] = cis_coeff[:, 1]
                 cis_links_df['poissonb_se'] = cis_coeff[:, 0]
@@ -1372,6 +1382,7 @@ def main(args):
 
                 cis_links_df[f'{BIN_CONFIG}_mcpval'] = ctar.method.initial_mcpval(ctrl_coeff, cis_beta)
                 cis_links_df[f'{BIN_CONFIG}_ppval'] = ctar.method.pooled_mcpval(ctrl_coeff, cis_beta)
+                cis_links_df[f'{BIN_CONFIG}_zpval'] = ctar.method.zscore_pval(ctrl_coeff, cis_beta)
 
                 stat_col_inf = 'corr' if FLAG_CORR else 'poissonb'
                 if stat_col_inf not in cis_links_df.columns:
@@ -1407,7 +1418,7 @@ def main(args):
                 print("# Found SE in coefficients - computing both regular and studentized p-values")
 
                 # Regular p-values
-                mcpval_dic, ppval_dic = ctar.method.binned_mcpval(
+                mcpval_dic, ppval_dic, zpval_dic = ctar.method.binned_mcpval(
                     {key: value[:, 1] for key, value in cis_coeff_dic.items()},
                     {key: value[:, 1] for key, value in ctrl_coeff_dic.items()},
                     b=n_ctrl,
@@ -1415,6 +1426,7 @@ def main(args):
 
                 cis_links_df = ctar.data_loader.map_dic_to_df(cis_links_df, cis_idx_dic, mcpval_dic, col_name=f'{BIN_CONFIG}_mcpval')
                 cis_links_df = ctar.data_loader.map_dic_to_df(cis_links_df, cis_idx_dic, ppval_dic, col_name=f'{BIN_CONFIG}_ppval')
+                cis_links_df = ctar.data_loader.map_dic_to_df(cis_links_df, cis_idx_dic, zpval_dic, col_name=f'{BIN_CONFIG}_zpval')
                 cis_links_df = ctar.data_loader.map_dic_to_df(
                     cis_links_df, cis_idx_dic,
                     {k: v[:, 1] for k, v in cis_coeff_dic.items()},
@@ -1440,7 +1452,7 @@ def main(args):
                         -MAX_VAL, MAX_VAL
                     )
 
-                mcpval_dic_z, ppval_dic_z = ctar.method.binned_mcpval(
+                mcpval_dic_z, ppval_dic_z, zpval_dic_z  = ctar.method.binned_mcpval(
                     cis_coeff_dic_z,
                     ctrl_coeff_dic_z,
                     b=n_ctrl,
@@ -1448,11 +1460,12 @@ def main(args):
 
                 cis_links_df = ctar.data_loader.map_dic_to_df(cis_links_df, cis_idx_dic, mcpval_dic_z, col_name=f'{BIN_CONFIG}_mcpval_z')
                 cis_links_df = ctar.data_loader.map_dic_to_df(cis_links_df, cis_idx_dic, ppval_dic_z, col_name=f'{BIN_CONFIG}_ppval_z')
+                cis_links_df = ctar.data_loader.map_dic_to_df(cis_links_df, cis_idx_dic, zpval_dic_z, col_name=f'{BIN_CONFIG}_zpval_z')
 
             else:
                 print("# No SE found - computing only regular p-values")
 
-                mcpval_dic, ppval_dic = ctar.method.binned_mcpval(
+                mcpval_dic, ppval_dic, zpval_dic = ctar.method.binned_mcpval(
                     cis_coeff_dic,
                     ctrl_coeff_dic,
                     b=n_ctrl,
@@ -1460,6 +1473,7 @@ def main(args):
 
                 cis_links_df = ctar.data_loader.map_dic_to_df(cis_links_df, cis_idx_dic, mcpval_dic, col_name=f'{BIN_CONFIG}_mcpval')
                 cis_links_df = ctar.data_loader.map_dic_to_df(cis_links_df, cis_idx_dic, ppval_dic, col_name=f'{BIN_CONFIG}_ppval')
+                cis_links_df = ctar.data_loader.map_dic_to_df(cis_links_df, cis_idx_dic, zpval_dic, col_name=f'{BIN_CONFIG}_zpval')
 
                 stat_col_bin = 'corr' if FLAG_CORR else 'poissonb'
                 if stat_col_bin not in cis_links_df.columns:
