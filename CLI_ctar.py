@@ -335,12 +335,26 @@ def main(args):
                     # enforce df order to match arrays
                     cis_links_df = cis_links_df.loc[cis_ids]
 
+                    # save consolidated ids and delete chunks
+                    np.save(os.path.join(RESULTS_PATH, 'ctrl_link_ids.npy'), ctrl_ids, allow_pickle=True)
+                    for fname in os.listdir(RESULTS_PATH):
+                        if fname.startswith('ctrl_link_ids_') and fname.endswith('.npy'):
+                            os.remove(os.path.join(RESULTS_PATH, fname))
+                    print("# Saved ctrl_link_ids.npy and deleted chunks")
+
                 else:
                     print("WARNING: link id files not found; alignment not guaranteed.")
 
                 if not FLAG_CORR:
                     assert ctrl_coeff.ndim == 3 and ctrl_coeff.shape[1] == n_ctrl, f"ctrl_coeff shape unexpected: {ctrl_coeff.shape}"
                 assert cis_coeff.shape[0] == ctrl_coeff.shape[0], "cis/ctrl link count mismatch"
+
+                # save consolidated ctrl coeff and delete chunks
+                single_fname = 'ctrl_corr.npy' if FLAG_CORR else 'ctrl_coeff.npy'
+                np.save(os.path.join(RESULTS_PATH, single_fname), ctrl_coeff)
+                for fname in ctrl_coeff_files:
+                    os.remove(os.path.join(RESULTS_PATH, fname))
+                print(f"# Saved {single_fname} and deleted {len(ctrl_coeff_files)} chunk(s)")
 
             else:
                 single_fname = 'ctrl_corr.npy' if FLAG_CORR else 'ctrl_coeff.npy'
@@ -359,6 +373,13 @@ def main(args):
                     remove_empty=True,
                     print_missing=False
                 )
+                # save consolidated dict and delete chunks
+                single_fname = 'ctrl_corr_dic.pkl' if FLAG_CORR else 'ctrl_coeff_dic.pkl'
+                with open(os.path.join(RESULTS_PATH, single_fname), 'wb') as f:
+                    pickle.dump(ctrl_coeff_dic, f)
+                for fname in ctrl_coeff_files:
+                    os.remove(os.path.join(RESULTS_PATH, fname))
+                print(f"# Saved {single_fname} and deleted {len(ctrl_coeff_files)} chunk(s)")
             else:
                 single_fname = 'ctrl_corr_dic.pkl' if FLAG_CORR else 'ctrl_coeff_dic.pkl'
                 ctrl_coeff_file = os.path.join(RESULTS_PATH, single_fname)
