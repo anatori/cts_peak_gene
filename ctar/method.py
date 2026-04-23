@@ -1420,11 +1420,9 @@ def basic_mcinterp(ctrl_corr,corr):
 
 
 def binned_mcpval(
-    cis_pairs_dic, 
+    cis_pairs_dic,
     ctrl_pairs_dic,
     b=None,
-    flag_interp=False,
-    flag_zp=False,
 ):
     '''
     Compute p-values for binned evaluation data using Monte Carlo method.
@@ -1446,96 +1444,69 @@ def binned_mcpval(
         Dictionary of numpy arrays where keys are bins and values are mc-pvalues.
     ppval_dic : dict
         Dictionary of numpy arrays where keys are bins and values are pooled-pvalues.
+    zpval_dic : dict
+        Dictionary of numpy arrays where keys are bins and values are z-score-pvalues.
     '''
 
     bin_keys = sorted(cis_pairs_dic.keys())
 
-    # set b, arbitrarily using the first key
     if b is None:
         b = len(ctrl_pairs_dic[bin_keys[0]])
         print(f"Setting n_ctrl to {b}.")
 
     mcpval_dic = {}
     ppval_dic = {}
+    zpval_dic = {}
 
-    # build pooled p-values by concatenating centered values only for finite cis entries
-    pooled_centered_ctrl_chunks = []
-    pooled_centered_cis_chunks = []
-    pooled_scatter_plan = []  # list of (bin_key, valid_mask) to scatter pooled pvals back
+    ctrl_chunks = []
+    cis_chunks = []
+    scatter_plan = []
 
     for bin_key in bin_keys:
         coeffs = np.asarray(cis_pairs_dic[bin_key])
         ctrl_coeffs = np.asarray(ctrl_pairs_dic[bin_key]).ravel()[:b]
 
-        # output arrays (default nan)
-        mcpvals_out = np.full(coeffs.shape, np.nan, dtype=float)
-
-        # mask invalid cis coeffs
         valid_cis = np.isfinite(coeffs)
-
-        # sanitize controls (drop non-finite controls)
         ctrl_coeffs = ctrl_coeffs[np.isfinite(ctrl_coeffs)]
 
-        # if nothing to compute, keep NaNs
-        if ctrl_coeffs.size == 0 or np.sum(valid_cis) == 0:
-            mcpval_dic[bin_key] = mcpvals_out
-            # pooled pvals for this bin will also be NaN
-            ppval_dic[bin_key] = np.full(coeffs.shape, np.nan, dtype=float)
+        nan_out = np.full(coeffs.shape, np.nan, dtype=float)
+
+        if ctrl_coeffs.size == 0 or not np.any(valid_cis):
+            mcpval_dic[bin_key] = nan_out.copy()
+            ppval_dic[bin_key] = nan_out.copy()
+            zpval_dic[bin_key] = nan_out.copy()
             continue
 
         coeffs_valid = coeffs[valid_cis]
 
-        # per-bin p-values (only for valid cis coeffs)
-        if flag_interp:
-            mcpvals_valid = basic_mcinterp(ctrl_coeffs, coeffs_valid)
-        elif flag_zp:
-            mcpvals_valid = basic_zpval(ctrl_coeffs, coeffs_valid)
-        else:
-            mcpvals_valid = basic_mcpval(ctrl_coeffs, coeffs_valid)
+        mcpval_dic[bin_key] = nan_out.copy()
+        mcpval_dic[bin_key][valid_cis] = basic_mcpval(ctrl_coeffs, coeffs_valid)
 
-        mcpvals_out[valid_cis] = mcpvals_valid
-        mcpval_dic[bin_key] = mcpvals_out
+        zpval_dic[bin_key] = nan_out.copy()
+        zpval_dic[bin_key][valid_cis] = basic_zpval(ctrl_coeffs, coeffs_valid)
 
-        # centering for pooled p-values (only on valid cis coeffs)
         centered_ctrls, centered_cis = center_ctrls(ctrl_coeffs, coeffs_valid, axis=0)
-        pooled_centered_ctrl_chunks.append(centered_ctrls)
-        pooled_centered_cis_chunks.append(centered_cis)
+        ctrl_chunks.append(centered_ctrls)
+        cis_chunks.append(centered_cis)
+        scatter_plan.append((bin_key, valid_cis, coeffs.shape))
 
-        pooled_scatter_plan.append((bin_key, valid_cis, coeffs.shape))
+    # no valid entries
+    if not scatter_plan:
+        return mcpval_dic, ppval_dic, zpval_dic
 
-    # if no valid entries at all, pooled pvals are all nan (already set above for those bins)
-    if len(pooled_centered_cis_chunks) == 0:
-        # ensure every bin has ppval_dic filled
-        for bin_key in bin_keys:
-            if bin_key not in ppval_dic:
-                coeffs = np.asarray(cis_pairs_dic[bin_key])
-                ppval_dic[bin_key] = np.full(coeffs.shape, np.nan, dtype=float)
-        return mcpval_dic, ppval_dic
+    pooled_ctrl = np.concatenate(ctrl_chunks)
+    pooled_cis = np.concatenate(cis_chunks)
+    pooled_pvals = basic_mcpval(pooled_ctrl, pooled_cis)
 
-    # otherwise compute pooled p-values on the concatenated centered arrays
-    pooled_centered_ctrl = np.concatenate(pooled_centered_ctrl_chunks)
-    pooled_centered_cis = np.concatenate(pooled_centered_cis_chunks)
-
-    pooled_pvals_valid_all = basic_mcpval(pooled_centered_ctrl, pooled_centered_cis)
-
-    # scatter pooled pvals back into per-bin arrays (nan where invalid)
     cursor = 0
-    for (bin_key, valid_cis, orig_shape) in pooled_scatter_plan:
+    for bin_key, valid_cis, shape in scatter_plan:
         n_valid = int(np.sum(valid_cis))
-        pooled_slice = pooled_pvals_valid_all[cursor : cursor + n_valid]
+        out = np.full(shape, np.nan, dtype=float)
+        out[valid_cis] = pooled_pvals[cursor : cursor + n_valid]
+        ppval_dic[bin_key] = out
         cursor += n_valid
 
-        out = np.full(orig_shape, np.nan, dtype=float)
-        out[valid_cis] = pooled_slice
-        ppval_dic[bin_key] = out
-
-    # ensure bins that had early-continue are present in ppval_dic
-    for bin_key in bin_keys:
-        if bin_key not in ppval_dic:
-            coeffs = np.asarray(cis_pairs_dic[bin_key])
-            ppval_dic[bin_key] = np.full(coeffs.shape, np.nan, dtype=float)
-
-    return mcpval_dic, ppval_dic
+    return mcpval_dic, ppval_dic, zpval_dic
 
 
 def empirical_fdr(stat, ctrl_stat, target_fdr=0.1, B=None):
