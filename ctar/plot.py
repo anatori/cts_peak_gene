@@ -1393,8 +1393,4 @@ def barplot_grouped_with_sig(
                 level += 1
 
     ax.grid(axis='y', linestyle=':', linewidth=0.6, alpha=0.6)
-
-    if created_fig:
-        fig.tight_layout()
-
     return ax
