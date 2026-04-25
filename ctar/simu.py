@@ -61,12 +61,18 @@ def null_peak_gene_pairs(rna, atac, gene_tss=None, gene_col='gene_name', peak_co
 
 
 def simulate_full_dataset(n_cells, n_tp_per_level, n_tn_per_level, n_bg_peaks,
-                          alpha_levels, mean_expr_levels, beta, p_peak, seed=None):
+                          alpha_levels, mean_expr_levels, beta, p_peak, seed=None,
+                          kappa=5.0):
     """
     Simulate different expression levels together in one dataset.
 
     TP genes: RNA ~ Poisson(exp(alpha + beta * assigned_peak))
     TN genes: RNA ~ Poisson(exp(alpha))   — no peak dependency
+
+    Each peak has its own accessibility rate drawn from Beta(p_peak*kappa,
+    (1-p_peak)*kappa), so p_peak is the mean rate and kappa controls spread.
+    Higher kappa → peaks more similar to each other; lower kappa → more
+    heterogeneous, better stress-testing ctrl_peaks matching.
 
     Returns
     -------
@@ -78,8 +84,10 @@ def simulate_full_dataset(n_cells, n_tp_per_level, n_tn_per_level, n_bg_peaks,
     n_per_level   = n_tp_per_level + n_tn_per_level
     n_total_genes = len(alpha_levels) * n_per_level
 
-    # Peak accessibility: Bernoulli(p_peak) for all cells and peaks
-    atac_dense = rng.binomial(1, p_peak, size=(n_cells, n_bg_peaks)).astype(np.float32)
+    # Per-peak accessibility rates drawn from Beta(p_peak*kappa, (1-p_peak)*kappa)
+    # so mean accessibility = p_peak but each peak has its own rate
+    peak_probs = rng.beta(p_peak * kappa, (1.0 - p_peak) * kappa, size=n_bg_peaks)
+    atac_dense = rng.binomial(1, peak_probs[None, :], size=(n_cells, n_bg_peaks)).astype(np.float32)
     rna_dense  = np.zeros((n_cells, n_total_genes), dtype=np.float32)
 
     rows        = []
