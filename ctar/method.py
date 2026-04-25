@@ -109,6 +109,20 @@ def pearson_corr_dense(mat_X, mat_Y):
     return corr.astype(np.float32)
 
 
+def center_by_donor(mat, donor_labels):
+    """
+    Subtract donor mean from each feature.
+    Works on sparse or dense, RNA or ATAC.
+    mat: (N, M)
+    donor_labels: (N,) 
+    """
+    mat = mat.toarray() if sp.sparse.issparse(mat) else mat.copy()
+    for d in np.unique(donor_labels):
+        mask = donor_labels == d
+        mat[mask] -= mat[mask].mean(axis=0)
+    return mat
+
+
 def poisson_irls_loop_sparse(mat_x_full, mat_y_full, links=None, max_iter=100, tol=1e-3,
                              flag_float32=True, flag_se=False, flag_ll=False, ridge=False):
     """
