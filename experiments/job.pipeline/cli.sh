@@ -135,7 +135,7 @@ if [ "$USE_INF_MODE" = true ]; then
                     --n_cores $N_CORES --flag_ll $FLAG_LL --flag_se $FLAG_SE --flag_corr $FLAG_CORR --random_seed $RANDOM_SEED")
         echo "Ctrl job ID: $CTRL_JOB"
         CTRL_JOB_FOR_DEPENDENCY=$CTRL_JOB
-        
+
     else
         echo "ERROR: Need $TOTAL_NUM_BATCHES jobs but max array size is $MAX_ARRAY_SIZE"
         echo "Increase BATCH_SIZE or use parallel arrays approach"

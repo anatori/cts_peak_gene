@@ -72,6 +72,7 @@ def main(args):
     FLAG_LL = (args.flag_ll == 'True')
     FLAG_CORR = (args.flag_corr == 'True')
     N_CORES = int(args.n_cores) if args.n_cores is not None else None
+    RANDOM_SEED = int(args.random_seed) if args.random_seed is not None else None
 
     # Parse and check arguments
     LEGAL_JOB_LIST = [
@@ -124,7 +125,12 @@ def main(args):
     header += "--flag_se %s\\\n" % FLAG_SE
     header += "--flag_ll %s\\\n" % FLAG_LL
     header += "--flag_corr %s\\\n" % FLAG_CORR
+    header += "--random_seed %s\\\n" % RANDOM_SEED
     print(header)
+
+    if RANDOM_SEED is not None:
+        np.random.seed(RANDOM_SEED)
+        print(f"# Setting random seed to {RANDOM_SEED}")
 
     ###########################################################################################
     ######                                  Data Loading                                 ######
@@ -1544,6 +1550,7 @@ if __name__ == "__main__":
     parser.add_argument("--pybedtools_path", type=str, required=False, default=None)
     parser.add_argument("--array_idx", type=str, required=False, default=None)
     parser.add_argument("--n_cores", type=str, required=False, default=None)
+    parser.add_argument("--random_seed", type=str, required=False, default=None, help="Random seed for reproducible control link generation")
 
     args = parser.parse_args()
     main(args)
