@@ -14,6 +14,7 @@ PARTITION="mzhang,pool1,statgen"
 MAX_CONCURRENT=10
 FLAG_LL='False'
 FLAG_SE='True'
+RANDOM_SEED=42
 
 IFS='.' read -r b1 b2 b3 b4 rest <<< "$BIN_CONFIG"
 if [[ "$b3" == "inf" && "$b4" == "inf" ]]; then
@@ -38,7 +39,7 @@ LINKS_JOB=$(sbatch --parsable -p $PARTITION -t 1-00:00:00 --mem 24Gb \
   --wrap "source ~/.bashrc && conda activate ctar && python /projects/zhanglab/users/ana/cts_peak_gene/CLI_ctar.py \
           --job generate_links --job_id \$SLURM_JOB_ID --multiome_file $MULTIOME_FILE --batch_size $BATCH_SIZE \
           --binning_config $BIN_CONFIG --binning_type $BIN_TYPE --genome_file $GENOME_FILE --target_path $TARGET_PATH \
-          --pybedtools_path $PYBEDTOOLS_PATH")
+          --pybedtools_path $PYBEDTOOLS_PATH --random_seed $RANDOM_SEED")
 echo "Links job ID: $LINKS_JOB"
 
 ###########################################################################################
@@ -54,7 +55,7 @@ CIS_JOB=$(sbatch --parsable -p $PARTITION -t 6-00:00:00 \
           --job compute_cis_only --job_id $LINKS_JOB --multiome_file $MULTIOME_FILE --batch_size $BATCH_SIZE \
           --binning_config $BIN_CONFIG --binning_type $BIN_TYPE --genome_file $GENOME_FILE --target_path $TARGET_PATH \
           --results_path $TARGET_PATH/${LINKS_JOB}_results --pybedtools_path $PYBEDTOOLS_PATH \
-          --flag_ll $FLAG_LL --flag_se $FLAG_SE")
+          --flag_ll $FLAG_LL --flag_se $FLAG_SE --random_seed $RANDOM_SEED")
 echo "Cis job ID: $CIS_JOB"
 
 ###########################################################################################
@@ -122,10 +123,10 @@ if [ "$USE_INF_MODE" = true ]; then
                   --job compute_ctrl_only --job_id $LINKS_JOB --array_idx \$SLURM_ARRAY_TASK_ID --multiome_file $MULTIOME_FILE \
                   --batch_size $BATCH_SIZE --target_path $TARGET_PATH --results_path $TARGET_PATH/${LINKS_JOB}_results \
                   --binning_config $BIN_CONFIG --binning_type $BIN_TYPE --genome_file $GENOME_FILE --pybedtools_path $PYBEDTOOLS_PATH \
-                  --flag_ll $FLAG_LL --flag_se $FLAG_SE")
+                  --flag_ll $FLAG_LL --flag_se $FLAG_SE --random_seed $RANDOM_SEED")
         echo "Ctrl job ID: $CTRL_JOB"
         CTRL_JOB_FOR_DEPENDENCY=$CTRL_JOB
-        
+
     else
         echo "ERROR: Need $TOTAL_NUM_BATCHES jobs but max array size is $MAX_ARRAY_SIZE"
         echo "Increase BATCH_SIZE or use parallel arrays approach"
@@ -142,7 +143,7 @@ else
               --job compute_ctrl_only --job_id $LINKS_JOB --array_idx \$SLURM_ARRAY_TASK_ID --multiome_file $MULTIOME_FILE \
               --batch_size $BATCH_SIZE --target_path $TARGET_PATH --results_path $TARGET_PATH/${LINKS_JOB}_results \
               --binning_config $BIN_CONFIG --binning_type $BIN_TYPE --genome_file $GENOME_FILE --pybedtools_path $PYBEDTOOLS_PATH \
-              --flag_ll $FLAG_LL --flag_se $FLAG_SE")
+              --flag_ll $FLAG_LL --flag_se $FLAG_SE --random_seed $RANDOM_SEED")
     echo "Ctrl job ID: $CTRL_JOB"
     CTRL_JOB_FOR_DEPENDENCY=$CTRL_JOB
 fi
