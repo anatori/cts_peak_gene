@@ -211,7 +211,8 @@ def precompute_atac_poisson(counts_atac, s_atac):
     Returns dict with arrays of shape (n_peaks,):
         mu, sigma2, total_var, sigma2_raw
     """
-    counts_atac = counts_atac.tocsc()
+    if not sp.sparse.isspmatrix_csc(counts_atac):
+        counts_atac = counts_atac.tocsc()
     inv_s = 1.0 / s_atac
     mu, total_var = _sparse_mean_and_var(counts_atac, inv_s)
     noise_var = mu * inv_s.mean()
@@ -226,7 +227,8 @@ def precompute_atac_zip(counts_atac, s_atac):
     Returns dict with arrays of shape (n_peaks,):
         mu, sigma2, total_var, sigma2_raw, pi, lam
     """
-    counts_atac = counts_atac.tocsc()
+    if not sp.sparse.isspmatrix_csc(counts_atac):
+        counts_atac = counts_atac.tocsc()
     n_cells = counts_atac.shape[0]
     inv_s = 1.0 / s_atac
     mu, total_var = _sparse_mean_and_var(counts_atac, inv_s)
@@ -254,7 +256,8 @@ def precompute_rna_poisson(counts_rna, s_rna):
     Returns dict with arrays of shape (n_genes,):
         mu, sigma2, total_var, sigma2_raw
     """
-    counts_rna = counts_rna.tocsc()
+    if not sp.sparse.isspmatrix_csc(counts_rna):
+        counts_rna = counts_rna.tocsc()
     inv_s = 1.0 / s_rna
     mu, total_var = _sparse_mean_and_var(counts_rna, inv_s)
 
@@ -270,7 +273,8 @@ def precompute_rna_nb(counts_rna, s_rna):
     Returns dict with arrays of shape (n_genes,):
         mu, sigma2, total_var, sigma2_raw, phi, phi_raw
     """
-    counts_rna = counts_rna.tocsc()
+    if not sp.sparse.isspmatrix_csc(counts_rna):
+        counts_rna = counts_rna.tocsc()
     inv_s = 1.0 / s_rna
     mu, total_var = _sparse_mean_and_var(counts_rna, inv_s)
 
@@ -313,10 +317,12 @@ def precompute_rna_nb_deseq2(counts_rna, s_rna, nb_params, phi_trend_fn):
     Returns dict with arrays of shape (n_genes,):
         mu, sigma2, total_var, sigma2_raw, phi (shrunk), phi_raw
     """
-    counts_rna = counts_rna.tocsc()
+    if not sp.sparse.isspmatrix_csc(counts_rna):
+        counts_rna = counts_rna.tocsc()
+
     n_cells    = counts_rna.shape[0]
     nnz        = np.diff(counts_rna.indptr)
-    w          = nnz / n_cells               # fraction nonzero → weight toward phi_raw
+    w          = nnz / n_cells # fraction nonzero → weight toward phi_raw
 
     phi_raw   = nb_params['phi_raw']
     mu_all    = nb_params['mu']
