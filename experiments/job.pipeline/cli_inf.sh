@@ -32,20 +32,20 @@ else
 fi
 
 
-# ###########################################################################################
-# ######                                  Generate Links                               ######
-# ###########################################################################################
+###########################################################################################
+######                              Generate Controls                              ######
+###########################################################################################
 
-# echo "Submitting $BIN_CONFIG generate_links job..."
-# LINKS_JOB=$(sbatch --parsable -p $PARTITION -t 1-00:00:00 \
-#   -A bio240051p \
-#   --ntasks-per-node=32 \
-#   -o /ocean/projects/bio240051p/aprieto/logs/links_%j.err -J "links_$BIN_CONFIG" \
-#   --wrap "source ~/.bashrc && conda activate ctar && python /ocean/projects/bio240051p/aprieto/cts_peak_gene/CLI_ctar.py \
-#           --job generate_links --job_id \$SLURM_JOB_ID --multiome_file $MULTIOME_FILE --batch_size $BATCH_SIZE \
-#           --binning_config $BIN_CONFIG --binning_type $BIN_TYPE --genome_file $GENOME_FILE --target_path $TARGET_PATH \
-#           --pybedtools_path $PYBEDTOOLS_PATH --results_path $RESULTS_PATH --random_seed $RANDOM_SEED")
-# echo "Links job ID: $LINKS_JOB"
+echo "Submitting $BIN_CONFIG generate_controls job..."
+GEN_CTRL_JOB=$(sbatch --parsable -p $PARTITION -t 1-00:00:00 \
+  -A bio240051p \
+  --ntasks-per-node=32 \
+  -o /ocean/projects/bio240051p/aprieto/logs/gen_ctrl_%j.err -J "gen_ctrl_$BIN_CONFIG" \
+  --wrap "source ~/.bashrc && conda activate ctar && python /ocean/projects/bio240051p/aprieto/cts_peak_gene/CLI_ctar.py \
+          --job generate_controls --multiome_file $MULTIOME_FILE --batch_size $BATCH_SIZE \
+          --binning_config $BIN_CONFIG --binning_type $BIN_TYPE --genome_file $GENOME_FILE --target_path $TARGET_PATH \
+          --pybedtools_path $PYBEDTOOLS_PATH --results_path $RESULTS_PATH --random_seed $RANDOM_SEED")
+echo "Generate controls job ID: $GEN_CTRL_JOB"
 
 ###########################################################################################
 ######                            Compute cis coefficients                           ######
@@ -121,6 +121,7 @@ if [ "$USE_INF_MODE" = true ]; then
         CTRL_JOB=$(sbatch --parsable -p $PARTITION -t 2-00:00:00 \
             -A bio240051p \
             --ntasks-per-node=$N_CORES \
+            --dependency=afterok:${GEN_CTRL_JOB} \
             --array=0-$((TOTAL_NUM_BATCHES - 1))%${MAX_CONCURRENT} \
             -o /ocean/projects/bio240051p/aprieto/logs/ctrl_%A_%a.err \
             -J "ctrl_$BIN_CONFIG" \
@@ -173,7 +174,7 @@ echo ""
 echo "================================"
 echo "Pipeline submitted successfully!"
 echo "================================"
-echo "Links job:     $LINKS_JOB"
+echo "Gen ctrl job:  $GEN_CTRL_JOB"
 echo "Cis job:      $CIS_JOB"
 echo "Ctrl job:     $CTRL_JOB"
 echo "P-value job:  $PVAL_JOB"
