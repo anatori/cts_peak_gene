@@ -3,19 +3,21 @@
 # FILE: /ocean/projects/bio240051p/aprieto/cts_peak_gene/experiments/job.null/null_cli.sh
 
 MULTIOME_FILE=/ocean/projects/bio240051p/aprieto/multiome/processed/pbmc_sorted_10k/pbmc.h5mu
-BIN_CONFIG=5.5.5.5.10000
-TARGET_PATH=/ocean/projects/bio240051p/aprieto/multiome/simulations/null_pbmc/high_expr/corr/5.5.5.5
+BIN_PREFIX=3.3.3.3
+BIN_CONFIG=${BIN_PREFIX}.10000
+TARGET_PATH=/ocean/projects/bio240051p/aprieto/multiome/simulations/null_pbmc/celltype_specificity/corr/${BIN_PREFIX}
 GENOME_FILE=/ocean/projects/bio240051p/aprieto/bedfiles/ref/GRCh38.p14.genome.fixed.fa
 BIN_TYPE='mean_var'
 PYBEDTOOLS_PATH=/opt/packages/bedtools/2.30.0
 BATCH_SIZE=100000
-RESULTS_PATH=/ocean/projects/bio240051p/aprieto/multiome/simulations/null_pbmc/high_expr/corr/5.5.5.5
+RESULTS_PATH=/ocean/projects/bio240051p/aprieto/multiome/simulations/null_pbmc/celltype_specificity/corr/${BIN_PREFIX}
 PARTITION="RM-shared"
 MAX_CONCURRENT=200
 FLAG_LL='False'
 FLAG_SE='True'
 FLAG_CORR='True'
 N_CORES=64
+RANDOM_SEED=777
 
 IFS='.' read -r b1 b2 b3 b4 rest <<< "$BIN_CONFIG"
 if [[ "$b3" == "inf" && "$b4" == "inf" ]]; then
@@ -42,7 +44,7 @@ fi
 #   --wrap "source ~/.bashrc && conda activate ctar && python /ocean/projects/bio240051p/aprieto/cts_peak_gene/CLI_ctar.py \
 #           --job generate_links --job_id \$SLURM_JOB_ID --multiome_file $MULTIOME_FILE --batch_size $BATCH_SIZE \
 #           --binning_config $BIN_CONFIG --binning_type $BIN_TYPE --genome_file $GENOME_FILE --target_path $TARGET_PATH \
-#           --pybedtools_path $PYBEDTOOLS_PATH --results_path $RESULTS_PATH")
+#           --pybedtools_path $PYBEDTOOLS_PATH --results_path $RESULTS_PATH --random_seed $RANDOM_SEED")
 # echo "Links job ID: $LINKS_JOB"
 
 ###########################################################################################
@@ -58,7 +60,7 @@ CIS_JOB=$(sbatch --parsable -p $PARTITION -t 1-00:00:00 \
           --job compute_cis_only --multiome_file $MULTIOME_FILE --batch_size $BATCH_SIZE \
           --binning_config $BIN_CONFIG --binning_type $BIN_TYPE --genome_file $GENOME_FILE --target_path $TARGET_PATH \
           --results_path $RESULTS_PATH --pybedtools_path $PYBEDTOOLS_PATH --n_cores $N_CORES \
-          --flag_ll $FLAG_LL --flag_se $FLAG_SE --flag_corr $FLAG_CORR")
+          --flag_ll $FLAG_LL --flag_se $FLAG_SE --flag_corr $FLAG_CORR --random_seed $RANDOM_SEED")
 echo "Cis job ID: $CIS_JOB"
 
 ###########################################################################################
@@ -126,7 +128,7 @@ if [ "$USE_INF_MODE" = true ]; then
                     --job compute_ctrl_only --multiome_file $MULTIOME_FILE \
                     --batch_size $BATCH_SIZE --target_path $TARGET_PATH --results_path $RESULTS_PATH \
                     --binning_config $BIN_CONFIG --binning_type $BIN_TYPE --genome_file $GENOME_FILE --pybedtools_path $PYBEDTOOLS_PATH \
-                    --n_cores $N_CORES --flag_ll $FLAG_LL --flag_se $FLAG_SE --flag_corr $FLAG_CORR")
+                    --n_cores $N_CORES --flag_ll $FLAG_LL --flag_se $FLAG_SE --flag_corr $FLAG_CORR --random_seed $RANDOM_SEED")
         echo "Ctrl job ID: $CTRL_JOB"
         CTRL_JOB_FOR_DEPENDENCY=$CTRL_JOB
         
@@ -146,7 +148,7 @@ else
               --job compute_ctrl_only --multiome_file $MULTIOME_FILE \
               --batch_size $BATCH_SIZE --target_path $TARGET_PATH --results_path $RESULTS_PATH \
               --binning_config $BIN_CONFIG --binning_type $BIN_TYPE --genome_file $GENOME_FILE --pybedtools_path $PYBEDTOOLS_PATH \
-              --n_cores $N_CORES --flag_ll $FLAG_LL --flag_se $FLAG_SE --flag_corr $FLAG_CORR")
+              --n_cores $N_CORES --flag_ll $FLAG_LL --flag_se $FLAG_SE --flag_corr $FLAG_CORR --random_seed $RANDOM_SEED")
     echo "Ctrl job ID: $CTRL_JOB"
     CTRL_JOB_FOR_DEPENDENCY=$CTRL_JOB
 fi
