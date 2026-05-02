@@ -2,15 +2,15 @@
 
 # FILE: /ocean/projects/bio240051p/aprieto/cts_peak_gene/experiments/job.pipeline/cli.sh
 
-MULTIOME_DATASET=brain
-MULTIOME_FILE=/ocean/projects/bio240051p/aprieto/multiome/processed/brain_3k/brain.h5mu
-BIN_CONFIG=5.5.5.5.10000
-TARGET_PATH=/ocean/projects/bio240051p/aprieto/multiome/results/ctar/final_eval/${MULTIOME_DATASET}/${MULTIOME_DATASET}_unfiltered_corr_refactored_${BIN_CONFIG}
+MULTIOME_DATASET=bmmc
+MULTIOME_FILE=/ocean/projects/bio240051p/aprieto/multiome/processed/neurips_bmmc/bmmc.h5mu
+BIN_CONFIG=5.5.5.5.1000
+TARGET_PATH=/ocean/projects/bio240051p/aprieto/multiome/results/ctar/corr_eval/${MULTIOME_DATASET}/${MULTIOME_DATASET}_unfiltered_${BIN_CONFIG}
 GENOME_FILE=/ocean/projects/bio240051p/aprieto/bedfiles/ref/GRCh38.p14.genome.fixed.fa
 BIN_TYPE='mean_var'
 PYBEDTOOLS_PATH=/opt/packages/bedtools/2.30.0
 BATCH_SIZE=100000
-RESULTS_PATH=/ocean/projects/bio240051p/aprieto/multiome/results/ctar/final_eval/${MULTIOME_DATASET}/${MULTIOME_DATASET}_unfiltered_corr_refactored_${BIN_CONFIG}
+RESULTS_PATH=/ocean/projects/bio240051p/aprieto/multiome/results/ctar/corr_eval/${MULTIOME_DATASET}/${MULTIOME_DATASET}_unfiltered_${BIN_CONFIG}
 PARTITION="RM-shared"
 MAX_CONCURRENT=200
 FLAG_LL='False'
@@ -30,10 +30,6 @@ else
     TOTAL_NUM_BATCHES=$(( (NUM_LINKS + BATCH_SIZE - 1) / BATCH_SIZE ))
     ARRAY_OPT="--array=0-$((TOTAL_NUM_BATCHES - 1))%${MAX_CONCURRENT}"
 fi
-
-# mkdir -p ${TARGET_PATH}
-# cp /ocean/projects/bio240051p/aprieto/multiome/results/ctar/final_eval/${MULTIOME_DATASET}/${MULTIOME_DATASET}_unfiltered_5.5.5.5.1000/cis_links_df.csv \
-#    ${TARGET_PATH}
 
 
 # ###########################################################################################
