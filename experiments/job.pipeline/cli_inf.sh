@@ -2,8 +2,8 @@
 
 # FILE: /ocean/projects/bio240051p/aprieto/cts_peak_gene/experiments/job.pipeline/cli_inf.sh
 
-MULTIOME_DATASET=brain
-MULTIOME_FILE=/ocean/projects/bio240051p/aprieto/multiome/processed/brain_3k/brain.h5mu
+MULTIOME_DATASET=pbmc
+MULTIOME_FILE=/ocean/projects/bio240051p/aprieto/multiome/processed/pbmc_sorted_10k/pbmc.h5mu
 BIN_CONFIG=5.5.inf.inf.1000
 TARGET_PATH=/ocean/projects/bio240051p/aprieto/multiome/results/ctar/corr_eval/${MULTIOME_DATASET}/${MULTIOME_DATASET}_unfiltered_${BIN_CONFIG}
 GENOME_FILE=/ocean/projects/bio240051p/aprieto/bedfiles/ref/GRCh38.p14.genome.fixed.fa
@@ -11,7 +11,7 @@ BIN_TYPE='mean_var'
 PYBEDTOOLS_PATH=/opt/packages/bedtools/2.30.0
 BATCH_SIZE=50000
 RESULTS_PATH=/ocean/projects/bio240051p/aprieto/multiome/results/ctar/corr_eval/${MULTIOME_DATASET}/${MULTIOME_DATASET}_unfiltered_${BIN_CONFIG}
-PARTITION="RM"
+PARTITION="RM-512"
 MAX_CONCURRENT=200
 FLAG_LL='False'
 FLAG_SE='True'
@@ -120,8 +120,8 @@ if [ "$USE_INF_MODE" = true ]; then
         
         CTRL_JOB=$(sbatch --parsable -p $PARTITION -t 2-00:00:00 \
             -A bio240051p \
-            --ntasks-per-node=$N_CORES \
             --dependency=afterok:${GEN_CTRL_JOB} \
+            --ntasks-per-node=$N_CORES \
             --array=0-$((TOTAL_NUM_BATCHES - 1))%${MAX_CONCURRENT} \
             -o /ocean/projects/bio240051p/aprieto/logs/ctrl_%A_%a.err \
             -J "ctrl_$BIN_CONFIG" \
@@ -161,7 +161,7 @@ fi
 echo "Submitting $BIN_CONFIG compute_pval job..."
 PVAL_JOB=$(sbatch --parsable -p $PARTITION -t 00:30:00 \
   -A bio240051p \
-  --dependency=afterok:${CIS_JOB}:${CTRL_JOB} \
+  --dependency=afterok:${CTRL_JOB}:${CIS_JOB} \
   --ntasks-per-node=32 \
   --mail-type=END --mail-user=asprieto@andrew.cmu.edu \
   -o /ocean/projects/bio240051p/aprieto/logs/pval_%j.err -J "pval_$BIN_CONFIG" \
