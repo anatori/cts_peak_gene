@@ -1,16 +1,20 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# bash /projects/zhanglab/users/ana/cts_peak_gene/experiments/job.evaluation/cts_evaluate.sh
+# bash /ocean/projects/bio240051p/aprieto/cts_peak_gene/experiments/job.evaluation/cts_evaluate.sh
 
 # Slurm settings
-PARTITIONS="${PARTITIONS:-mzhang,pool1}"
-LOG_DIR="${LOG_DIR:-/projects/zhanglab/users/ana/logs}"
+PARTITIONS="${PARTITIONS:-RM-shared}"
+LOG_DIR="${LOG_DIR:-/ocean/projects/bio240051p/aprieto/logs}"
 CONDA_ENV="${CONDA_ENV:-ctar}"
 
 # Paths
-REPO_ROOT="${REPO_ROOT:-/projects/zhanglab/users/ana/cts_peak_gene}"
+REPO_ROOT="${REPO_ROOT:-/ocean/projects/bio240051p/aprieto/cts_peak_gene}"
 SCRIPTS_DIR="${SCRIPTS_DIR:-${REPO_ROOT}/experiments/job.evaluation}"
+
+# Celltype config CSV: columns celltype, methods_csv, eval_bed
+# Each row is one cell type; methods_csv is a per-celltype methods manifest
+# (file_path, score_col, method_name) that drives make_union_bed and merge_methods.
 CONFIG_FILE="${CONFIG_FILE:-${SCRIPTS_DIR}/celltype_config.csv}"
 
 # Dataset name
@@ -19,52 +23,55 @@ EVAL_NAME="${EVAL_NAME:-onek1k}"
 
 # Shared parameters
 DEDUP="${DEDUP:-min}"
-METHOD_COLS="${METHOD_COLS:-scent,scmm,signac,ctar_filt_z,ctar_filt}"
 REFERENCE_METHOD="${REFERENCE_METHOD:-ctar_filt}"
 N_BOOTSTRAP="${N_BOOTSTRAP:-1000}"
-
-# Column name specs (these should be the same across cell types)
-SCENT_COL="${SCENT_COL:-boot_basic_p}"
-SCMM_COL="${SCMM_COL:-pval}"
-SIGNAC_COL="${SIGNAC_COL:-pvalue}"
-CTAR_FILT_COL_Z="${CTAR_FILT_COL_Z:-5.5.5.5.1000_mcpval_z}"
-CTAR_FILT_COL="${CTAR_FILT_COL:-5.5.5.5.1000_mcpval}"
-
-BEDTOOLS_BIN="${BEDTOOLS_BIN:-/projects/zhanglab/users/ana/bedtools2/bin/intersectBed}"
+BEDTOOLS_BIN="${BEDTOOLS_BIN:-bedtools}"
 
 mkdir -p "${LOG_DIR}"
 
 submit() {
-  sbatch --parsable -p "${PARTITIONS}" "$@"
+  sbatch --parsable -p "${PARTITIONS}" -A bio240051p "$@"
 }
 
-# Read config file and submit jobs for each cell type
-echo "Reading cell type configuration from ${CONFIG_FILE}..."
+# Derive METHOD_COLS from the first cell type's methods CSV (all cell types must share the
+# same method names and order; column names live in each per-celltype methods CSV).
+# Can be overridden by setting METHOD_COLS explicitly before calling this script.
+if [[ -z "${METHOD_COLS:-}" ]]; then
+  FIRST_METHODS_CSV=$(tail -n +2 "${CONFIG_FILE}" | head -n 1 | cut -d',' -f2)
+  METHOD_COLS=$(python3 -c "
+import csv, sys
+with open('${FIRST_METHODS_CSV}') as f:
+    rows = list(csv.DictReader(f))
+names = [r['method_name'].strip() for r in rows if r.get('method_name','').strip()]
+if not names:
+    sys.exit('ERROR: no method_name values found in ${FIRST_METHODS_CSV}')
+print(','.join(names))
+")
+fi
 
-# Store job IDs in a file
+echo "Reading cell type configuration from ${CONFIG_FILE}..."
+echo "METHOD_COLS: ${METHOD_COLS}"
+
+# Store AURC job IDs for the consolidation dependency
 TEMP_JOB_FILE=$(mktemp)
 
 # Skip header line and process each row
-tail -n +2 "${CONFIG_FILE}" | while IFS=, read -r CELLTYPE SCENT_FILE SIGNAC_FILE CTAR_FILT_FILE SCMM_FILE EVAL_BED; do
-  
+tail -n +2 "${CONFIG_FILE}" | while IFS=, read -r CELLTYPE METHODS_CSV EVAL_BED; do
+
   echo ""
   echo "=========================================="
   echo "Processing cell type: ${CELLTYPE}"
   echo "=========================================="
+  echo "METHODS_CSV: ${METHODS_CSV}"
+  echo "EVAL_BED:    ${EVAL_BED}"
 
-  echo "SCENT_FILE: ${SCENT_FILE}"
-  echo "SCMM_FILE: ${SCMM_FILE}"
-  echo "SIGNAC_FILE: ${SIGNAC_FILE}"
-  echo "CTAR_FILT_FILE: ${CTAR_FILT_FILE}"
-  echo "EVAL_BED: ${EVAL_BED}"
-  
-  # Set up cell-type-specific directories
-  UNION_DIR="/projects/zhanglab/users/ana/bedtools2/ana_bedfiles/validation/union_links/no_score/${CELLTYPE}"
-  OVERLAP_DIR="/projects/zhanglab/users/ana/bedtools2/ana_bedfiles/validation/overlap/${DATASET_NAME}/no_score/${CELLTYPE}"
-  AGG_DIR="/projects/zhanglab/users/ana/multiome/validation/overlap/${DATASET_NAME}/${CELLTYPE}"
-  MERGE_DIR="/projects/zhanglab/users/ana/multiome/validation/evaluation/${DATASET_NAME}/${CELLTYPE}"
-  AURC_DIR="/projects/zhanglab/users/ana/multiome/validation/evaluation/tables/metrics/${DATASET_NAME}/${CELLTYPE}"
-  
+  # Per-celltype directories (PSC)
+  UNION_DIR="/ocean/projects/bio240051p/aprieto/bedfiles/validation/union_links/no_score/${CELLTYPE}"
+  OVERLAP_DIR="/ocean/projects/bio240051p/aprieto/bedfiles/validation/overlap/${DATASET_NAME}/no_score/${CELLTYPE}"
+  AGG_DIR="/ocean/projects/bio240051p/aprieto/multiome/validation/overlap/${DATASET_NAME}/${CELLTYPE}"
+  MERGE_DIR="/ocean/projects/bio240051p/aprieto/multiome/validation/evaluation/${DATASET_NAME}/${CELLTYPE}"
+  AURC_DIR="/ocean/projects/bio240051p/aprieto/multiome/validation/evaluation/tables/metrics/${DATASET_NAME}/${CELLTYPE}"
+
   # Step 1: make_union_bed
   echo "Submitting make_union_bed for ${CELLTYPE}..."
   UNION_JOB_ID=$(submit \
@@ -76,13 +83,9 @@ tail -n +2 "${CONFIG_FILE}" | while IFS=, read -r CELLTYPE SCENT_FILE SIGNAC_FIL
             python ${SCRIPTS_DIR}/make_union_bed.py \
               --dataset_name '${DATASET_NAME}_${CELLTYPE}' \
               --bed_path '${UNION_DIR}' \
-              --scent_file '${SCENT_FILE}' \
-              --scmm_file '${SCMM_FILE}' \
-              --signac_file '${SIGNAC_FILE}' \
-              --ctar_file '' \
-              --ctar_filt_file '${CTAR_FILT_FILE}'")
+              --methods_csv '${METHODS_CSV}'")
   echo "  UNION_JOB_ID=${UNION_JOB_ID}"
-  
+
   # Step 2: bedtools intersect
   echo "Submitting bedtools intersect for ${CELLTYPE}..."
   INTERSECT_JOB_ID=$(submit \
@@ -91,12 +94,12 @@ tail -n +2 "${CONFIG_FILE}" | while IFS=, read -r CELLTYPE SCENT_FILE SIGNAC_FIL
     -o "${LOG_DIR}/intersect_${DATASET_NAME}_${CELLTYPE}-%j.out" \
     -e "${LOG_DIR}/intersect_${DATASET_NAME}_${CELLTYPE}-%j.err" \
     --wrap "mkdir -p '${OVERLAP_DIR}' && \
-            '${BEDTOOLS_BIN}' -wo \
+            '${BEDTOOLS_BIN}' intersect -wo \
               -a '${EVAL_BED}' \
               -b '${UNION_DIR}/${DATASET_NAME}_${CELLTYPE}.bed' \
               > '${OVERLAP_DIR}/${EVAL_NAME}_${DATASET_NAME}_${CELLTYPE}.bed'")
   echo "  INTERSECT_JOB_ID=${INTERSECT_JOB_ID}"
-  
+
   # Step 3: aggregate_overlaps
   echo "Submitting aggregate_overlaps for ${CELLTYPE}..."
   AGG_JOB_ID=$(submit \
@@ -111,7 +114,7 @@ tail -n +2 "${CONFIG_FILE}" | while IFS=, read -r CELLTYPE SCENT_FILE SIGNAC_FIL
               --res_path '${AGG_DIR}' \
               --dataset_name '${DATASET_NAME}_${CELLTYPE}'")
   echo "  AGG_JOB_ID=${AGG_JOB_ID}"
-  
+
   # Step 4: merge_methods
   echo "Submitting merge_methods for ${CELLTYPE}..."
   MERGE_JOB_ID=$(submit \
@@ -123,11 +126,7 @@ tail -n +2 "${CONFIG_FILE}" | while IFS=, read -r CELLTYPE SCENT_FILE SIGNAC_FIL
             mkdir -p '${MERGE_DIR}' && \
             python ${SCRIPTS_DIR}/merge_methods.py \
               --dataset_name '${DATASET_NAME}_${CELLTYPE}' \
-              --scent_file '${SCENT_FILE}' --scent_col '${SCENT_COL}' \
-              --scmm_file '${SCMM_FILE}' --scmm_col '${SCMM_COL}' \
-              --signac_file '${SIGNAC_FILE}' --signac_col '${SIGNAC_COL}' \
-              --ctar_file '' --ctar_col '' --ctar_col_z '' \
-              --ctar_filt_file '${CTAR_FILT_FILE}' --ctar_filt_col '${CTAR_FILT_COL}' --ctar_filt_col_z '${CTAR_FILT_COL_Z}' \
+              --methods_csv '${METHODS_CSV}' \
               --dedup '${DEDUP}' \
               --agg_path '${AGG_DIR}' \
               --res_path '${MERGE_DIR}'")
@@ -150,18 +149,17 @@ tail -n +2 "${CONFIG_FILE}" | while IFS=, read -r CELLTYPE SCENT_FILE SIGNAC_FIL
               --reference_method '${REFERENCE_METHOD}' \
               --method_cols '${METHOD_COLS}'")
   echo "  AURC_JOB_ID=${AURC_JOB_ID}"
-  
-  # Save job ID to temp file
+
   echo "${AURC_JOB_ID}" >> "${TEMP_JOB_FILE}"
-  
+
 done
 
-# Read job IDs from temp file
+# Consolidate after all cell-type AURC jobs finish
 AURC_DEPS=$(paste -sd: "${TEMP_JOB_FILE}")
 rm -f "${TEMP_JOB_FILE}"
 
-# Only submit consolidation if we have jobs
 if [[ -n "${AURC_DEPS}" ]]; then
+  BASE_AURC_DIR="/ocean/projects/bio240051p/aprieto/multiome/validation/evaluation/tables/metrics/${DATASET_NAME}"
   echo ""
   echo "Submitting consolidation job..."
   CONSOLIDATE_JOB_ID=$(submit \
@@ -173,9 +171,8 @@ if [[ -n "${AURC_DEPS}" ]]; then
             python ${SCRIPTS_DIR}/consolidate_celltype_results.py \
               --config_file '${CONFIG_FILE}' \
               --dataset_name '${DATASET_NAME}' \
-              --base_aurc_dir '/projects/zhanglab/users/ana/multiome/validation/evaluation/tables/metrics/${DATASET_NAME}' \
-              --output_dir '/projects/zhanglab/users/ana/multiome/validation/evaluation/tables/metrics/${DATASET_NAME}/consolidated'")
-  
+              --base_aurc_dir '${BASE_AURC_DIR}' \
+              --output_dir '${BASE_AURC_DIR}/consolidated'")
   echo "  CONSOLIDATE_JOB_ID=${CONSOLIDATE_JOB_ID}"
 fi
 

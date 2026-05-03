@@ -1,24 +1,38 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# bash /projects/zhanglab/users/ana/cts_peak_gene/experiments/job.evaluation/evaluate_distances.sh
+# bash /ocean/projects/bio240051p/aprieto/cts_peak_gene/experiments/job.evaluation/evaluate_distances.sh
 
 # Slurm settings
-PARTITIONS="${PARTITIONS:-statgen}"
-LOG_DIR="${LOG_DIR:-/projects/zhanglab/users/ana/logs}"
+PARTITIONS="${PARTITIONS:-RM-shared}"
+LOG_DIR="${LOG_DIR:-/ocean/projects/bio240051p/aprieto/logs}"
 CONDA_ENV="${CONDA_ENV:-ctar}"
 
 # Dataset / repo paths
 DATASET_NAME="${DATASET_NAME:-bmmc_donor1}"
-REPO_ROOT="${REPO_ROOT:-/projects/zhanglab/users/ana/cts_peak_gene}"
+REPO_ROOT="${REPO_ROOT:-/ocean/projects/bio240051p/aprieto/cts_peak_gene}"
 SCRIPTS_DIR="${SCRIPTS_DIR:-${REPO_ROOT}/experiments/job.evaluation}"
 
 # Inputs / outputs
-MERGE_DIR="${MERGE_DIR:-/projects/zhanglab/users/ana/multiome/validation/evaluation/${DATASET_NAME}}"
-AURC_DIR="${AURC_DIR:-/projects/zhanglab/users/ana/multiome/validation/evaluation/tables/metrics_jitter_distance/${DATASET_NAME}}"
-GENCODE_GTF="${GENCODE_GTF:-/projects/zhanglab/users/ana/reference/gencode.gtf.gz}"
+MERGE_DIR="${MERGE_DIR:-/ocean/projects/bio240051p/aprieto/multiome/validation/evaluation/${DATASET_NAME}}"
+AURC_DIR="${AURC_DIR:-/ocean/projects/bio240051p/aprieto/multiome/validation/evaluation/tables/metrics_jitter_distance/${DATASET_NAME}}"
+# Update this path to wherever gencode.gtf.gz lives on PSC
+GENCODE_GTF="${GENCODE_GTF:-/ocean/projects/bio240051p/aprieto/reference/gencode.gtf.gz}"
 
 # Evaluation settings
+# METHOD_COLS can be set explicitly or derived from a methods manifest CSV
+METHODS_CSV="${METHODS_CSV:-}"
+if [[ -z "${METHOD_COLS:-}" && -n "${METHODS_CSV}" ]]; then
+  METHOD_COLS=$(python3 -c "
+import csv, sys
+with open('${METHODS_CSV}') as f:
+    rows = list(csv.DictReader(f))
+names = [r['method_name'].strip() for r in rows if r.get('method_name','').strip()]
+if not names:
+    sys.exit('ERROR: no method_name values found in ${METHODS_CSV}')
+print(','.join(names))
+")
+fi
 METHOD_COLS="${METHOD_COLS:-scmm,signac,ctar_filt_z,ctar_filt}"
 REFERENCE_METHOD="${REFERENCE_METHOD:-ctar_filt}"
 N_BOOTSTRAP="${N_BOOTSTRAP:-1000}"
@@ -35,11 +49,12 @@ DISTANCE_BINS_BP="${DISTANCE_BINS_BP:-}"
 DISTANCE_BIN_LABELS="${DISTANCE_BIN_LABELS:-}"
 
 echo "Evaluating distance-stratified AUERC for ${DATASET_NAME}..."
+echo "METHOD_COLS: ${METHOD_COLS}"
 
 mkdir -p "${LOG_DIR}"
 
 submit() {
-  sbatch --parsable -p "${PARTITIONS}" "$@"
+  sbatch --parsable -p "${PARTITIONS}" -A bio240051p "$@"
 }
 
 EXTRA_ARGS=()

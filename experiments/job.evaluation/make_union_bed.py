@@ -1,10 +1,10 @@
 import argparse
+import csv
 import os
-import pandas as pd
-from collections import OrderedDict
-from typing import Optional
-from ctar.data_loader import canonicalize_peak
 import re
+
+import pandas as pd
+from ctar.data_loader import canonicalize_peak
 
 
 peak_regex = re.compile(r"^(?:chr)?(?P<chr>[0-9XYMT]+)[:\-](?P<start>\d+)-(?P<end>\d+)$", re.IGNORECASE)
@@ -12,44 +12,58 @@ peak_regex = re.compile(r"^(?:chr)?(?P<chr>[0-9XYMT]+)[:\-](?P<start>\d+)-(?P<en
 
 def load_pg_df(file_path: str) -> pd.DataFrame:
     """
-    Load a file, canonicalize peaks. 
+    Load a file, canonicalize peaks.
     Return dataframe with columns canonical peak, gene only.
     """
-
     if not os.path.isfile(file_path):
         raise FileNotFoundError(f"File not found: {file_path}")
 
     df = pd.read_csv(file_path, sep=None, engine='python')
 
-    # Ensure required keys exist
     for required in ["peak", "gene"]:
         if required not in df.columns:
             raise ValueError(f"File '{file_path}' is missing required column '{required}'")
 
-    # Canonicalize peak and clean gene strings
     df["peak"] = canonicalize_peak(df["peak"])
     df["gene"] = df["gene"].astype(str).str.strip()
     df["idx"] = df["peak"].astype(str) + ";" + df["gene"].astype(str)
 
-    return df[["peak","gene","idx"]]
+    return df[["peak", "gene", "idx"]]
+
+
+def read_methods_csv(methods_csv: str):
+    """
+    Read methods manifest CSV (file_path, score_col, method_name).
+    Returns list of unique file paths, preserving first-occurrence order.
+    A file may appear more than once (different score columns) but is only unioned once.
+    """
+    if not os.path.isfile(methods_csv):
+        raise FileNotFoundError(f"Methods CSV not found: {methods_csv}")
+    with open(methods_csv, newline="") as f:
+        reader = csv.DictReader(f)
+        required = {"file_path", "score_col", "method_name"}
+        if not required.issubset(set(reader.fieldnames or [])):
+            raise ValueError(
+                f"methods_csv must have columns: {required}. Got: {reader.fieldnames}"
+            )
+        rows = list(reader)
+    if not rows:
+        raise ValueError(f"methods_csv has no data rows: {methods_csv}")
+    seen: dict = {}
+    for row in rows:
+        fp = row["file_path"].strip()
+        if fp and fp not in seen:
+            seen[fp] = True
+    return list(seen.keys())
 
 
 def main(args):
-
-    SCENT_FILE = args.scent_file
-    SCMM_FILE = args.scmm_file
-    SIGNAC_FILE = args.signac_file
-    CTAR_FILE = args.ctar_file
-    CTAR_FILT_FILE = args.ctar_filt_file
-
     BED_PATH = args.bed_path
     DATASET_NAME = args.dataset_name
 
-    # Load each file (skip if empty string)
-    source_files = [
-        f for f in [SCENT_FILE, SCMM_FILE, SIGNAC_FILE, CTAR_FILE, CTAR_FILT_FILE] 
-        if f and f.strip()
-    ]
+    source_files = read_methods_csv(args.methods_csv)
+    print(f"Loaded {len(source_files)} unique input files from {args.methods_csv}")
+
     pg_set = set()
     per_label_stats = []
 
@@ -79,13 +93,11 @@ def main(args):
             f"duplicates={stat['duplicates']}"
         )
 
-    # Concat (outer join)
     links_df = pd.DataFrame(list(pg_set), columns=["peak", "gene", "idx"])
     total_rows = len(links_df)
     unique_rows = links_df.index.nunique()
     print(f"After concat: total_rows={total_rows}, unique_index_rows={unique_rows}")
 
-    # Parse chr, start, end from canonical peak
     peak_parts = links_df["peak"].str.extract(r"^(?P<chr>chr(?:[0-9XYMT]+)):(?P<start>\d+)-(?P<end>\d+)$", flags=re.IGNORECASE)
     if peak_parts.isnull().any().any():
         bad = links_df.loc[peak_parts.isnull().any(axis=1), "peak"].unique()[:5]
@@ -103,14 +115,20 @@ def main(args):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
 
-    parser.add_argument("--scent_file", type=str, default="/projects/zhanglab/users/ana/multiome/results/scent/myscent_neatseq.txt")
-    parser.add_argument("--scmm_file", type=str, default="/projects/zhanglab/users/ana/multiome/results/scmultimap/scmultimap_neat_cis.csv")
-    parser.add_argument("--signac_file", type=str, default="/projects/zhanglab/users/ana/multiome/results/signac/signac_neatseq_links.csv")
-    parser.add_argument("--ctar_file", type=str, default="/projects/zhanglab/users/ana/multiome/results/ctar/final_eval/neat/neat_unfiltered_5.5.5.5.1000/cis_links_df.csv")
-    parser.add_argument("--ctar_filt_file", type=str, default="/projects/zhanglab/users/ana/multiome/results/ctar/final_eval/neat/neat_filtered_5.5.5.5.1000/cis_links_df.csv")
-
-    parser.add_argument("--bed_path", type=str, default="/projects/zhanglab/users/ana/bedtools2/ana_bedfiles/validation/union_links/no_score")
-    parser.add_argument("--dataset_name", type=str, default="neat")
+    parser.add_argument(
+        "--methods_csv",
+        type=str,
+        required=True,
+        help="CSV with columns: file_path, score_col, method_name. "
+             "Defines which files to include in the union BED. "
+             "A file appearing in multiple rows (different score columns) is included once.",
+    )
+    parser.add_argument(
+        "--bed_path",
+        type=str,
+        default="/ocean/projects/bio240051p/aprieto/bedfiles/validation/union_links",
+    )
+    parser.add_argument("--dataset_name", type=str, default="pbmc")
 
     args = parser.parse_args()
     main(args)

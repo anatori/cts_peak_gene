@@ -1,0 +1,6 @@
+celltype,methods_csv,eval_bed
+CD4_T,/ocean/projects/bio240051p/aprieto/cts_peak_gene/experiments/job.evaluation/methods_manifests/pbmc_cd4t_methods.csv,/ocean/projects/bio240051p/aprieto/bedfiles/validation/onek1k_beds/onek1k_pbmc_CD4_T.bed
+CD8_T,/ocean/projects/bio240051p/aprieto/cts_peak_gene/experiments/job.evaluation/methods_manifests/pbmc_cd8t_methods.csv,/ocean/projects/bio240051p/aprieto/bedfiles/validation/onek1k_beds/onek1k_pbmc_CD8_T.bed
+NK,/ocean/projects/bio240051p/aprieto/cts_peak_gene/experiments/job.evaluation/methods_manifests/pbmc_nk_methods.csv,/ocean/projects/bio240051p/aprieto/bedfiles/validation/onek1k_beds/onek1k_pbmc_NK.bed
+B,/ocean/projects/bio240051p/aprieto/cts_peak_gene/experiments/job.evaluation/methods_manifests/pbmc_b_methods.csv,/ocean/projects/bio240051p/aprieto/bedfiles/validation/onek1k_beds/onek1k_pbmc_B.bed
+Mono,/ocean/projects/bio240051p/aprieto/cts_peak_gene/experiments/job.evaluation/methods_manifests/pbmc_mono_methods.csv,/ocean/projects/bio240051p/aprieto/bedfiles/validation/onek1k_beds/onek1k_pbmc_Mono.bed

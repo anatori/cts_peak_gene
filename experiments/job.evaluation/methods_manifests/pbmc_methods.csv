@@ -1,0 +1,8 @@
+file_path,score_col,method_name
+/ocean/projects/bio240051p/aprieto/multiome/results/scent/myscent_pbmc_cts.csv,boot_basic_p,scent
+/ocean/projects/bio240051p/aprieto/multiome/results/scmultimap/unfiltered/scmultimap_pbmc_cis.csv,pval,scmm
+/ocean/projects/bio240051p/aprieto/multiome/results/signac/unfiltered/signac_pbmc_links.csv,pvalue,signac
+/ocean/projects/bio240051p/aprieto/multiome/results/ctar/final_eval/pbmc/pbmc_unfiltered_5.5.5.5.1000/cis_links_df.csv,5.5.5.5.1000_mcpval_z,ctar_z
+/ocean/projects/bio240051p/aprieto/multiome/results/ctar/final_eval/pbmc/pbmc_unfiltered_5.5.5.5.1000/cis_links_df.csv,5.5.5.5.1000_mcpval,ctar
+/ocean/projects/bio240051p/aprieto/multiome/results/ctar/final_eval/pbmc/pbmc_unfiltered_corr_5.5.5.5.1000/cis_links_df.csv,5.5.5.5.1000_mcpval_z,ctar_filt_z
+/ocean/projects/bio240051p/aprieto/multiome/results/ctar/final_eval/pbmc/pbmc_unfiltered_corr_5.5.5.5.1000/cis_links_df.csv,5.5.5.5.1000_mcpval,ctar_filt

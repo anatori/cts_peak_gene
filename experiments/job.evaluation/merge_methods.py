@@ -1,6 +1,7 @@
 import argparse
+import csv
 import os
-from typing import Dict, List, Optional, Tuple
+from typing import List, Optional, Tuple
 import pandas as pd
 import ctar
 
@@ -34,10 +35,8 @@ def _aggregate_duplicates(
 	tmp = df[["id", "peak", "gene", score_col]].copy()
 	tmp[score_col] = pd.to_numeric(tmp[score_col], errors="coerce")
 
-	# Keep peak gene consistent per id
 	agg_score = tmp.groupby("id", sort=False)[score_col].agg(how)
 
-	# Rebuild peak gene from id
 	peak_gene = agg_score.index.to_series().str.split(";", n=1, expand=True)
 	out = pd.DataFrame(
 		{
@@ -73,13 +72,10 @@ def load_method_scores(
 	if source_col not in df.columns:
 		raise ValueError(f"File '{file_path}' missing score column '{source_col}'")
 
-	# Copy score into standardized column name
 	df[out_label] = df[source_col]
 
-	# Deduplicate safely
 	out = _aggregate_duplicates(df, id_col="id", score_col=out_label, how=dedup)
 
-	# Print stats
 	n_raw = len(df)
 	n_unique = df["id"].nunique()
 	n_out = len(out)
@@ -99,7 +95,6 @@ def merge_method_tables(method_tables: List[pd.DataFrame]) -> pd.DataFrame:
 
 	merged = method_tables[0].copy()
 	for t in method_tables[1:]:
-		# Validate 1:1 on id to prevent row explosions
 		merged = merged.merge(
 			t,
 			on=["id", "peak", "gene"],
@@ -119,18 +114,16 @@ def merge_scores_onto_eval(
 	eval_df = pd.read_csv(eval_path, sep=None, engine="python")
 	n_before = len(eval_df)
 
-	# LEFT join scores onto eval; keep eval row count unchanged
 	merged = eval_df.merge(
 		scores_df,
 		on=["id", "peak", "gene"],
 		how="left",
-		validate="many_to_one", # eval may have duplicates; scores_df must be unique
+		validate="many_to_one",
 	)
 
 	if len(merged) != n_before:
 		raise RuntimeError(f"Row count changed after merge for {eval_path}: {n_before} -> {len(merged)}")
 
-	# Print hit rates per method col
 	method_cols = [c for c in scores_df.columns if c not in {"id", "peak", "gene"}]
 	hit_report = {c: float(merged[c].notna().mean()) for c in method_cols}
 	print(f"[merge {os.path.basename(eval_path)}] rows={n_before} score_hit_rate={hit_report}")
@@ -138,60 +131,62 @@ def merge_scores_onto_eval(
 	merged.to_csv(out_path, index=False)
 
 
+def _read_methods_csv(methods_csv: str) -> List[Tuple[str, str, str]]:
+	"""
+	Parse methods manifest CSV.
+	Returns list of (file_path, method_name, score_col) in row order.
+	Row order determines METHOD_COLS order in downstream evaluation.
+	"""
+	if not os.path.isfile(methods_csv):
+		raise FileNotFoundError(f"Methods CSV not found: {methods_csv}")
+	with open(methods_csv, newline="") as f:
+		reader = csv.DictReader(f)
+		required = {"file_path", "score_col", "method_name"}
+		if not required.issubset(set(reader.fieldnames or [])):
+			raise ValueError(
+				f"methods_csv must have columns: {required}. Got: {reader.fieldnames}"
+			)
+		rows = list(reader)
+	if not rows:
+		raise ValueError(f"methods_csv has no data rows: {methods_csv}")
+	return [(r["file_path"].strip(), r["method_name"].strip(), r["score_col"].strip()) for r in rows]
+
+
 def main(args):
 	AGG_PATH = args.agg_path
 	RES_PATH = args.res_path
 
-	# Parse columns
-	SCENT_COL = _opt_none(args.scent_col)
-	SCMM_COL = _opt_none(args.scmm_col)
-	SIGNAC_COL = _opt_none(args.signac_col)
-	CTAR_COL_Z = _opt_none(args.ctar_col_z)
-	CTAR_COL = _opt_none(args.ctar_col)
-	CTAR_FILT_COL_Z = _opt_none(args.ctar_filt_col_z)
-	CTAR_FILT_COL = _opt_none(args.ctar_filt_col)
+	raw_sources = _read_methods_csv(args.methods_csv)
 
-	# Build method sources
-	method_sources: List[Tuple[str, str, str]] = []  # (file, out_label, source_col)
-
-	def add(file_path: Optional[str], out_label: str, col: Optional[str]):
-		if file_path is None:
-			print(f"[skip] {out_label}: no file provided")
-			return
-		if not os.path.isfile(file_path):
-			print(f"[skip] {out_label}: file not found ({file_path})")
-			return
-		if col is None:
-			print(f"[skip] {out_label}: no score column specified")
-			return
-		method_sources.append((file_path, out_label, col))
-
-	add(args.scent_file, "scent", SCENT_COL)
-	add(args.scmm_file, "scmm", SCMM_COL)
-	add(args.signac_file, "signac", SIGNAC_COL)
-	add(args.ctar_file, "ctar_z", CTAR_COL_Z)
-	add(args.ctar_file, "ctar", CTAR_COL)
-	add(args.ctar_filt_file, "ctar_filt_z", CTAR_FILT_COL_Z)
-	add(args.ctar_filt_file, "ctar_filt", CTAR_FILT_COL)
+	method_sources: List[Tuple[str, str, str]] = []
+	for fp, name, col in raw_sources:
+		if not fp:
+			print(f"[skip] {name}: empty file_path")
+			continue
+		if not os.path.isfile(fp):
+			print(f"[skip] {name}: file not found ({fp})")
+			continue
+		if not col:
+			print(f"[skip] {name}: empty score_col")
+			continue
+		method_sources.append((fp, name, col))
 
 	if not method_sources:
-		raise RuntimeError("No method sources configured (all columns are None).")
+		raise RuntimeError("No method sources configured (all rows invalid).")
 
-	# Load + dedup each method table
 	print(f"Loading using {args.dedup}...")
 	method_tables = []
 	for fp, out_label, col in method_sources:
 		method_tables.append(load_method_scores(fp, out_label=out_label, source_col=col, dedup=args.dedup))
 
-	# Merge into union score table
 	scores_df = merge_method_tables(method_tables)
 
-	# Merge onto each eval file
 	eval_files = [f'{AGG_PATH}/{f}' for f in os.listdir(AGG_PATH) if os.path.isfile(f'{AGG_PATH}/{f}')]
 	if not eval_files:
 		raise RuntimeError(f"No eval files found in {AGG_PATH}")
 
 	print(f"Found {len(eval_files)} eval files in {AGG_PATH}")
+	os.makedirs(RES_PATH, exist_ok=True)
 	for eval_fp in eval_files:
 		label = os.path.basename(eval_fp).rsplit(".", maxsplit=1)[0]
 		out_fp = os.path.join(RES_PATH, f"{label}.csv")
@@ -200,29 +195,28 @@ def main(args):
 	print(f"Done. Wrote merged eval files to: {RES_PATH}")
 
 
-
 if __name__ == "__main__":
 	parser = argparse.ArgumentParser()
 
-	parser.add_argument("--scent_file", type=str, default="/projects/zhanglab/users/ana/multiome/results/scent/myscent_neatseq.txt")
-	parser.add_argument("--scmm_file", type=str, default="/projects/zhanglab/users/ana/multiome/results/scmultimap/scmultimap_neat_cis.csv")
-	parser.add_argument("--signac_file", type=str, default="/projects/zhanglab/users/ana/multiome/results/signac/signac_neatseq_links.csv")
-	parser.add_argument("--ctar_file", type=str, default="/projects/zhanglab/users/ana/multiome/results/ctar/final_eval/neat/neat_unfiltered_5.5.5.5.1000/cis_links_df.csv")
-	parser.add_argument("--ctar_filt_file", type=str, default="/projects/zhanglab/users/ana/multiome/results/ctar/final_eval/neat/neat_filtered_5.5.5.5.1000/cis_links_df.csv")
+	parser.add_argument(
+		"--methods_csv",
+		type=str,
+		required=True,
+		help="CSV with columns: file_path, score_col, method_name. "
+		     "Row order determines METHOD_COLS order in evaluation.",
+	)
+	parser.add_argument(
+		"--agg_path",
+		type=str,
+		default="/ocean/projects/bio240051p/aprieto/multiome/validation/overlap/pbmc",
+	)
+	parser.add_argument(
+		"--res_path",
+		type=str,
+		default="/ocean/projects/bio240051p/aprieto/multiome/validation/evaluation/pbmc",
+	)
+	parser.add_argument("--dataset_name", type=str, default="pbmc")
 
-	parser.add_argument("--scent_col", type=str, default="boot_basic_p")
-	parser.add_argument("--scmm_col", type=str, default="pval")
-	parser.add_argument("--signac_col", type=str, default="pvalue")
-	parser.add_argument("--ctar_col_z", type=str, default="5.5.5.5.1000_mcpval_z")
-	parser.add_argument("--ctar_col", type=str, default="5.5.5.5.1000_mcpval")
-	parser.add_argument("--ctar_filt_col_z", type=str, default="5.5.5.5.1000_mcpval_z")
-	parser.add_argument("--ctar_filt_col", type=str, default="5.5.5.5.1000_mcpval")
-
-	parser.add_argument("--agg_path", type=str, default='/projects/zhanglab/users/ana/multiome/validation/overlap/neat')
-	parser.add_argument("--res_path", type=str, default='/projects/zhanglab/users/ana/multiome/validation/evaluation/neat')
-	parser.add_argument("--dataset_name", type=str, default='neat')
-
-	# Dedup strategy
 	parser.add_argument(
 		"--dedup",
 		type=str,

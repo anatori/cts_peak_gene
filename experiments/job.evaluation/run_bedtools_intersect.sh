@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Defaults (match repo)
+# Defaults (PSC)
 DATASET_NAME="${DATASET_NAME:-neat}"
-EVAL_DIR="${EVAL_DIR:-/projects/zhanglab/users/ana/bedtools2/ana_bedfiles/validation/tissue_max}"
-UNION_DIR="${UNION_DIR:-/projects/zhanglab/users/ana/bedtools2/ana_bedfiles/validation/union_links/no_score}"
-OVERLAP_DIR="${OVERLAP_DIR:-/projects/zhanglab/users/ana/bedtools2/ana_bedfiles/validation/overlap/${DATASET_NAME}/no_score}"
-BEDTOOLS_BIN="${BEDTOOLS_BIN:-/projects/zhanglab/users/ana/bedtools2/bin/intersectBed}"
+EVAL_DIR="${EVAL_DIR:-/ocean/projects/bio240051p/aprieto/bedfiles/validation/tissue_max}"
+UNION_DIR="${UNION_DIR:-/ocean/projects/bio240051p/aprieto/bedfiles/validation/union_links}"
+OVERLAP_DIR="${OVERLAP_DIR:-/ocean/projects/bio240051p/aprieto/bedfiles/validation/overlap/${DATASET_NAME}}"
+BEDTOOLS_BIN="${BEDTOOLS_BIN:-bedtools}"
 
 # Parse CLI overrides
 while [[ $# -gt 0 ]]; do
@@ -25,8 +25,8 @@ UNION_BED="${UNION_BED:-${UNION_DIR}/${DATASET_NAME}.bed}"
 
 mkdir -p "${OVERLAP_DIR}"
 
-if [[ ! -x "${BEDTOOLS_BIN}" ]]; then
-  echo "ERROR: BEDTOOLS_BIN not executable at ${BEDTOOLS_BIN}" >&2
+if ! command -v "${BEDTOOLS_BIN}" &>/dev/null && [[ ! -x "${BEDTOOLS_BIN}" ]]; then
+  echo "ERROR: BEDTOOLS_BIN not found or not executable: ${BEDTOOLS_BIN}" >&2
   exit 1
 fi
 
