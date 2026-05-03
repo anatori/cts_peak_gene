@@ -15,7 +15,7 @@ SCRIPTS_DIR="${SCRIPTS_DIR:-${REPO_ROOT}/experiments/job.evaluation}"
 
 # Inputs / outputs
 MERGE_DIR="${MERGE_DIR:-/ocean/projects/bio240051p/aprieto/multiome/validation/evaluation/${DATASET_NAME}}"
-AURC_DIR="${AURC_DIR:-/ocean/projects/bio240051p/aprieto/multiome/validation/evaluation/tables/metrics_jitter_distance/${DATASET_NAME}}"
+AURC_DIR="${AURC_DIR:-/ocean/projects/bio240051p/aprieto/multiome/validation/tables/metrics_jitter_distance/${DATASET_NAME}}"
 # Update this path to wherever gencode.gtf.gz lives on PSC
 GENCODE_GTF="${GENCODE_GTF:-/ocean/projects/bio240051p/aprieto/reference/gencode.gtf.gz}"
 

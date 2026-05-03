@@ -69,7 +69,7 @@ tail -n +2 "${CONFIG_FILE}" | while IFS=, read -r CELLTYPE METHODS_CSV EVAL_BED;
   OVERLAP_DIR="/ocean/projects/bio240051p/aprieto/bedfiles/validation/overlap/${DATASET_NAME}/no_score/${CELLTYPE}"
   AGG_DIR="/ocean/projects/bio240051p/aprieto/multiome/validation/overlap/${DATASET_NAME}/${CELLTYPE}"
   MERGE_DIR="/ocean/projects/bio240051p/aprieto/multiome/validation/evaluation/${DATASET_NAME}/${CELLTYPE}"
-  AURC_DIR="/ocean/projects/bio240051p/aprieto/multiome/validation/evaluation/tables/metrics/${DATASET_NAME}/${CELLTYPE}"
+  AURC_DIR="/ocean/projects/bio240051p/aprieto/multiome/validation/tables/metrics/${DATASET_NAME}/${CELLTYPE}"
 
   # Step 1: make_union_bed
   echo "Submitting make_union_bed for ${CELLTYPE}..."
@@ -159,7 +159,7 @@ AURC_DEPS=$(paste -sd: "${TEMP_JOB_FILE}")
 rm -f "${TEMP_JOB_FILE}"
 
 if [[ -n "${AURC_DEPS}" ]]; then
-  BASE_AURC_DIR="/ocean/projects/bio240051p/aprieto/multiome/validation/evaluation/tables/metrics/${DATASET_NAME}"
+  BASE_AURC_DIR="/ocean/projects/bio240051p/aprieto/multiome/validation/tables/metrics/${DATASET_NAME}"
   echo ""
   echo "Submitting consolidation job..."
   CONSOLIDATE_JOB_ID=$(submit \

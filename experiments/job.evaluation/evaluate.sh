@@ -34,14 +34,14 @@ fi
 
 # Directory paths
 UNION_DIR="${UNION_DIR:-/ocean/projects/bio240051p/aprieto/bedfiles/validation/union_links/${FILTER_TAG}}"
-EVAL_DIR="${EVAL_DIR:-/ocean/projects/bio240051p/aprieto/bedfiles/validation/tissue_max/gtex_tissues}"
-OVERLAP_DIR="${OVERLAP_DIR:-/ocean/projects/bio240051p/aprieto/bedfiles/validation/overlap/${DATASET_NAME}/${FILTER_TAG}/gtex_tissues}"
-AGG_DIR="${AGG_DIR:-/ocean/projects/bio240051p/aprieto/multiome/validation/overlap_${FILTER_TAG}/${DATASET_NAME}/gtex_tissues}"
-MERGE_DIR="${MERGE_DIR:-/ocean/projects/bio240051p/aprieto/multiome/validation/evaluation_${FILTER_TAG}/${DATASET_NAME}/gtex_tissues}"
-AURC_DIR="${AURC_DIR:-/ocean/projects/bio240051p/aprieto/multiome/validation/evaluation/tables/metrics_jitter_no_dedup_${FILTER_TAG}/${DATASET_NAME}}"
+EVAL_DIR="${EVAL_DIR:-/ocean/projects/bio240051p/aprieto/bedfiles/validation/tissue_max/crispr_k562}"
+OVERLAP_DIR="${OVERLAP_DIR:-/ocean/projects/bio240051p/aprieto/bedfiles/validation/overlap/${DATASET_NAME}/${FILTER_TAG}/crispr_k562}"
+AGG_DIR="${AGG_DIR:-/ocean/projects/bio240051p/aprieto/multiome/validation/overlap_${FILTER_TAG}/${DATASET_NAME}/crispr_k562}"
+MERGE_DIR="${MERGE_DIR:-/ocean/projects/bio240051p/aprieto/multiome/validation/evaluation_${FILTER_TAG}/${DATASET_NAME}/crispr_k562}"
+AURC_DIR="${AURC_DIR:-/ocean/projects/bio240051p/aprieto/multiome/validation/tables/metrics_jitter_no_dedup_${FILTER_TAG}/${DATASET_NAME}}"
 
 DEDUP="${DEDUP:-min}"
-REFERENCE_METHOD="${REFERENCE_METHOD:-ctar_filt}"
+REFERENCE_METHOD="${REFERENCE_METHOD:-ctar_5.5.5.5}"
 N_BOOTSTRAP="${N_BOOTSTRAP:-1000}"
 
 echo "Evaluating ${DATASET_NAME}, ${FILTER_TAG}..."

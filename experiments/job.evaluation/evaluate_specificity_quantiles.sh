@@ -9,21 +9,21 @@ LOG_DIR="${LOG_DIR:-/ocean/projects/bio240051p/aprieto/logs}"
 CONDA_ENV="${CONDA_ENV:-ctar}"
 
 # Dataset / repo paths
-DATASET_NAME="${DATASET_NAME:-bmmc_donor1}"
+DATASET_NAME="${DATASET_NAME:-pbmc}"
 REPO_ROOT="${REPO_ROOT:-/ocean/projects/bio240051p/aprieto/cts_peak_gene}"
 SCRIPTS_DIR="${SCRIPTS_DIR:-${REPO_ROOT}/experiments/job.evaluation}"
 
 # Inputs / outputs
 MERGE_DIR="${MERGE_DIR:-/ocean/projects/bio240051p/aprieto/multiome/validation/evaluation/${DATASET_NAME}}"
-AURC_DIR="${AURC_DIR:-/ocean/projects/bio240051p/aprieto/multiome/validation/evaluation/tables/metrics_jitter_specificity/${DATASET_NAME}}"
+AURC_DIR="${AURC_DIR:-/ocean/projects/bio240051p/aprieto/multiome/validation/tables/metrics_jitter_specificity/${DATASET_NAME}}"
 TRUTH_SPEC_PATH="${TRUTH_SPEC_PATH:-}"
-GENE_SPEC_PATH="${GENE_SPEC_PATH:-}"
-PEAK_SPEC_PATH="${PEAK_SPEC_PATH:-}"
-SUBTYPES_MAP_PATH="${SUBTYPES_MAP_PATH:-}"
+GENE_SPEC_PATH="${GENE_SPEC_PATH:-/ocean/projects/bio240051p/aprieto/multiome/analysis/ct_specificity_with_vectors/rna/${DATASET_NAME}_specificity.csv}"
+PEAK_SPEC_PATH="${PEAK_SPEC_PATH:-/ocean/projects/bio240051p/aprieto/multiome/analysis/ct_specificity_with_vectors/atac/${DATASET_NAME}_specificity.csv}"
+SUBTYPES_MAP_PATH="${SUBTYPES_MAP_PATH:-/ocean/projects/bio240051p/aprieto/multiome/analysis/ct_specificity/celltype_map/${DATASET_NAME}_map.csv}"
 
 # Evaluation settings
 # METHOD_COLS can be set explicitly or derived from a methods manifest CSV
-METHODS_CSV="${METHODS_CSV:-}"
+METHODS_CSV="${METHODS_CSV:-${SCRIPTS_DIR}/methods_manifests/pbmc_methods.csv}"
 if [[ -z "${METHOD_COLS:-}" && -n "${METHODS_CSV}" ]]; then
   METHOD_COLS=$(python3 -c "
 import csv, sys
@@ -35,30 +35,29 @@ if not names:
 print(','.join(names))
 ")
 fi
-METHOD_COLS="${METHOD_COLS:-scmm,signac,ctar_filt_z,ctar_filt}"
-REFERENCE_METHOD="${REFERENCE_METHOD:-ctar_filt}"
+REFERENCE_METHOD="${REFERENCE_METHOD:-ctar_5.5.5.5}"
 N_BOOTSTRAP="${N_BOOTSTRAP:-1000}"
 
 # Optional specificity-script settings
 GTEX_SCORE_THRES="${GTEX_SCORE_THRES:-0.5}"
 ABC_SCORE_THRES="${ABC_SCORE_THRES:-0.2}"
-SPECIFICITY_COL="${SPECIFICITY_COL:-specificity}"
+SPECIFICITY_COL="${SPECIFICITY_COL:-link_specificity_joint}"
 GENE_SPEC_COL="${GENE_SPEC_COL:-specificity}"
 PEAK_SPEC_COL="${PEAK_SPEC_COL:-specificity}"
-SPECIFICITY_QUANTILES="${SPECIFICITY_QUANTILES:-0,0.25,0.5,0.75,1}"
+SPECIFICITY_QUANTILES="${SPECIFICITY_QUANTILES:-0,0.5,1}"
 SPECIFICITY_QUANTILE_LABELS="${SPECIFICITY_QUANTILE_LABELS:-}"
 QUANTILE_RANK_METHOD="${QUANTILE_RANK_METHOD:-average}"
 MIN_BIN_N="${MIN_BIN_N:-100}"
-MIN_BIN_POS="${MIN_BIN_POS:-10}"
+MIN_BIN_POS="${MIN_BIN_POS:-5}"
 PRINT_BIN_SUMMARY="${PRINT_BIN_SUMMARY:-0}"
 COMPUTE_OVERALL="${COMPUTE_OVERALL:-0}"
 DROP_MISSING_METHOD_SCORES="${DROP_MISSING_METHOD_SCORES:-0}"
 FORCE_RECOMPUTE_SPECIFICITY="${FORCE_RECOMPUTE_SPECIFICITY:-0}"
 PEAK_COL="${PEAK_COL:-peak}"
 GENE_COL="${GENE_COL:-gene}"
-MERGE_TRUTH_ID_COL="${MERGE_TRUTH_ID_COL:-tenk10k_id}"
+MERGE_TRUTH_ID_COL="${MERGE_TRUTH_ID_COL:-gtex_id}"
 MERGE_TRUTH_GENE_COL="${MERGE_TRUTH_GENE_COL:-gt_gene}"
-TRUTH_ID_COL="${TRUTH_ID_COL:-tenk10k_id}"
+TRUTH_ID_COL="${TRUTH_ID_COL:-gtex_id}"
 TRUTH_GENE_COL="${TRUTH_GENE_COL:-gt_gene}"
 TRUTH_SPEC_COL="${TRUTH_SPEC_COL:-specificity}"
 TRUTH_DUPLICATE_STRATEGY="${TRUTH_DUPLICATE_STRATEGY:-error}"
@@ -107,7 +106,8 @@ fi
 
 echo "Submitting calculate_auerc_specificity_quantiles.py ..."
 AURC_JOB_ID=$(submit \
-  -t 3-00:00:00 --mem=128G -J "auerc_spec_${DATASET_NAME}" \
+  -A bio240051p \
+  -t 3-00:00:00 --ntasks-per-node=64 -J "auerc_spec_${DATASET_NAME}" \
   -o "${LOG_DIR}/auerc_spec_${DATASET_NAME}-%j.out" \
   -e "${LOG_DIR}/auerc_spec_${DATASET_NAME}-%j.err" \
   --wrap "source ~/.bashrc && conda activate ${CONDA_ENV} && \
