@@ -17,9 +17,6 @@ def _parse_float_list(s: str):
     parts = [p.strip() for p in str(s).split(",") if p.strip() != ""]
     return [float(p) for p in parts]
 
-def _parse_bool(x) -> bool:
-    return str(x).lower() in {"1", "true", "t", "yes", "y"}
-
 def main(args):
 
     MERGE_PATH = args.merge_path
@@ -27,15 +24,11 @@ def main(args):
     METHOD_COLS = [m.strip() for m in args.method_cols.split(",")]
     GOLD_COL = args.gold_col
     REFERENCE_METHOD = args.reference_method
-    FILLNA = _parse_bool(args.fillna)
-    SCORES_HIGHER_IS_BETTER = _parse_bool(args.scores_higher_is_better)
+    FILLNA = str(args.fillna).lower() in {"1", "true", "t", "yes", "y"}
     N_BOOTSTRAP = int(args.n_bootstrap)
     RES_PATH = args.res_path
     DATASET_NAME = args.dataset_name
-    PVALS_SMALLER_IS_BETTER = not SCORES_HIGHER_IS_BETTER
-    FILLNA_VALUE = 0.0 if SCORES_HIGHER_IS_BETTER else 1.0
-    CLIP_MIN = None if SCORES_HIGHER_IS_BETTER else 1e-300
-    SCORE_AGG = "max" if SCORES_HIGHER_IS_BETTER else "min"
+    HANDLE_DUP = args.handle_dup
 
     EQTL_PIP_THRES_LIST = _parse_float_list(args.eqtl_pip_thres_list)
     if len(EQTL_PIP_THRES_LIST) == 0:
@@ -51,8 +44,7 @@ def main(args):
     print("With methods:", METHOD_COLS, flush=True)
     print("GTEx/oneK1K pip thresholds:", EQTL_PIP_THRES_LIST, flush=True)
     print("Neg threshold:", EQTL_NEG_THRES, flush=True)
-    print("Fillna:", FILLNA, "Bootstrap:", N_BOOTSTRAP, flush=True)
-    print("Scores higher is better:", SCORES_HIGHER_IS_BETTER, flush=True)
+    print("Fillna:", FILLNA, "Bootstrap:", N_BOOTSTRAP, "Dedup:", HANDLE_DUP, flush=True)
 
 
     for file in files:
@@ -65,12 +57,14 @@ def main(args):
 
         is_eqtl = (label.startswith("gtex") or label.startswith("onek1k"))
 
-        # for gtex/onek1k run BOTH modes for EACH pip threshold
+        # for gtex/onek1k run modes for EACH pip threshold
         if is_eqtl:
             run_plan = []
             for pip_thres in EQTL_PIP_THRES_LIST:
-                run_plan.append((pip_thres, "all"))
-                run_plan.append((pip_thres, f"str_pos{pip_thres}_neg{EQTL_NEG_THRES}"))
+                if args.eqtl_filter_mode in ("both", "all_only"):
+                    run_plan.append((pip_thres, "all"))
+                if args.eqtl_filter_mode in ("both", "strict_only"):
+                    run_plan.append((pip_thres, f"str_pos{pip_thres}_neg{EQTL_NEG_THRES}"))
         else:
             run_plan = [(None, "all")]
 
@@ -116,7 +110,7 @@ def main(args):
             metric_specs = ctar.metrics.build_default_metric_specs(
                 merge_df,
                 gold_col="label",
-                pvals_smaller_is_better=PVALS_SMALLER_IS_BETTER,
+                pvals_smaller_is_better=True,
                 early_R=0.2
             )
 
@@ -128,15 +122,12 @@ def main(args):
                 reference_method=REFERENCE_METHOD,
                 n_bootstrap=N_BOOTSTRAP,
                 fillna=FILLNA,
-                fillna_value=FILLNA_VALUE,
                 jitter_amount=1e-12,
-                clip_min=CLIP_MIN,
                 seeds=list(range(10)),
-                handle_dup="consensus",
+                handle_dup=HANDLE_DUP,
                 dup_key_cols=["pg_pair"],
-                score_agg=SCORE_AGG,
-                tie="zero",
                 stratified_bootstrap=True,
+                tie="zero",
             )
 
             # annotate output
@@ -170,8 +161,21 @@ if __name__ == "__main__":
     parser.add_argument("--gold_col", type=str, default="label")
     parser.add_argument("--reference_method", type=str, default="ctar_filt")
     parser.add_argument("--fillna", type=str, default=True)
-    parser.add_argument("--scores_higher_is_better", type=str, default=False)
     parser.add_argument("--n_bootstrap", type=str, default="1000")
+    
+    parser.add_argument("--handle_dup", 
+        type=str, 
+        default=None,
+        choices=[None, 'any', 'consensus', 'proportion'],
+        help="Handle deduplication of evaluation pairs."
+    )
+
+    parser.add_argument("--eqtl_filter_mode",
+        type=str,
+        default="both",
+        choices=["both", "all_only", "strict_only"],
+        help="For eQTL datasets: run both modes, only 'all', or only strict pos/neg filtering."
+    )
 
     parser.add_argument("--eqtl_score_thres", type=str, default="0.5")
     parser.add_argument("--abc_score_thres", type=str, default="0.2")
