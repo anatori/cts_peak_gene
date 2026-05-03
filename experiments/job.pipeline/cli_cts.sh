@@ -32,25 +32,17 @@ else
     ARRAY_OPT="--array=0-$((TOTAL_NUM_BATCHES - 1))%${MAX_CONCURRENT}"
 fi
 
-# mkdir -p ${TARGET_PATH}
-# cp /ocean/projects/bio240051p/aprieto/multiome/results/ctar/final_eval/${MULTIOME_DATASET}/${MULTIOME_DATASET}_unfiltered_5.5.5.5.1000/cis_links_df.csv \
-#    ${TARGET_PATH}
-
-
-# ###########################################################################################
-# ######                                  Generate Links                               ######
-# ###########################################################################################
-
-# echo "Submitting $BIN_CONFIG generate_links job..."
-# LINKS_JOB=$(sbatch --parsable -p $PARTITION -t 1-00:00:00 \
-#   -A bio240051p \
-#   --ntasks-per-node=32 \
-#   -o /ocean/projects/bio240051p/aprieto/logs/links_%j.err -J "links_$BIN_CONFIG" \
-#   --wrap "source ~/.bashrc && conda activate ctar && python /ocean/projects/bio240051p/aprieto/cts_peak_gene/CLI_ctar.py \
-#           --job generate_links --job_id \$SLURM_JOB_ID --multiome_file $MULTIOME_FILE --batch_size $BATCH_SIZE \
-#           --binning_config $BIN_CONFIG --binning_type $BIN_TYPE --genome_file $GENOME_FILE --target_path $TARGET_PATH \
-#           --pybedtools_path $PYBEDTOOLS_PATH --results_path $RESULTS_PATH")
-# echo "Links job ID: $LINKS_JOB"
+CP_FILE=/ocean/projects/bio240051p/aprieto/multiome/results/ctar/final_eval/${MULTIOME_DATASET}/${MULTIOME_DATASET}_unfiltered_5.5.5.5.1000/cis_links_df.csv
+echo "Submitting CP job from ${CP_FILE} ..."
+CP_JOB=$(sbatch --parsable -p $PARTITION -t 1-00:00:00 \
+  -A bio240051p \
+  --ntasks-per-node=$N_CORES \
+  -o /ocean/projects/bio240051p/aprieto/logs/cp_%j.err -J "cis_$BIN_CONFIG" \
+  --wrap "source ~/.bashrc \
+        mkdir -p ${TARGET_PATH}
+        cut -d ',' -f 1-3 ${CP_FILE} \
+            > ${TARGET_PATH}/cis_links_df.csv")
+echo "CP job ID: $CP_JOB"
 
 ###########################################################################################
 ######                            Compute cis coefficients                           ######
@@ -59,6 +51,7 @@ fi
 echo "Submitting $BIN_CONFIG compute_cis_only job..."
 CIS_JOB=$(sbatch --parsable -p $PARTITION -t 1-00:00:00 \
   -A bio240051p \
+  --dependency=afterok:${CP_JOB} \
   --ntasks-per-node=$N_CORES \
   -o /ocean/projects/bio240051p/aprieto/logs/cis_%j.err -J "cis_$BIN_CONFIG" \
   --wrap "source ~/.bashrc && conda activate ctar && python /ocean/projects/bio240051p/aprieto/cts_peak_gene/CLI_ctar.py \
@@ -125,6 +118,7 @@ if [ "$USE_INF_MODE" = true ]; then
         
         CTRL_JOB=$(sbatch --parsable -p $PARTITION -t 2-00:00:00 \
             -A bio240051p \
+            --dependency=afterok:${CP_JOB} \
             --ntasks-per-node=$N_CORES \
             --array=0-$((TOTAL_NUM_BATCHES - 1))%${MAX_CONCURRENT} \
             -o /ocean/projects/bio240051p/aprieto/logs/ctrl_%A_%a.err \
@@ -147,6 +141,7 @@ else
     echo "Submitting $BIN_CONFIG compute_ctrl_only job with $TOTAL_NUM_BATCHES batches..."
     CTRL_JOB=$(sbatch --parsable -p $PARTITION -t 1-00:00:00 $ARRAY_OPT \
       -A bio240051p \
+      --dependency=afterok:${CP_JOB} \
       --ntasks-per-node=$N_CORES \
       -o /ocean/projects/bio240051p/aprieto/logs/ctrl_%A_%a.err -J "ctrl_$BIN_CONFIG" \
       --wrap "source ~/.bashrc && conda activate ctar && python /ocean/projects/bio240051p/aprieto/cts_peak_gene/CLI_ctar.py \
@@ -178,7 +173,7 @@ echo ""
 echo "================================"
 echo "Pipeline submitted successfully!"
 echo "================================"
-echo "Links job:     $LINKS_JOB"
+echo "CP job:       $CP_JOB"
 echo "Cis job:      $CIS_JOB"
 echo "Ctrl job:     $CTRL_JOB"
 echo "P-value job:  $PVAL_JOB"
