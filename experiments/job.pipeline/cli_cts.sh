@@ -18,6 +18,7 @@ FLAG_LL='False'
 FLAG_SE='True'
 FLAG_CORR='True'
 N_CORES=64
+RANDOM_SEED=777
 
 IFS='.' read -r b1 b2 b3 b4 rest <<< "$BIN_CONFIG"
 if [[ "$b3" == "inf" && "$b4" == "inf" ]]; then
@@ -64,7 +65,7 @@ CIS_JOB=$(sbatch --parsable -p $PARTITION -t 1-00:00:00 \
           --job compute_cis_only --multiome_file $MULTIOME_FILE --batch_size $BATCH_SIZE \
           --binning_config $BIN_CONFIG --binning_type $BIN_TYPE --genome_file $GENOME_FILE --target_path $TARGET_PATH \
           --results_path $RESULTS_PATH --pybedtools_path $PYBEDTOOLS_PATH --n_cores $N_CORES \
-          --flag_ll $FLAG_LL --flag_se $FLAG_SE --flag_corr $FLAG_CORR")
+          --flag_ll $FLAG_LL --flag_se $FLAG_SE --flag_corr $FLAG_CORR --random_seed $RANDOM_SEED")
 echo "Cis job ID: $CIS_JOB"
 
 ###########################################################################################
@@ -132,10 +133,10 @@ if [ "$USE_INF_MODE" = true ]; then
                     --job compute_ctrl_only --multiome_file $MULTIOME_FILE \
                     --batch_size $BATCH_SIZE --target_path $TARGET_PATH --results_path $RESULTS_PATH \
                     --binning_config $BIN_CONFIG --binning_type $BIN_TYPE --genome_file $GENOME_FILE --pybedtools_path $PYBEDTOOLS_PATH \
-                    --n_cores $N_CORES --flag_ll $FLAG_LL --flag_se $FLAG_SE --flag_corr $FLAG_CORR")
+                    --n_cores $N_CORES --flag_ll $FLAG_LL --flag_se $FLAG_SE --flag_corr $FLAG_CORR --random_seed $RANDOM_SEED")
         echo "Ctrl job ID: $CTRL_JOB"
         CTRL_JOB_FOR_DEPENDENCY=$CTRL_JOB
-        
+
     else
         echo "ERROR: Need $TOTAL_NUM_BATCHES jobs but max array size is $MAX_ARRAY_SIZE"
         echo "Increase BATCH_SIZE or use parallel arrays approach"
@@ -152,7 +153,7 @@ else
               --job compute_ctrl_only --multiome_file $MULTIOME_FILE \
               --batch_size $BATCH_SIZE --target_path $TARGET_PATH --results_path $RESULTS_PATH \
               --binning_config $BIN_CONFIG --binning_type $BIN_TYPE --genome_file $GENOME_FILE --pybedtools_path $PYBEDTOOLS_PATH \
-              --n_cores $N_CORES --flag_ll $FLAG_LL --flag_se $FLAG_SE --flag_corr $FLAG_CORR")
+              --n_cores $N_CORES --flag_ll $FLAG_LL --flag_se $FLAG_SE --flag_corr $FLAG_CORR --random_seed $RANDOM_SEED")
     echo "Ctrl job ID: $CTRL_JOB"
     CTRL_JOB_FOR_DEPENDENCY=$CTRL_JOB
 fi
