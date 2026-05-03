@@ -1,0 +1,17 @@
+file_path,score_col,method_name
+/ocean/projects/bio240051p/aprieto/multiome/results/scent/myscent_shareseq.txt,boot_basic_p,scent
+/ocean/projects/bio240051p/aprieto/multiome/results/signac/unfiltered/signac_shareseq_links.csv,pvalue,signac
+/ocean/projects/bio240051p/aprieto/multiome/results/scmultimap/unfiltered/scmultimap_shareseq_cis.csv,pval,scmm
+/ocean/projects/bio240051p/aprieto/multiome/results/scmultimap/scmm_ctrl/unfiltered/res_df/scmultimap_shareseq.csv,scmm_mcpval,ctar_scmm_5.5.5.5
+/ocean/projects/bio240051p/aprieto/multiome/results/ctar/pr_eval/shareseq/shareseq_unfiltered_5.5.5.5.1000/cis_links_df.csv,5.5.5.5.1000_mcpval,ctar_pr_5.5.5.5
+/ocean/projects/bio240051p/aprieto/multiome/results/ctar/pr_eval/shareseq/shareseq_unfiltered_5.5.5.5.1000/cis_links_df.csv,5.5.5.5.1000_mcpval_z,ctar_pr_5.5.5.5_mcz
+/ocean/projects/bio240051p/aprieto/multiome/results/ctar/corr_eval/shareseq/shareseq_unfiltered_1.1.1.1.1000/cis_links_df.csv,1.1.1.1.1000_mcpval,ctar_1.1.1.1
+/ocean/projects/bio240051p/aprieto/multiome/results/ctar/corr_eval/shareseq/shareseq_unfiltered_1.1.1.1.1000/cis_links_df.csv,1.1.1.1.1000_zpval,ctar_1.1.1.1_zpval
+/ocean/projects/bio240051p/aprieto/multiome/results/ctar/corr_eval/shareseq/shareseq_unfiltered_3.3.3.3.1000/cis_links_df.csv,3.3.3.3.1000_mcpval,ctar_3.3.3.3
+/ocean/projects/bio240051p/aprieto/multiome/results/ctar/corr_eval/shareseq/shareseq_unfiltered_3.3.3.3.1000/cis_links_df.csv,3.3.3.3.1000_zpval,ctar_3.3.3.3_zpval
+/ocean/projects/bio240051p/aprieto/multiome/results/ctar/corr_eval/shareseq/shareseq_unfiltered_5.5.5.5.1000/cis_links_df.csv,5.5.5.5.1000_mcpval,ctar_5.5.5.5
+/ocean/projects/bio240051p/aprieto/multiome/results/ctar/corr_eval/shareseq/shareseq_unfiltered_5.5.5.5.1000/cis_links_df.csv,5.5.5.5.1000_zpval,ctar_5.5.5.5_zpval
+/ocean/projects/bio240051p/aprieto/multiome/results/ctar/corr_eval/shareseq/shareseq_unfiltered_10.10.10.10.1000/cis_links_df.csv,10.10.10.10.1000_mcpval,ctar_10.10.10.10
+/ocean/projects/bio240051p/aprieto/multiome/results/ctar/corr_eval/shareseq/shareseq_unfiltered_10.10.10.10.1000/cis_links_df.csv,10.10.10.10.1000_zpval,ctar_10.10.10.10_zpval
+/ocean/projects/bio240051p/aprieto/multiome/results/ctar/corr_eval/shareseq/shareseq_unfiltered_5.5.inf.inf.1000/cis_links_df.csv,5.5.inf.inf.1000_mcpval,ctar_inf
+/ocean/projects/bio240051p/aprieto/multiome/results/ctar/corr_eval/shareseq/shareseq_unfiltered_5.5.inf.inf.1000/cis_links_df.csv,5.5.inf.inf.1000_zpval,ctar_inf_zpval
