@@ -25,7 +25,6 @@ EVAL_NAME="${EVAL_NAME:-onek1k}"
 DEDUP="${DEDUP:-min}"
 REFERENCE_METHOD="${REFERENCE_METHOD:-ctar_filt}"
 N_BOOTSTRAP="${N_BOOTSTRAP:-1000}"
-BEDTOOLS_BIN="${BEDTOOLS_BIN:-bedtools}"
 
 mkdir -p "${LOG_DIR}"
 
@@ -94,7 +93,8 @@ tail -n +2 "${CONFIG_FILE}" | while IFS=, read -r CELLTYPE METHODS_CSV EVAL_BED;
     -o "${LOG_DIR}/intersect_${DATASET_NAME}_${CELLTYPE}-%j.out" \
     -e "${LOG_DIR}/intersect_${DATASET_NAME}_${CELLTYPE}-%j.err" \
     --wrap "mkdir -p '${OVERLAP_DIR}' && \
-            '${BEDTOOLS_BIN}' intersect -wo \
+            module load bedtools && \
+            bedtools intersect -wo \
               -a '${EVAL_BED}' \
               -b '${UNION_DIR}/${DATASET_NAME}_${CELLTYPE}.bed' \
               > '${OVERLAP_DIR}/${EVAL_NAME}_${DATASET_NAME}_${CELLTYPE}.bed'")
