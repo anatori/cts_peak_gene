@@ -9,7 +9,7 @@ LOG_DIR="${LOG_DIR:-/ocean/projects/bio240051p/aprieto/logs}"
 CONDA_ENV="${CONDA_ENV:-ctar}"
 
 # Dataset name used consistently across steps
-DATASET_NAME="${DATASET_NAME:-pbmc}"
+DATASET_NAME="${DATASET_NAME:-brain}"
 FILTER_TAG="${FILTER_TAG:-unfiltered}"
 
 # Paths
@@ -17,7 +17,7 @@ REPO_ROOT="${REPO_ROOT:-/ocean/projects/bio240051p/aprieto/cts_peak_gene}"
 SCRIPTS_DIR="${SCRIPTS_DIR:-${REPO_ROOT}/experiments/job.evaluation}"
 
 # Methods manifest CSV: columns file_path, score_col, method_name (row order = METHOD_COLS order)
-METHODS_CSV="${METHODS_CSV:-${SCRIPTS_DIR}/methods_manifests/pbmc_methods.csv}"
+METHODS_CSV="${METHODS_CSV:-${SCRIPTS_DIR}/methods_manifests/brain_methods.csv}"
 
 # Derive METHOD_COLS from the manifest (override by setting METHOD_COLS explicitly)
 if [[ -z "${METHOD_COLS:-}" ]]; then
@@ -34,10 +34,10 @@ fi
 
 # Directory paths
 UNION_DIR="${UNION_DIR:-/ocean/projects/bio240051p/aprieto/bedfiles/validation/union_links/${FILTER_TAG}}"
-EVAL_DIR="${EVAL_DIR:-/ocean/projects/bio240051p/aprieto/bedfiles/validation/tissue_max/crispr_k562}"
-OVERLAP_DIR="${OVERLAP_DIR:-/ocean/projects/bio240051p/aprieto/bedfiles/validation/overlap/${DATASET_NAME}/${FILTER_TAG}/crispr_k562}"
-AGG_DIR="${AGG_DIR:-/ocean/projects/bio240051p/aprieto/multiome/validation/overlap_${FILTER_TAG}/${DATASET_NAME}/crispr_k562}"
-MERGE_DIR="${MERGE_DIR:-/ocean/projects/bio240051p/aprieto/multiome/validation/evaluation_${FILTER_TAG}/${DATASET_NAME}/crispr_k562}"
+EVAL_DIR="${EVAL_DIR:-/ocean/projects/bio240051p/aprieto/bedfiles/validation/tissue_max/gtex_tissues/gtex_cereb}"
+OVERLAP_DIR="${OVERLAP_DIR:-/ocean/projects/bio240051p/aprieto/bedfiles/validation/overlap/${DATASET_NAME}/${FILTER_TAG}/gtex_cereb}"
+AGG_DIR="${AGG_DIR:-/ocean/projects/bio240051p/aprieto/multiome/validation/overlap_${FILTER_TAG}/${DATASET_NAME}/gtex_best}"
+MERGE_DIR="${MERGE_DIR:-/ocean/projects/bio240051p/aprieto/multiome/validation/evaluation_${FILTER_TAG}/${DATASET_NAME}/gtex_tissues/gtex_best}"
 AURC_DIR="${AURC_DIR:-/ocean/projects/bio240051p/aprieto/multiome/validation/tables/metrics_jitter_no_dedup_${FILTER_TAG}/${DATASET_NAME}}"
 
 DEDUP="${DEDUP:-min}"
@@ -55,6 +55,7 @@ submit() {
 
 echo "Submitting make_union_bed.py ..."
 UNION_JOB_ID=$(submit \
+  -A bio250028p \
   -t 1-00:00:00 --ntasks-per-node=6 -J "union_${DATASET_NAME}" \
   -o "${LOG_DIR}/union_${DATASET_NAME}-%j.out" \
   -e "${LOG_DIR}/union_${DATASET_NAME}-%j.err" \
@@ -68,6 +69,7 @@ echo "UNION_JOB_ID=${UNION_JOB_ID}"
 
 echo "Submitting bedtools intersect (after union) ..."
 INTERSECT_JOB_ID=$(submit \
+  -A bio250028p \
   --dependency=afterok:${UNION_JOB_ID} \
   -t 0-02:00:00 --ntasks-per-node=4 -J "intersect_${DATASET_NAME}" \
   -o "${LOG_DIR}/intersect_${DATASET_NAME}-%j.out" \
@@ -82,6 +84,7 @@ echo "INTERSECT_JOB_ID=${INTERSECT_JOB_ID}"
 
 echo "Submitting aggregate_overlaps.py (after intersect) ..."
 AGG_JOB_ID=$(submit \
+  -A bio250028p \
   --dependency=afterok:${INTERSECT_JOB_ID} \
   -t 0-06:00:00 --ntasks-per-node=32 -J "aggregate_${DATASET_NAME}" \
   -o "${LOG_DIR}/aggregate_${DATASET_NAME}-%j.out" \
@@ -96,6 +99,7 @@ echo "AGG_JOB_ID=${AGG_JOB_ID}"
 
 echo "Submitting merge_methods.py ..."
 MERGE_JOB_ID=$(submit \
+  -A bio250028p \
   --dependency=afterok:${AGG_JOB_ID} \
   -t 1-00:00:00 --ntasks-per-node=64 -J "merge_${DATASET_NAME}" \
   -o "${LOG_DIR}/merge_${DATASET_NAME}-%j.out" \
@@ -112,6 +116,7 @@ echo "MERGE_JOB_ID=${MERGE_JOB_ID}"
 
 echo "Submitting calculate_auerc_seeds.py (after merge) ..."
 AURC_JOB_ID=$(submit \
+  -A bio250028p \
   --dependency=afterok:${MERGE_JOB_ID} \
   -t 3-00:00:00 --ntasks-per-node=64 -J "auerc_${DATASET_NAME}" \
   -o "${LOG_DIR}/auerc_${DATASET_NAME}-%j.out" \

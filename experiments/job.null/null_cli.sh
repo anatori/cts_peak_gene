@@ -10,7 +10,7 @@ GENOME_FILE=/ocean/projects/bio240051p/aprieto/bedfiles/ref/GRCh38.p14.genome.fi
 BIN_TYPE='mean_var'
 PYBEDTOOLS_PATH=/opt/packages/bedtools/2.30.0
 BATCH_SIZE=100000
-RESULTS_PATH=/ocean/projects/bio240051p/aprieto/multiome/simulations/null_pbmc/celltype_specificity/corr/${BIN_PREFIX}
+RESULTS_PATH=${TARGET_PATH}
 PARTITION="RM-shared"
 MAX_CONCURRENT=200
 FLAG_LL='False'
@@ -54,7 +54,7 @@ fi
 
 echo "Submitting $BIN_CONFIG compute_cis_only job..."
 CIS_JOB=$(sbatch --parsable -p $PARTITION -t 1-00:00:00 \
-  -A bio240051p \
+  -A bio250028p \
   --ntasks-per-node=$N_CORES \
   -o /ocean/projects/bio240051p/aprieto/logs/cis_%j.err -J "cis_$BIN_CONFIG" \
   --wrap "source ~/.bashrc && conda activate ctar && python /ocean/projects/bio240051p/aprieto/cts_peak_gene/CLI_ctar.py \
@@ -121,7 +121,7 @@ if [ "$USE_INF_MODE" = true ]; then
         echo "Submitting single array job with $TOTAL_NUM_BATCHES tasks..."
         
         CTRL_JOB=$(sbatch --parsable -p $PARTITION -t 2-00:00:00 \
-            -A bio240051p \
+            -A bio250028p \
             --ntasks-per-node=$N_CORES \
             --array=0-$((TOTAL_NUM_BATCHES - 1))%${MAX_CONCURRENT} \
             -o /ocean/projects/bio240051p/aprieto/logs/ctrl_%A_%a.err \
@@ -144,7 +144,7 @@ if [ "$USE_INF_MODE" = true ]; then
 else
     echo "Submitting $BIN_CONFIG compute_ctrl_only job with $TOTAL_NUM_BATCHES batches..."
     CTRL_JOB=$(sbatch --parsable -p $PARTITION -t 1-00:00:00 $ARRAY_OPT \
-      -A bio240051p \
+      -A bio250028p \
       --ntasks-per-node=$N_CORES \
       -o /ocean/projects/bio240051p/aprieto/logs/ctrl_%A_%a.err -J "ctrl_$BIN_CONFIG" \
       --wrap "source ~/.bashrc && conda activate ctar && python /ocean/projects/bio240051p/aprieto/cts_peak_gene/CLI_ctar.py \
@@ -163,7 +163,7 @@ fi
 
 echo "Submitting $BIN_CONFIG compute_pval job..."
 PVAL_JOB=$(sbatch --parsable -p $PARTITION -t 00:30:00 \
-  -A bio240051p \
+  -A bio250028p \
   --dependency=afterok:${CIS_JOB}:${CTRL_JOB} \
   --ntasks-per-node=12 \
   --mail-type=END --mail-user=asprieto@andrew.cmu.edu \

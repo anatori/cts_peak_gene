@@ -1,6 +1,7 @@
 file_path,score_col,method_name
 /ocean/projects/bio240051p/aprieto/multiome/results/scent/pgboost_scent/scent_pbmc_all.csv,boot_basic_p,scent
 /ocean/projects/bio240051p/aprieto/multiome/results/signac/unfiltered/signac_pbmc_links.csv,pvalue,signac
+/ocean/projects/bio240051p/aprieto/multiome/results/signac/unfiltered/signac_pbmc_links.csv,pvalue_os,signac_os
 /ocean/projects/bio240051p/aprieto/multiome/results/scmultimap/unfiltered/scmultimap_pbmc_cis.csv,pval,scmm
 /ocean/projects/bio240051p/aprieto/multiome/results/scmultimap/scmm_ctrl/unfiltered/res_df/scmultimap_pbmc.csv,scmm_mcpval,ctar_scmm_5.5.5.5
 /ocean/projects/bio240051p/aprieto/multiome/results/ctar/pr_eval/pbmc/pbmc_unfiltered_5.5.5.5.1000/cis_links_df.csv,5.5.5.5.1000_mcpval,ctar_pr_5.5.5.5
