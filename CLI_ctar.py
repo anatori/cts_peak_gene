@@ -10,6 +10,7 @@ import pickle
 
 import time
 import argparse
+import scanpy as sc
 
 
 
@@ -242,6 +243,19 @@ def main(args):
             results_folder = f'{TARGET_PATH}'
         print(f"# Setting results_folder to {results_folder}")
 
+    if FLAG_CORR and JOB in ["compute_ctar", "compute_cis_only", "compute_ctrl_only"]:
+        print("# Normalizing for Pearson correlation (normalize_total + log1p)...")
+        adata_rna_tmp = adata_rna.copy()
+        adata_atac_tmp = adata_atac.copy()
+        sc.pp.normalize_total(adata_rna_tmp, layer='counts')
+        sc.pp.log1p(adata_rna_tmp)
+        sc.pp.normalize_total(adata_atac_tmp, layer='counts')
+        sc.pp.log1p(adata_atac_tmp)
+        rna_norm = adata_rna_tmp.X
+        atac_norm = adata_atac_tmp.X
+        del adata_rna_tmp, adata_atac_tmp
+        print(f"# rna_norm: {rna_norm.shape}, atac_norm: {atac_norm.shape}")
+
     if RESULTS_PATH and JOB in ["compute_cis_only", "compute_ctrl_only", "generate_controls", "compute_pval"]: 
 
         print("# Loading --results_path")
@@ -449,9 +463,9 @@ def main(args):
                 i: list(range(i * dic_batch_size, min((i + 1) * dic_batch_size, len(ctrl_links_array))))
                 for i in ctrl_links_dic.keys()
             }
-            
-            rna_sparse = adata_rna.layers['counts']
-            atac_sparse = adata_atac.layers['counts']
+
+            rna_sparse = rna_norm if FLAG_CORR else adata_rna.layers['counts']
+            atac_sparse = atac_norm if FLAG_CORR else adata_atac.layers['counts']
 
             n_links = len(cis_links_array)
 
@@ -643,13 +657,13 @@ def main(args):
                 rna_bins=[n_rna_mean,n_rna_var]
             )
 
-            cis_links_dic, cis_idx_dic = ctar.data_loader.groupby_combined_bins(cis_links_df, 
-                combined_bin_col=f'combined_bin_{BIN_CONFIG.rsplit(".",1)[0]}', 
+            cis_links_dic, cis_idx_dic = ctar.data_loader.groupby_combined_bins(cis_links_df,
+                combined_bin_col=f'combined_bin_{BIN_CONFIG.rsplit(".",1)[0]}',
                 return_dic=True
             )
 
-            rna_sparse = adata_rna.layers['counts']
-            atac_sparse = adata_atac.layers['counts']
+            rna_sparse = rna_norm if FLAG_CORR else adata_rna.layers['counts']
+            atac_sparse = atac_norm if FLAG_CORR else adata_atac.layers['counts']
 
             if FLAG_CORR:
                 print('# Starting cis-links Pearson correlation...')
@@ -940,9 +954,9 @@ def main(args):
                 i: list(range(i * dic_batch_size, min((i + 1) * dic_batch_size, len(cis_links_array))))
                 for i in cis_links_dic.keys()
             }
-            
-            rna_sparse = adata_rna.layers['counts']
-            atac_sparse = adata_atac.layers['counts']
+
+            rna_sparse = rna_norm if FLAG_CORR else adata_rna.layers['counts']
+            atac_sparse = atac_norm if FLAG_CORR else adata_atac.layers['counts']
 
             n_links = len(cis_links_array)
 
@@ -1034,8 +1048,8 @@ def main(args):
 
                 file_suffix = f'_{ARRAY_IDX}'
 
-            rna_sparse = adata_rna.layers['counts']
-            atac_sparse = adata_atac.layers['counts']
+            rna_sparse = rna_norm if FLAG_CORR else adata_rna.layers['counts']
+            atac_sparse = atac_norm if FLAG_CORR else adata_atac.layers['counts']
 
             if FLAG_CORR:
                 print('# Starting cis-links Pearson correlation...')
@@ -1167,7 +1181,7 @@ def main(args):
                 ctrl_links_array.extend([[peak_idx, rna_idx] for peak_idx in ctrl_peak_indices])
             ctrl_links_array = np.array(ctrl_links_array)
             print(f'# ctrl_links_array.shape: {ctrl_links_array.shape}')
-            
+
             # Chunk the control links array into batches
             dic_batch_size = 512
             ctrl_links_dic = {
@@ -1178,9 +1192,9 @@ def main(args):
                 i: list(range(i * dic_batch_size, min((i + 1) * dic_batch_size, len(ctrl_links_array))))
                 for i in ctrl_links_dic.keys()
             }
-            
-            rna_sparse = adata_rna.layers['counts']
-            atac_sparse = adata_atac.layers['counts']
+
+            rna_sparse = rna_norm if FLAG_CORR else adata_rna.layers['counts']
+            atac_sparse = atac_norm if FLAG_CORR else adata_atac.layers['counts']
 
             n_links = len(cis_links_subset)
             n_rows = n_links * n_ctrl
@@ -1272,8 +1286,8 @@ def main(args):
 
                 file_suffix = f'_{ARRAY_IDX}'
 
-            rna_sparse = adata_rna.layers['counts']
-            atac_sparse = adata_atac.layers['counts']
+            rna_sparse = rna_norm if FLAG_CORR else adata_rna.layers['counts']
+            atac_sparse = atac_norm if FLAG_CORR else adata_atac.layers['counts']
 
             print('# Running %d controls...' % (len(list(ctrl_links_dic.keys()))))
             print(f'# ATAC and RNA dtype: {atac_sparse.dtype}, {rna_sparse.dtype}')
