@@ -74,6 +74,7 @@ def main(args):
     FLAG_CORR = (args.flag_corr == 'True')
     N_CORES = int(args.n_cores) if args.n_cores is not None else None
     RANDOM_SEED = int(args.random_seed) if args.random_seed is not None else None
+    DONOR_COL = args.donor_col if args.donor_col else None
 
     # Parse and check arguments
     LEGAL_JOB_LIST = [
@@ -127,6 +128,7 @@ def main(args):
     header += "--flag_ll %s\\\n" % FLAG_LL
     header += "--flag_corr %s\\\n" % FLAG_CORR
     header += "--random_seed %s\\\n" % RANDOM_SEED
+    header += "--donor_col %s\\\n" % DONOR_COL
     print(header)
 
     if RANDOM_SEED is not None:
@@ -251,6 +253,11 @@ def main(args):
         sc.pp.log1p(adata_rna_tmp)
         sc.pp.normalize_total(adata_atac_tmp, layer='counts')
         sc.pp.log1p(adata_atac_tmp)
+        if DONOR_COL is not None:
+            assert DONOR_COL in adata_rna.obs.columns, f"--donor_col '{DONOR_COL}' not found in obs"
+            print(f"# Centering by donor column '{DONOR_COL}'...")
+            adata_rna_tmp.X = ctar.method.center_by_donor(adata_rna_tmp.X, adata_rna.obs[DONOR_COL].values)
+            adata_atac_tmp.X = ctar.method.center_by_donor(adata_atac_tmp.X, adata_atac.obs[DONOR_COL].values)
         rna_norm = adata_rna_tmp.X
         atac_norm = adata_atac_tmp.X
         del adata_rna_tmp, adata_atac_tmp
@@ -1565,6 +1572,7 @@ if __name__ == "__main__":
     parser.add_argument("--array_idx", type=str, required=False, default=None)
     parser.add_argument("--n_cores", type=str, required=False, default=None)
     parser.add_argument("--random_seed", type=str, required=False, default=None, help="Random seed for reproducible control link generation")
+    parser.add_argument("--donor_col", type=str, required=False, default=None, help="obs column for donor centering before Pearson correlation (requires --flag_corr True)")
 
     args = parser.parse_args()
     main(args)
