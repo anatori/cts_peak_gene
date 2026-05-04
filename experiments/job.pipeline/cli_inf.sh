@@ -18,7 +18,7 @@ FLAG_SE='True'
 FLAG_CORR='True'
 N_CORES=128
 RANDOM_SEED=777
-DONOR_COL=''  # obs column for donor centering, e.g. 'DonorID'; leave empty to skip
+DONOR_COL=''
 
 IFS='.' read -r b1 b2 b3 b4 rest <<< "$BIN_CONFIG"
 if [[ "$b3" == "inf" && "$b4" == "inf" ]]; then
