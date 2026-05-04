@@ -9,6 +9,7 @@ from mpl_toolkits.axes_grid1.inset_locator import inset_axes
 import matplotlib.patches as mpatches
 import matplotlib as mpl
 from scipy.stats import poisson, nbinom
+from statsmodels.stats.multitest import multipletests
 from matplotlib.container import BarContainer
 import math
 from matplotlib.ticker import ScalarFormatter
@@ -1080,6 +1081,7 @@ def barplot_grouped_with_sig(
     reference_method="ctar_filt",
     alpha=0.05,
     show_brackets=True,
+    fdr_correction=True,
     bracket_text="p",         # 'p', 'stars', or 'none'
     use_log_y=True,
     # Coloring
@@ -1245,6 +1247,17 @@ def barplot_grouped_with_sig(
                 )
 
             max_y_for_limits.append(y + e_up[j])
+
+    # Apply BH FDR correction within each label independently
+    if fdr_correction and pval_vs_ref_col is not None and per_label_vs_ref:
+        for lbl, pmap in per_label_vs_ref.items():
+            entries = [(m, float(p)) for m, p in pmap.items()
+                       if p is not None and np.isfinite(float(p))]
+            if entries:
+                ms, ps = zip(*entries)
+                _, q_vals, _, _ = multipletests(ps, method='fdr_bh')
+                for m, q in zip(ms, q_vals):
+                    per_label_vs_ref[lbl][m] = q
 
     # X axis: dataset labels (renamed for display if provided)
     ax.set_xticks(group_centers)
