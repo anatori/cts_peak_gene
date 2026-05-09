@@ -88,6 +88,9 @@ def main(args):
             elif label.startswith("crispr"):
                 merge_df["label"] = merge_df["score"]
 
+            elif label.startswith("gwas"):
+                merge_df["label"] = merge_df["score"]
+
             else:
                 raise ValueError(f"Unrecognized dataset label prefix for file {file} -> label={label}")
 
