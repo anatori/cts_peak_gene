@@ -702,7 +702,8 @@ def load_validation_intersect_bed(path,
     validation_cols,
     score_type=float,
     flag_gene_match=True,
-    flag_verbose=True
+    flag_verbose=True,
+    gene_mismatch='drop',
 ):
     ''' Process bedfile from bedtools intersection between (-a) validation data and (-b) candidate multiome links.
     Bedtools intersect documentation:
@@ -722,13 +723,17 @@ def load_validation_intersect_bed(path,
         If True, be sure gene names use same convention (e.g. ENSEMBL ids).
     flag_verbose : bool
         Prints gene matching lengths.
-    
+    gene_mismatch : str
+        How to handle rows where gt_gene != gene when flag_gene_match=True.
+        'drop' (default): discard mismatched rows.
+        'zero': keep mismatched rows but set score=0, treating them as false labels.
+
     Returns
     ----------
     pd.DataFrame
         Dataframe with columns validation_cols, gene, bp_overlap.
     '''
-    
+
     assert 'score' in validation_cols, "score not in {validation_cols}."
 
     try:
@@ -754,8 +759,16 @@ def load_validation_intersect_bed(path,
     if flag_gene_match:
         if flag_verbose:
             print('Initial overlap',df.shape)
-        df = df[df.gt_gene == df.gene].copy()
-        if flag_verbose:
-            print('Gene-matched overlap',df.shape)
+        if gene_mismatch == 'drop':
+            df = df[df.gt_gene == df.gene].copy()
+            if flag_verbose:
+                print('Gene-matched overlap',df.shape)
+        elif gene_mismatch == 'zero':
+            mismatch_mask = df.gt_gene != df.gene
+            df.loc[mismatch_mask, 'score'] = score_type(0)
+            if flag_verbose:
+                print(f'Gene-matched overlap (zeroed {mismatch_mask.sum()} mismatches)',df.shape)
+        else:
+            raise ValueError(f"gene_mismatch must be 'drop' or 'zero', got '{gene_mismatch}'")
 
     return df[validation_cols + ['id','peak','gene','bp_overlap']]
