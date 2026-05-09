@@ -9,7 +9,7 @@ LOG_DIR="${LOG_DIR:-/ocean/projects/bio240051p/aprieto/logs}"
 CONDA_ENV="${CONDA_ENV:-ctar}"
 
 # Dataset name used consistently across steps
-DATASET_NAME="${DATASET_NAME:-bmmc}"
+DATASET_NAME="${DATASET_NAME:-pbmc}"
 FILTER_TAG="${FILTER_TAG:-unfiltered}"
 
 # Paths
@@ -34,11 +34,11 @@ fi
 
 # Directory paths — use gwas-specific output dirs to avoid overwriting standard eval results
 UNION_DIR="${UNION_DIR:-/ocean/projects/bio240051p/aprieto/bedfiles/validation/union_links/${FILTER_TAG}}"
-EVAL_DIR="${EVAL_DIR:-/ocean/projects/bio240051p/aprieto/bedfiles/validation/tissue_max/tenk10k_broad_cts}"
-OVERLAP_DIR="${OVERLAP_DIR:-/ocean/projects/bio240051p/aprieto/bedfiles/validation/overlap/${DATASET_NAME}/${FILTER_TAG}/tenk10k_broad_cts}"
-AGG_DIR="${AGG_DIR:-/ocean/projects/bio240051p/aprieto/multiome/validation/overlap_gwas_${FILTER_TAG}/${DATASET_NAME}/tenk10k_broad_cts}"
-MERGE_DIR="${MERGE_DIR:-/ocean/projects/bio240051p/aprieto/multiome/validation/evaluation_gwas_${FILTER_TAG}/${DATASET_NAME}/tenk10k_broad_cts}"
-AURC_DIR="${AURC_DIR:-/ocean/projects/bio240051p/aprieto/multiome/validation/tables/metrics_jitter_no_dedup_gwas_${FILTER_TAG}_tenk10k/${DATASET_NAME}}"
+EVAL_DIR="${EVAL_DIR:-/ocean/projects/bio240051p/aprieto/bedfiles/validation/tissue_max/gwas_eval}"
+OVERLAP_DIR="${OVERLAP_DIR:-/ocean/projects/bio240051p/aprieto/bedfiles/validation/overlap/${DATASET_NAME}/${FILTER_TAG}/gwas_eval}"
+AGG_DIR="${AGG_DIR:-/ocean/projects/bio240051p/aprieto/multiome/validation/overlap_${FILTER_TAG}/${DATASET_NAME}/gwas_eval}"
+MERGE_DIR="${MERGE_DIR:-/ocean/projects/bio240051p/aprieto/multiome/validation/evaluation_${FILTER_TAG}/${DATASET_NAME}/gwas_eval}"
+AURC_DIR="${AURC_DIR:-/ocean/projects/bio240051p/aprieto/multiome/validation/tables/metrics_jitter_no_dedup_${FILTER_TAG}/${DATASET_NAME}}"
 
 DEDUP="${DEDUP:-min}"
 REFERENCE_METHOD="${REFERENCE_METHOD:-ctar_5.5.5.5}"
@@ -54,19 +54,19 @@ submit() {
   sbatch --parsable -p "${PARTITIONS}" -A bio240051p "$@"
 }
 
-echo "Submitting make_union_bed.py ..."
-UNION_JOB_ID=$(submit \
-  -A bio250028p \
-  -t 1-00:00:00 --ntasks-per-node=6 -J "union_${DATASET_NAME}" \
-  -o "${LOG_DIR}/union_${DATASET_NAME}-%j.out" \
-  -e "${LOG_DIR}/union_${DATASET_NAME}-%j.err" \
-  --wrap "source ~/.bashrc && conda activate ${CONDA_ENV} && \
-          mkdir -p '${UNION_DIR}' && \
-          python ${SCRIPTS_DIR}/make_union_bed.py \
-            --dataset_name '${DATASET_NAME}' \
-            --bed_path '${UNION_DIR}' \
-            --methods_csv '${METHODS_CSV}'")
-echo "UNION_JOB_ID=${UNION_JOB_ID}"
+# echo "Submitting make_union_bed.py ..."
+# UNION_JOB_ID=$(submit \
+#   -A bio250028p \
+#   -t 1-00:00:00 --ntasks-per-node=6 -J "union_${DATASET_NAME}" \
+#   -o "${LOG_DIR}/union_${DATASET_NAME}-%j.out" \
+#   -e "${LOG_DIR}/union_${DATASET_NAME}-%j.err" \
+#   --wrap "source ~/.bashrc && conda activate ${CONDA_ENV} && \
+#           mkdir -p '${UNION_DIR}' && \
+#           python ${SCRIPTS_DIR}/make_union_bed.py \
+#             --dataset_name '${DATASET_NAME}' \
+#             --bed_path '${UNION_DIR}' \
+#             --methods_csv '${METHODS_CSV}'")
+# echo "UNION_JOB_ID=${UNION_JOB_ID}"
 
 echo "Submitting bedtools intersect (after union) ..."
 INTERSECT_JOB_ID=$(submit \
@@ -85,6 +85,7 @@ echo "INTERSECT_JOB_ID=${INTERSECT_JOB_ID}"
 echo "Submitting aggregate_overlaps.py (after intersect) ..."
 AGG_JOB_ID=$(submit \
   -A bio250028p \
+  --dependency=afterok:${INTERSECT_JOB_ID} \
   -t 0-06:00:00 --ntasks-per-node=32 -J "aggregate_${DATASET_NAME}" \
   -o "${LOG_DIR}/aggregate_${DATASET_NAME}-%j.out" \
   -e "${LOG_DIR}/aggregate_${DATASET_NAME}-%j.err" \
@@ -135,7 +136,7 @@ AURC_JOB_ID=$(submit \
 echo "AURC_JOB_ID=${AURC_JOB_ID}"
 
 echo "Submitted jobs:"
-echo "  make_union_bed: ${UNION_JOB_ID}"
+# echo "  make_union_bed: ${UNION_JOB_ID}"
 echo "  intersect:      ${INTERSECT_JOB_ID}"
 echo "  aggregate:      ${AGG_JOB_ID}"
 echo "  merge:          ${MERGE_JOB_ID}"

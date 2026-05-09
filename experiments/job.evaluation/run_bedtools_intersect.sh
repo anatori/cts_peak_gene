@@ -34,7 +34,7 @@ for A_FILE in "${EVAL_DIR}"/*.bed; do
   base="$(basename "${A_FILE}" .bed)"
   out="${OVERLAP_DIR}/${base}_${DATASET_NAME}.bed"
 
-  if [[ "${base}" == *gtex* || "${base}" == *onek1k* || "${base}" == *tenk10k* ]]; then
+  if [[ "${base}" == *gtex* || "${base}" == *onek1k* || "${base}" == *tenk10k* || "${base}" == *gwas* ]]; then
     bedtools intersect -wo \
       -a "${A_FILE}" \
       -b "${UNION_BED}" \
