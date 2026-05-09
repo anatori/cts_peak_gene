@@ -1111,6 +1111,7 @@ def barplot_grouped_with_sig(
     ci_legend_fontsize=12,
     bbox_to_anchor=(0.5, -0.1),
     axhline=True,
+    ncol=None,
 ):
     """
     Grouped bar plot of 'estimate' with CI error bars, colored by method, grouped by dataset label.
@@ -1298,12 +1299,14 @@ def barplot_grouped_with_sig(
             disp = method_renames.get(m, m) if method_renames else m
             labels_legend.append(disp)
 
+        if ncol is None:
+            ncol = len(methods_order)
         method_legend = ax.legend(
             handles, labels_legend,
             loc='upper center',
             bbox_to_anchor=bbox_to_anchor,
             frameon=False,
-            ncol=len(methods_order)
+            ncol=ncol,
         )
 
         # Add CI legend only if CI is shown
