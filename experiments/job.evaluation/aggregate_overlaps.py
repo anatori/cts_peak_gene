@@ -11,7 +11,8 @@ def main(args):
     DATASET_NAME = args.dataset_name
 
     cols_dict = {
-        'onek1k':['onek1k_id','score','gt_gene'],
+        'onek1k':['onek1k_id','score','gt_gene','celltype'],
+        'tenk10k':['tenk10k_id','score','gt_gene','celltype'],
         'gtex':['gtex_id','score','gt_gene'],
         'abc':['abc_id','exp_id','assay_type','score','gt_gene'],
         'crispr':['crispr_id','score','gt_gene'],
