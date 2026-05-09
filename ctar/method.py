@@ -1523,7 +1523,7 @@ def binned_mcpval(
     return mcpval_dic, ppval_dic, zpval_dic
 
 
-def empirical_fdr(stat, ctrl_stat, target_fdr=0.1, B=None):
+def empirical_fdr(stat, ctrl_stat, target_fdr=0.1, B=None, pi0=1.0):
     ''' 
     Compute empirical/local FDR. Find a threshold t s.t. 
         FDR = (#{ctrl_stat >= t} / B) / (#{stat >= t})
@@ -1538,7 +1538,8 @@ def empirical_fdr(stat, ctrl_stat, target_fdr=0.1, B=None):
         FDR cutoff.
     B : int
         Number of controls.
-
+    pi0 : float
+        Proportion of true nulls. Default is 1.0, which is conservative.
     Returns
     ----------
     q_values : np.array
@@ -1566,7 +1567,7 @@ def empirical_fdr(stat, ctrl_stat, target_fdr=0.1, B=None):
 
     # calculate estimated fdr
     M = len(stat_clean)
-    fdr_vals = np.minimum((null_counts / B) / (n_disc / M), 1.0)
+    fdr_vals = np.minimum((pi0 * null_counts / B) / (n_disc / M), 1.0)
     fdr_vals = np.minimum.accumulate(fdr_vals[::-1])[::-1]
 
     # find original fdr order
