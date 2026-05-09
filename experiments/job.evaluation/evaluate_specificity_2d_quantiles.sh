@@ -9,20 +9,20 @@ LOG_DIR="${LOG_DIR:-/ocean/projects/bio240051p/aprieto/logs}"
 CONDA_ENV="${CONDA_ENV:-ctar}"
 
 # Dataset / repo paths
-DATASET_NAME="${DATASET_NAME:-pbmc}"
+DATASET_NAME="${DATASET_NAME:-brain}"
 REPO_ROOT="${REPO_ROOT:-/ocean/projects/bio240051p/aprieto/cts_peak_gene}"
 SCRIPTS_DIR="${SCRIPTS_DIR:-${REPO_ROOT}/experiments/job.evaluation}"
 
 # Inputs / outputs
-MERGE_DIR="${MERGE_DIR:-/ocean/projects/bio240051p/aprieto/multiome/validation/evaluation_unfiltered/${DATASET_NAME}/gtex_tissues/gtex_best}"
-AURC_DIR="${AURC_DIR:-/ocean/projects/bio240051p/aprieto/multiome/validation/tables/metrics_jitter_specificity_2d/${DATASET_NAME}/gtex_tissues}"
+MERGE_DIR="${MERGE_DIR:-/ocean/projects/bio240051p/aprieto/multiome/validation/evaluation_unfiltered/${DATASET_NAME}/gtex_tissues/gtex_best}" # gtex_tissues/gtex_best
+AURC_DIR="${AURC_DIR:-/ocean/projects/bio240051p/aprieto/multiome/validation/tables/metrics_jitter_no_dedup_unfiltered_mean_2d/${DATASET_NAME}/gtex_tissues}" # gtex_tissues
 GENE_SPEC_PATH="${GENE_SPEC_PATH:-/ocean/projects/bio240051p/aprieto/multiome/analysis/log_mean/rna/${DATASET_NAME}_mean.csv}"
 PEAK_SPEC_PATH="${PEAK_SPEC_PATH:-/ocean/projects/bio240051p/aprieto/multiome/analysis/log_mean/atac/${DATASET_NAME}_mean.csv}"
 SUBTYPES_MAP_PATH="${SUBTYPES_MAP_PATH:-}"
 
 # Evaluation settings
 # METHOD_COLS can be set explicitly or derived from a methods manifest CSV
-METHODS_CSV="${METHODS_CSV:-}"
+METHODS_CSV="${METHODS_CSV:-${SCRIPTS_DIR}/methods_manifests/${DATASET_NAME}_methods.csv}"
 if [[ -z "${METHOD_COLS:-}" && -n "${METHODS_CSV}" ]]; then
   METHOD_COLS=$(python3 -c "
 import csv, sys

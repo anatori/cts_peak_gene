@@ -9,19 +9,18 @@ LOG_DIR="${LOG_DIR:-/ocean/projects/bio240051p/aprieto/logs}"
 CONDA_ENV="${CONDA_ENV:-ctar}"
 
 # Dataset / repo paths
-DATASET_NAME="${DATASET_NAME:-bmmc_donor1}"
+DATASET_NAME="${DATASET_NAME:-brain}"
 REPO_ROOT="${REPO_ROOT:-/ocean/projects/bio240051p/aprieto/cts_peak_gene}"
 SCRIPTS_DIR="${SCRIPTS_DIR:-${REPO_ROOT}/experiments/job.evaluation}"
 
 # Inputs / outputs
-MERGE_DIR="${MERGE_DIR:-/ocean/projects/bio240051p/aprieto/multiome/validation/evaluation/${DATASET_NAME}}"
-AURC_DIR="${AURC_DIR:-/ocean/projects/bio240051p/aprieto/multiome/validation/tables/metrics_jitter_distance/${DATASET_NAME}}"
-# Update this path to wherever gencode.gtf.gz lives on PSC
-GENCODE_GTF="${GENCODE_GTF:-/ocean/projects/bio240051p/aprieto/reference/gencode.gtf.gz}"
+MERGE_DIR="${MERGE_DIR:-/ocean/projects/bio240051p/aprieto/multiome/validation/evaluation_unfiltered/${DATASET_NAME}/gtex_tissues/gtex_best}"
+AURC_DIR="${AURC_DIR:-/ocean/projects/bio240051p/aprieto/multiome/validation/tables/metrics_jitter_no_dedup_unfiltered_distances/${DATASET_NAME}/gtex_tissues}"
+GENCODE_GTF="${GENCODE_GTF:-/ocean/projects/bio240051p/aprieto/bedfiles/ref/gencode.v49.primary_assembly.annotation.gtf.gz}"
 
 # Evaluation settings
 # METHOD_COLS can be set explicitly or derived from a methods manifest CSV
-METHODS_CSV="${METHODS_CSV:-}"
+METHODS_CSV="${METHODS_CSV:-${SCRIPTS_DIR}/methods_manifests/${DATASET_NAME}_methods.csv}"
 if [[ -z "${METHOD_COLS:-}" && -n "${METHODS_CSV}" ]]; then
   METHOD_COLS=$(python3 -c "
 import csv, sys
@@ -33,20 +32,19 @@ if not names:
 print(','.join(names))
 ")
 fi
-METHOD_COLS="${METHOD_COLS:-scmm,signac,ctar_filt_z,ctar_filt}"
-REFERENCE_METHOD="${REFERENCE_METHOD:-ctar_filt}"
+REFERENCE_METHOD="${REFERENCE_METHOD:-ctar_5.5.5.5}"
 N_BOOTSTRAP="${N_BOOTSTRAP:-1000}"
 
 # Optional distance-script settings
 GTEX_SCORE_THRES="${GTEX_SCORE_THRES:-0.5}"
 ABC_SCORE_THRES="${ABC_SCORE_THRES:-0.2}"
-MIN_BIN_N="${MIN_BIN_N:-100}"
-MIN_BIN_POS="${MIN_BIN_POS:-10}"
+MIN_BIN_N="${MIN_BIN_N:-10}"
+MIN_BIN_POS="${MIN_BIN_POS:-1}"
 REQUIRE_SAME_CHR="${REQUIRE_SAME_CHR:-0}"
 PRINT_BIN_SUMMARY="${PRINT_BIN_SUMMARY:-0}"
 COMPUTE_OVERALL="${COMPUTE_OVERALL:-0}"
-DISTANCE_BINS_BP="${DISTANCE_BINS_BP:-}"
-DISTANCE_BIN_LABELS="${DISTANCE_BIN_LABELS:-}"
+DISTANCE_BINS_BP="${DISTANCE_BINS_BP:-0,5000,10000,20000,50000,inf}"
+DISTANCE_BIN_LABELS="${DISTANCE_BIN_LABELS:-0-5kb,5-10kb,10-20kb,20-50kb,50kb+}"
 
 echo "Evaluating distance-stratified AUERC for ${DATASET_NAME}..."
 echo "METHOD_COLS: ${METHOD_COLS}"
@@ -76,7 +74,7 @@ fi
 
 echo "Submitting calculate_auerc_distances.py ..."
 AURC_JOB_ID=$(submit \
-  -t 3-00:00:00 --mem=128G -J "auerc_dist_${DATASET_NAME}" \
+  -t 3-00:00:00 --ntasks-per-node=64 -J "auerc_dist_${DATASET_NAME}" \
   -o "${LOG_DIR}/auerc_dist_${DATASET_NAME}-%j.out" \
   -e "${LOG_DIR}/auerc_dist_${DATASET_NAME}-%j.err" \
   --wrap "source ~/.bashrc && conda activate ${CONDA_ENV} && \

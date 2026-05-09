@@ -3,7 +3,7 @@
 # FILE: /ocean/projects/bio240051p/aprieto/cts_peak_gene/experiments/job.null/null_cli.sh
 
 MULTIOME_FILE=/ocean/projects/bio240051p/aprieto/multiome/processed/pbmc_sorted_10k/pbmc.h5mu
-BIN_PREFIX=3.3.3.3
+BIN_PREFIX=10.10.10.10
 BIN_CONFIG=${BIN_PREFIX}.10000
 TARGET_PATH=/ocean/projects/bio240051p/aprieto/multiome/simulations/null_pbmc/celltype_specificity/corr/${BIN_PREFIX}
 GENOME_FILE=/ocean/projects/bio240051p/aprieto/bedfiles/ref/GRCh38.p14.genome.fixed.fa
@@ -11,12 +11,12 @@ BIN_TYPE='mean_var'
 PYBEDTOOLS_PATH=/opt/packages/bedtools/2.30.0
 BATCH_SIZE=100000
 RESULTS_PATH=${TARGET_PATH}
-PARTITION="RM-shared"
+PARTITION="RM"
 MAX_CONCURRENT=200
 FLAG_LL='False'
 FLAG_SE='True'
 FLAG_CORR='True'
-N_CORES=64
+N_CORES=128
 RANDOM_SEED=777
 DONOR_COL=''
 

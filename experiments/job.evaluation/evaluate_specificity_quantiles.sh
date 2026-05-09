@@ -14,8 +14,8 @@ REPO_ROOT="${REPO_ROOT:-/ocean/projects/bio240051p/aprieto/cts_peak_gene}"
 SCRIPTS_DIR="${SCRIPTS_DIR:-${REPO_ROOT}/experiments/job.evaluation}"
 
 # Inputs / outputs
-MERGE_DIR="${MERGE_DIR:-/ocean/projects/bio240051p/aprieto/multiome/validation/evaluation/${DATASET_NAME}}"
-AURC_DIR="${AURC_DIR:-/ocean/projects/bio240051p/aprieto/multiome/validation/tables/metrics_jitter_specificity/${DATASET_NAME}}"
+MERGE_DIR="${MERGE_DIR:-/ocean/projects/bio240051p/aprieto/multiome/validation/evaluation_unfiltered/${DATASET_NAME}/gtex_tissues/gtex_best}"
+AURC_DIR="${AURC_DIR:-/ocean/projects/bio240051p/aprieto/multiome/validation/tables/metrics_jitter_no_dedup_unfiltered_specificity/${DATASET_NAME}}"
 TRUTH_SPEC_PATH="${TRUTH_SPEC_PATH:-}"
 GENE_SPEC_PATH="${GENE_SPEC_PATH:-/ocean/projects/bio240051p/aprieto/multiome/analysis/ct_specificity_with_vectors/rna/${DATASET_NAME}_specificity.csv}"
 PEAK_SPEC_PATH="${PEAK_SPEC_PATH:-/ocean/projects/bio240051p/aprieto/multiome/analysis/ct_specificity_with_vectors/atac/${DATASET_NAME}_specificity.csv}"
@@ -23,7 +23,7 @@ SUBTYPES_MAP_PATH="${SUBTYPES_MAP_PATH:-/ocean/projects/bio240051p/aprieto/multi
 
 # Evaluation settings
 # METHOD_COLS can be set explicitly or derived from a methods manifest CSV
-METHODS_CSV="${METHODS_CSV:-${SCRIPTS_DIR}/methods_manifests/pbmc_methods.csv}"
+METHODS_CSV="${METHODS_CSV:-${SCRIPTS_DIR}/methods_manifests/${DATASET_NAME}_methods.csv}"
 if [[ -z "${METHOD_COLS:-}" && -n "${METHODS_CSV}" ]]; then
   METHOD_COLS=$(python3 -c "
 import csv, sys
