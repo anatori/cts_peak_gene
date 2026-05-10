@@ -32,7 +32,7 @@ def _aggregate_duplicates(
     how: str,
 ) -> pd.DataFrame:
     if how == "none":
-        print("Warning: no deduplication!")
+        print("Warning: no deduplication!", flush=True)
         return df[["id", "peak", "gene", "dataset", pval_col, qval_col]].copy()
 
     if how not in {"min", "max", "mean", "median"}:
@@ -99,15 +99,15 @@ def load_method_scores(
             raise ValueError(f"File '{file_path}' missing fdr column '{fdr_source_col}'")
         df[qval_col] = pd.to_numeric(df[fdr_source_col], errors="coerce")
     else:
-        print(f"[{method_name}_{dataset}] no fdr_col — computing BH q-values from '{pval_source_col}'")
+        print(f"[{method_name}_{dataset}] no fdr_col — computing BH q-values from '{pval_source_col}'", flush=True)
         df[qval_col] = _compute_bh_qvalues(df[pval_col])
 
     n_raw = len(df)
     n_unique = df["id"].nunique()
-    print(f"[{method_name}_{dataset}] raw_rows={n_raw} unique_ids={n_unique} dup_rows={n_raw - n_unique} dedup={dedup}")
+    print(f"[{method_name}_{dataset}] raw_rows={n_raw} unique_ids={n_unique} dup_rows={n_raw - n_unique} dedup={dedup}", flush=True)
 
     out = _aggregate_duplicates(df, pval_col=pval_col, qval_col=qval_col, how=dedup)
-    print(f"[{method_name}_{dataset}] out_rows={len(out)}")
+    print(f"[{method_name}_{dataset}] out_rows={len(out)}", flush=True)
     return out
 
 
@@ -117,7 +117,7 @@ def merge_method_tables(method_tables: List[pd.DataFrame]) -> pd.DataFrame:
     merged = method_tables[0].copy()
     for t in method_tables[1:]:
         merged = merged.merge(t, on=["id", "peak", "gene", "dataset"], how="outer", validate="one_to_one")
-    print(f"[union scores] rows={len(merged)} methods={len(method_tables)} cols={len(merged.columns)}")
+    print(f"[union scores] rows={len(merged)} methods={len(method_tables)} cols={len(merged.columns)}", flush=True)
     return merged
 
 
@@ -174,7 +174,8 @@ def load_overlap_bed(overlap_bed: str) -> pd.DataFrame:
     print(
         f"[overlap bed] rows={len(df)} "
         f"unique_snps={df['snp_id'].nunique()} "
-        f"unique_peak_gene={df['id'].nunique()}"
+        f"unique_peak_gene={df['id'].nunique()}",
+        flush=True,
     )
     return df
 
@@ -186,17 +187,17 @@ def main(args):
     method_sources = []
     for fp, dataset, name, col, fdr_col in raw_sources:
         if not fp:
-            print(f"[skip] {name}/{dataset}: empty file_path"); continue
+            print(f"[skip] {name}/{dataset}: empty file_path", flush=True); continue
         if not os.path.isfile(fp):
-            print(f"[skip] {name}/{dataset}: file not found ({fp})"); continue
+            print(f"[skip] {name}/{dataset}: file not found ({fp})", flush=True); continue
         if not col:
-            print(f"[skip] {name}/{dataset}: empty pval_col"); continue
+            print(f"[skip] {name}/{dataset}: empty pval_col", flush=True); continue
         method_sources.append((fp, dataset, name, col, fdr_col))
 
     if not method_sources:
         raise RuntimeError("No method sources configured (all rows invalid).")
 
-    print(f"Loading {len(method_sources)} method/dataset files with dedup={args.dedup}...")
+    print(f"Loading {len(method_sources)} method/dataset files with dedup={args.dedup}...", flush=True)
     method_tables = [
         load_method_scores(
             fp, method_name=name, dataset=dataset,
@@ -214,7 +215,7 @@ def main(args):
 
     score_cols = [c for c in scores_df.columns if c not in {"id", "peak", "gene", "dataset"}]
     hit_report = {c: float(merged[c].notna().mean()) for c in score_cols}
-    print(f"[method merge] rows={len(merged)} score_hit_rate={hit_report}")
+    print(f"[method merge] rows={len(merged)} score_hit_rate={hit_report}", flush=True)
 
     if args.snp_annot_file:
         annot_df = pd.read_csv(args.snp_annot_file, sep=None, engine="python")
@@ -229,11 +230,11 @@ def main(args):
             raise ValueError(f"Annotation file missing columns: {missing}")
         annot_sub = annot_df[keep_cols].rename(columns={args.snp_annot_id_col: "snp_id"})
         merged = merged.merge(annot_sub, on="snp_id", how="left")
-        print(f"[snp annot merge] rows={len(merged)} annot_cols={annot_cols}")
+        print(f"[snp annot merge] rows={len(merged)} annot_cols={annot_cols}", flush=True)
 
     os.makedirs(os.path.dirname(os.path.abspath(args.out_path)), exist_ok=True)
     merged.to_csv(args.out_path, index=False)
-    print(f"Done. Wrote {len(merged)} rows to: {args.out_path}")
+    print(f"Done. Wrote {len(merged)} rows to: {args.out_path}", flush=True)
 
 
 if __name__ == "__main__":

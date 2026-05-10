@@ -17,20 +17,20 @@ REPO_ROOT="${REPO_ROOT:-/ocean/projects/bio240051p/aprieto/cts_peak_gene}"
 SCRIPTS_DIR="${SCRIPTS_DIR:-${REPO_ROOT}/experiments/job.ukbb}"
 
 # Methods manifest CSV: columns file_path, dataset_name, method_name, pval_col, fdr_col
-METHODS_CSV="${METHODS_CSV:-${SCRIPTS_DIR}/methods_manifests/ukbb_methods.csv}"
+METHODS_CSV="${METHODS_CSV:-${SCRIPTS_DIR}/methods_manifests/all_methods.csv}"
 
 # Directory/file paths
 DATASET_DIR="${DATASET_DIR:-/ocean/projects/bio240051p/aprieto/bedfiles/validation/union_links/${FILTER_TAG}}"
 UNION_DIR="${UNION_DIR:-/ocean/projects/bio240051p/aprieto/bedfiles/analysis/${FILTER_TAG}}"
-ANALYSIS_BED="${ANALYSIS_BED:-/ocean/projects/bio240051p/aprieto/bedfiles/analysis/ukbb_hg38.bed}"
+ANALYSIS_BED="${ANALYSIS_BED:-/ocean/projects/bio240051p/aprieto/bedfiles/analysis/ukbb_94traits/ukbb_hg38.bed}"
 UNION_BED="${UNION_BED:-${UNION_DIR}/multiome_union.bed}"
 OVERLAP_BED="${OVERLAP_BED:-/ocean/projects/bio240051p/aprieto/bedfiles/analysis/overlap/${FILTER_TAG}/multiome_ukbb.bed}"
-OUT_PATH="${OUT_PATH:-/ocean/projects/bio240051p/aprieto/multiome/results/ukbb/${FILTER_TAG}/ukbb_merged.csv}"
+OUT_PATH="${OUT_PATH:-/ocean/projects/bio240051p/aprieto/multiome/analysis/ukbb_94traits/${FILTER_TAG}/ukbb_merged.csv}"
 
 # Optional SNP annotation join
-SNP_ANNOT_FILE="${SNP_ANNOT_FILE:-}"
-SNP_ANNOT_ID_COL="${SNP_ANNOT_ID_COL:-snp_id}"
-SNP_ANNOT_COLS="${SNP_ANNOT_COLS:-}"
+SNP_ANNOT_FILE="${SNP_ANNOT_FILE:-/ocean/projects/bio240051p/aprieto/multiome/validation/originals/release1.1/UKBB_94traits_release1_susie_saige.tsv}"
+SNP_ANNOT_ID_COL="${SNP_ANNOT_ID_COL:-variant}"
+SNP_ANNOT_COLS="${SNP_ANNOT_COLS:-rsid,trait,maf,pip}"
 
 DEDUP="${DEDUP:-min}"
 
