@@ -49,6 +49,8 @@ def _aggregate_duplicates(
             if how == "min"
             else tmp.groupby("id", sort=False)[pval_col].idxmax()
         )
+        # idxmin/idxmax returns NaN for all-NaN groups; drop them rather than crash
+        row_idx = row_idx.dropna()
         out = tmp.loc[row_idx.values, ["id", "peak", "gene", "dataset", pval_col, qval_col]].reset_index(drop=True)
     else:
         # mean/median: independently aggregate both columns
