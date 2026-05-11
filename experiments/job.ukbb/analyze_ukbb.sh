@@ -79,8 +79,8 @@ fi
 
 echo "Submitting merge_methods.py ..."
 MERGE_JOB_ID=$(submit \
-  --dependency=afterok:${INTERSECT_JOB_ID} \
   -t 1-00:00:00 --ntasks-per-node=64 -J "merge_ukbb" \
+  --dependency=afterok:${INTERSECT_JOB_ID} \
   -o "${LOG_DIR}/merge_ukbb-%j.out" \
   -e "${LOG_DIR}/merge_ukbb-%j.err" \
   --wrap "source ~/.bashrc && conda activate ${CONDA_ENV} && \
