@@ -7,7 +7,7 @@ import pandas as pd
 def main(args):
     DATASET_PATH = args.dataset_path
     DATASETS = [m.strip() for m in args.datasets.split(",")]
-    UNION_PATH = args.union_path
+    UNION_BED = args.union_bed
 
     union_bed = []
     for dataset in DATASETS:
@@ -22,16 +22,16 @@ def main(args):
         union_bed.append(dataset_bed)
     union_bed = pd.concat(union_bed, ignore_index=True)
 
-    os.makedirs(UNION_PATH, exist_ok=True)
-    union_bed.to_csv(f'{UNION_PATH}/multiome_union.bed', header=False, index=False, sep="\t")
-    print(f"Wrote {len(union_bed)} records to {UNION_PATH}/multiome_union.bed")
+    os.makedirs(os.path.dirname(UNION_BED), exist_ok=True)
+    union_bed.to_csv(UNION_BED, header=False, index=False, sep="\t")
+    print(f"Wrote {len(union_bed)} records to {UNION_BED}")
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
 
     parser.add_argument("--dataset_path", type=str, default="/ocean/projects/bio240051p/aprieto/bedfiles/validation/union_links")
-    parser.add_argument("--union_path", type=str, default="/ocean/projects/bio240051p/aprieto/bedfiles/analysis/multiome_union")
+    parser.add_argument("--union_bed", type=str, default="/ocean/projects/bio240051p/aprieto/bedfiles/analysis/multiome_union/multiome_union.bed")
     parser.add_argument("--datasets", type=str, default="bmmc,pbmc,brain,neat,shareseq")
 
     args = parser.parse_args()

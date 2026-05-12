@@ -22,8 +22,8 @@ METHODS_CSV="${METHODS_CSV:-${SCRIPTS_DIR}/methods_manifests/blood_methods.csv}"
 # Directory/file paths
 DATASET_DIR="${DATASET_DIR:-/ocean/projects/bio240051p/aprieto/bedfiles/validation/union_links/${FILTER_TAG}}"
 UNION_DIR="${UNION_DIR:-/ocean/projects/bio240051p/aprieto/bedfiles/analysis/${FILTER_TAG}}"
-ANALYSIS_BED="${ANALYSIS_BED:-/ocean/projects/bio240051p/aprieto/bedfiles/analysis/tenk10k_eqtl_broad_cts/tenk10k_eqtl_broad_cts.bed}"
 UNION_BED="${UNION_BED:-${UNION_DIR}/multiome_blood_union.bed}"
+ANALYSIS_BED="${ANALYSIS_BED:-/ocean/projects/bio240051p/aprieto/bedfiles/analysis/tenk10k_eqtl_broad_cts/tenk10k_eqtl_broad_cts.bed}"
 OVERLAP_BED="${OVERLAP_BED:-/ocean/projects/bio240051p/aprieto/bedfiles/analysis/overlap/${FILTER_TAG}/tenk10k_eqtl_broad_cts/tenk10k_eqtl_broad_cts.bed}"
 OUT_PATH="${OUT_PATH:-/ocean/projects/bio240051p/aprieto/multiome/analysis/tenk10k_eqtl_broad_cts/${FILTER_TAG}/tenk10k_eqtl_broad_cts_merged.csv}"
 
@@ -52,7 +52,7 @@ UNION_JOB_ID=$(submit \
           python ${SCRIPTS_DIR}/make_multiome_union_bed.py \
             --datasets '${DATASETS}' \
             --dataset_path '${DATASET_DIR}' \
-            --union_path '${UNION_DIR}'")
+            --union_bed '${UNION_BED}'")
 echo "UNION_JOB_ID=${UNION_JOB_ID}"
 
 echo "Submitting bedtools intersect ..."
