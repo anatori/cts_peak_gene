@@ -25,6 +25,7 @@ if [[ ! -s "${UNION_BED}" ]]; then
   exit 2
 fi
 
+base="$(basename "${ANALYSIS_BED}" .bed)"
 if [[ "${base}" == *eqtl* || "${base}" == *gwas* ]]; then
   bedtools intersect -wo \
     -a "${ANALYSIS_BED}" \
@@ -36,4 +37,4 @@ else
     -b "${UNION_BED}" \
     > "${OVERLAP_BED}"
 fi
-echo "Wrote: ${out}"
+echo "Wrote: ${OVERLAP_BED}"
