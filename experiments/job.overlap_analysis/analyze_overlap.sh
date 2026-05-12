@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# bash /ocean/projects/bio240051p/aprieto/cts_peak_gene/experiments/job.ukbb/analyze_ukbb.sh
+# bash /ocean/projects/bio240051p/aprieto/cts_peak_gene/experiments/job.overlap_analysis/analyze_overlap.sh
 
 # Slurm settings
 PARTITIONS="${PARTITIONS:-RM-shared}"
@@ -9,28 +9,28 @@ LOG_DIR="${LOG_DIR:-/ocean/projects/bio240051p/aprieto/logs}"
 CONDA_ENV="${CONDA_ENV:-ctar}"
 
 # Datasets to include in the union BED
-DATASETS="${DATASETS:-bmmc,pbmc,brain,neat,shareseq}"
+DATASETS="${DATASETS:-bmmc,pbmc}"
 FILTER_TAG="${FILTER_TAG:-unfiltered}"
 
 # Paths
 REPO_ROOT="${REPO_ROOT:-/ocean/projects/bio240051p/aprieto/cts_peak_gene}"
-SCRIPTS_DIR="${SCRIPTS_DIR:-${REPO_ROOT}/experiments/job.ukbb}"
+SCRIPTS_DIR="${SCRIPTS_DIR:-${REPO_ROOT}/experiments/job.overlap_analysis}"
 
 # Methods manifest CSV: columns file_path, dataset_name, method_name, pval_col, fdr_col
-METHODS_CSV="${METHODS_CSV:-${SCRIPTS_DIR}/methods_manifests/all_methods.csv}"
+METHODS_CSV="${METHODS_CSV:-${SCRIPTS_DIR}/methods_manifests/blood_methods.csv}"
 
 # Directory/file paths
 DATASET_DIR="${DATASET_DIR:-/ocean/projects/bio240051p/aprieto/bedfiles/validation/union_links/${FILTER_TAG}}"
 UNION_DIR="${UNION_DIR:-/ocean/projects/bio240051p/aprieto/bedfiles/analysis/${FILTER_TAG}}"
-ANALYSIS_BED="${ANALYSIS_BED:-/ocean/projects/bio240051p/aprieto/bedfiles/analysis/ukbb_94traits/ukbb_hg38.bed}"
-UNION_BED="${UNION_BED:-${UNION_DIR}/multiome_union.bed}"
-OVERLAP_BED="${OVERLAP_BED:-/ocean/projects/bio240051p/aprieto/bedfiles/analysis/overlap/${FILTER_TAG}/multiome_ukbb.bed}"
-OUT_PATH="${OUT_PATH:-/ocean/projects/bio240051p/aprieto/multiome/analysis/ukbb_94traits/${FILTER_TAG}/ukbb_merged.csv}"
+ANALYSIS_BED="${ANALYSIS_BED:-/ocean/projects/bio240051p/aprieto/bedfiles/analysis/tenk10k_eqtl_broad_cts/tenk10k_eqtl_broad_cts.bed}"
+UNION_BED="${UNION_BED:-${UNION_DIR}/multiome_blood_union.bed}"
+OVERLAP_BED="${OVERLAP_BED:-/ocean/projects/bio240051p/aprieto/bedfiles/analysis/overlap/${FILTER_TAG}/tenk10k_eqtl_broad_cts/tenk10k_eqtl_broad_cts.bed}"
+OUT_PATH="${OUT_PATH:-/ocean/projects/bio240051p/aprieto/multiome/analysis/tenk10k_eqtl_broad_cts/${FILTER_TAG}/tenk10k_eqtl_broad_cts_merged.csv}"
 
 # Optional SNP annotation join
-SNP_ANNOT_FILE="${SNP_ANNOT_FILE:-/ocean/projects/bio240051p/aprieto/multiome/validation/originals/release1.1/UKBB_94traits_release1_susie_saige.tsv}"
-SNP_ANNOT_ID_COL="${SNP_ANNOT_ID_COL:-variant}"
-SNP_ANNOT_COLS="${SNP_ANNOT_COLS:-rsid,trait,maf,pip}"
+SNP_ANNOT_FILE="${SNP_ANNOT_FILE:-/ocean/projects/bio240051p/aprieto/multiome/analysis/tenk10k_eqtl_broad_cts/tenk10k_eqtl_broad_cts_info.tsv}"
+SNP_ANNOT_ID_COL="${SNP_ANNOT_ID_COL:-final_col}"
+SNP_ANNOT_COLS="${SNP_ANNOT_COLS:-bcell_celltype,bcell_pip,dendritic_celltype,dendritic_pip,myeloid_celltype,myeloid_pip,tcell_celltype,tcell_pip}"
 
 DEDUP="${DEDUP:-min}"
 
@@ -44,9 +44,9 @@ submit() {
 
 echo "Submitting make_multiome_union_bed.py ..."
 UNION_JOB_ID=$(submit \
-  -t 1-00:00:00 --ntasks-per-node=64 -J "union_ukbb" \
-  -o "${LOG_DIR}/union_ukbb-%j.out" \
-  -e "${LOG_DIR}/union_ukbb-%j.err" \
+  -t 1-00:00:00 --ntasks-per-node=64 -J "union_multiome" \
+  -o "${LOG_DIR}/union_multiome-%j.out" \
+  -e "${LOG_DIR}/union_multiome-%j.err" \
   --wrap "source ~/.bashrc && conda activate ${CONDA_ENV} && \
           mkdir -p '${UNION_DIR}' && \
           python ${SCRIPTS_DIR}/make_multiome_union_bed.py \
@@ -58,9 +58,9 @@ echo "UNION_JOB_ID=${UNION_JOB_ID}"
 echo "Submitting bedtools intersect ..."
 INTERSECT_JOB_ID=$(submit \
   --dependency=afterok:${UNION_JOB_ID} \
-  -t 0-02:00:00 --ntasks-per-node=64 -J "intersect_ukbb" \
-  -o "${LOG_DIR}/intersect_ukbb-%j.out" \
-  -e "${LOG_DIR}/intersect_ukbb-%j.err" \
+  -t 0-02:00:00 --ntasks-per-node=64 -J "intersect_analysis" \
+  -o "${LOG_DIR}/intersect_analysis-%j.out" \
+  -e "${LOG_DIR}/intersect_analysis-%j.err" \
   --wrap "mkdir -p '$(dirname ${OVERLAP_BED})' && \
           bash ${SCRIPTS_DIR}/run_bedtools_intersect.sh \
             --analysis-bed '${ANALYSIS_BED}' \
@@ -79,10 +79,10 @@ fi
 
 echo "Submitting merge_methods.py ..."
 MERGE_JOB_ID=$(submit \
-  -t 1-00:00:00 --ntasks-per-node=64 -J "merge_ukbb" \
+  -t 1-00:00:00 --ntasks-per-node=64 -J "merge_analysis" \
   --dependency=afterok:${INTERSECT_JOB_ID} \
-  -o "${LOG_DIR}/merge_ukbb-%j.out" \
-  -e "${LOG_DIR}/merge_ukbb-%j.err" \
+  -o "${LOG_DIR}/merge_analysis-%j.out" \
+  -e "${LOG_DIR}/merge_analysis-%j.err" \
   --wrap "source ~/.bashrc && conda activate ${CONDA_ENV} && \
           mkdir -p '$(dirname ${OUT_PATH})' && \
           python ${SCRIPTS_DIR}/merge_methods.py \

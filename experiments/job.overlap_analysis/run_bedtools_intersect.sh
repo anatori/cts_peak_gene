@@ -25,8 +25,15 @@ if [[ ! -s "${UNION_BED}" ]]; then
   exit 2
 fi
 
-echo "[bedtools] Intersecting A=${ANALYSIS_BED} with B=${UNION_BED} -> ${OVERLAP_BED}"
-bedtools intersect -wo \
+if [[ "${base}" == *eqtl* || "${base}" == *gwas* ]]; then
+  bedtools intersect -wo \
     -a "${ANALYSIS_BED}" \
     -b "${UNION_BED}" \
     > "${OVERLAP_BED}"
+else
+  bedtools intersect -wo -f 0.5 -r \
+    -a "${ANALYSIS_BED}" \
+    -b "${UNION_BED}" \
+    > "${OVERLAP_BED}"
+fi
+echo "Wrote: ${out}"
