@@ -122,10 +122,7 @@ def _attach_specificity(
                 flush=True,
             )
 
-        # Link-specificity mode naturally creates link_specificity_geom/min rather than
-        # a generic 'specificity' column. Preserve backward compatibility by aliasing
-        # the default name to the geometric score unless the caller explicitly asked
-        # for another available output column.
+        # Use link_specificity_geom as specificity by default
         if specificity_col not in out.columns and specificity_col == "specificity":
             if "link_specificity_geom" in out.columns:
                 out[specificity_col] = out["link_specificity_geom"]

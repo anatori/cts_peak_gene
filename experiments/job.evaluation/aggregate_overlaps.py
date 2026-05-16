@@ -30,7 +30,7 @@ def main(args):
         label = [k for k in cols_dict.keys() if k in file][0]
         filename = file.split('.')[0]
         print(f'{filename}, {label}')
-        score_type = bool if label == 'crispr' else float
+        score_type = bool if label in ('crispr','gwas') else float
         eval_df_dict[filename] = ctar.data_loader.load_validation_intersect_bed(f'{BED_PATH}/{file}',
                                                                              cols_dict[label],
                                                                              score_type=score_type,

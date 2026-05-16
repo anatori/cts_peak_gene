@@ -15,11 +15,11 @@ SCRIPTS_DIR="${SCRIPTS_DIR:-${REPO_ROOT}/experiments/job.evaluation}"
 
 # Inputs / outputs
 MERGE_DIR="${MERGE_DIR:-/ocean/projects/bio240051p/aprieto/multiome/validation/evaluation_unfiltered/${DATASET_NAME}/gtex_tissues/gtex_best}"
-AURC_DIR="${AURC_DIR:-/ocean/projects/bio240051p/aprieto/multiome/validation/tables/metrics_jitter_no_dedup_unfiltered_specificity/${DATASET_NAME}}"
+AURC_DIR="${AURC_DIR:-/ocean/projects/bio240051p/aprieto/multiome/validation/tables/metrics_jitter_no_dedup_unfiltered_specificity/${DATASET_NAME}/broad_no_weight}"
 TRUTH_SPEC_PATH="${TRUTH_SPEC_PATH:-}"
-GENE_SPEC_PATH="${GENE_SPEC_PATH:-/ocean/projects/bio240051p/aprieto/multiome/analysis/ct_specificity_with_vectors/rna/${DATASET_NAME}_specificity.csv}"
-PEAK_SPEC_PATH="${PEAK_SPEC_PATH:-/ocean/projects/bio240051p/aprieto/multiome/analysis/ct_specificity_with_vectors/atac/${DATASET_NAME}_specificity.csv}"
-SUBTYPES_MAP_PATH="${SUBTYPES_MAP_PATH:-/ocean/projects/bio240051p/aprieto/multiome/analysis/ct_specificity/celltype_map/${DATASET_NAME}_map.csv}"
+GENE_SPEC_PATH="${GENE_SPEC_PATH:-/ocean/projects/bio240051p/aprieto/multiome/analysis/broad_ct_specificity_with_vectors/rna/${DATASET_NAME}_specificity.csv}"
+PEAK_SPEC_PATH="${PEAK_SPEC_PATH:-/ocean/projects/bio240051p/aprieto/multiome/analysis/broad_ct_specificity_with_vectors/atac/${DATASET_NAME}_specificity.csv}"
+SUBTYPES_MAP_PATH="${SUBTYPES_MAP_PATH:-}"
 
 # Evaluation settings
 # METHOD_COLS can be set explicitly or derived from a methods manifest CSV
@@ -44,7 +44,7 @@ ABC_SCORE_THRES="${ABC_SCORE_THRES:-0.2}"
 SPECIFICITY_COL="${SPECIFICITY_COL:-link_specificity_joint}"
 GENE_SPEC_COL="${GENE_SPEC_COL:-specificity}"
 PEAK_SPEC_COL="${PEAK_SPEC_COL:-specificity}"
-SPECIFICITY_QUANTILES="${SPECIFICITY_QUANTILES:-0,0.5,1}"
+SPECIFICITY_QUANTILES="${SPECIFICITY_QUANTILES:-0,0.25,0.5,0.75,1}"
 SPECIFICITY_QUANTILE_LABELS="${SPECIFICITY_QUANTILE_LABELS:-}"
 QUANTILE_RANK_METHOD="${QUANTILE_RANK_METHOD:-average}"
 MIN_BIN_N="${MIN_BIN_N:-100}"
@@ -61,7 +61,7 @@ TRUTH_ID_COL="${TRUTH_ID_COL:-gtex_id}"
 TRUTH_GENE_COL="${TRUTH_GENE_COL:-gt_gene}"
 TRUTH_SPEC_COL="${TRUTH_SPEC_COL:-specificity}"
 TRUTH_DUPLICATE_STRATEGY="${TRUTH_DUPLICATE_STRATEGY:-error}"
-WEIGHT_CONCORDANCE="${WEIGHT_CONCORDANCE:-true}"
+WEIGHT_CONCORDANCE="${WEIGHT_CONCORDANCE:-false}"
 
 echo "Evaluating specificity-quantile-stratified AUERC for ${DATASET_NAME}..."
 echo "METHOD_COLS: ${METHOD_COLS}"
