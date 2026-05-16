@@ -10,6 +10,7 @@ import matplotlib.patches as mpatches
 import matplotlib as mpl
 from scipy.stats import poisson, nbinom
 from statsmodels.stats.multitest import multipletests
+import statsmodels.formula.api as smf
 from matplotlib.container import BarContainer
 import math
 from matplotlib.ticker import ScalarFormatter
@@ -1410,3 +1411,42 @@ def barplot_grouped_with_sig(
 
     ax.grid(axis='y', linestyle=':', linewidth=0.6, alpha=0.6)
     return ax
+
+
+def residualize_raw(ctrl_df, target_cov, bins = ['atac_mean_bin', 'atac_gc_bin', 'rna_mean_bin', 'rna_var_bin'], corr="null_corr"):
+    ''' Helper to residualize against other covariates, one target at a time.
+    ctrl_df : Long dataframe containing one row per control statistic. Must contain bins in columns.
+    target_cov : Focal covariate. Must be item in bins. Will automatically residualize against other covariates in bins.
+    bins : Covariates by which to residualize control statistic against.
+    corr : Column containing statistic to residualize.
+    '''
+    other_covs = [c for c in bins if c != target_cov]
+    formula = f"{corr} ~ " + " + ".join(f"C({c})" for c in other_covs)
+    resid = smf.ols(formula, data=ctrl_df).fit().resid
+    ctrl_df = ctrl_df.copy()
+    ctrl_df['resid'] = resid
+    return ctrl_df
+
+
+def plot_residual_distributions(ctrl_df, cov, xlabel='Residual null correlation', title='', corr="null_corr", figsize=(12,4)):
+    """
+    Plot CDF of residualized statistics.
+    """
+    fig, axes = plt.subplots(1, len(cov), figsize=figsize, sharey=True)
+
+    for i, target_cov in enumerate(cov):
+        resid_df = residualize_raw(ctrl_df, target_cov, corr=corr)
+        levels = sorted(ctrl_df[target_cov].unique())
+        # plot cdf
+        for lvl in levels:
+            vals = np.sort(resid_df.loc[resid_df[target_cov] == lvl, 'resid'].values)
+            cdf = np.arange(1, len(vals)+1) / len(vals)
+            axes[i].plot(vals, cdf, label=f'Bin {lvl}')
+        axes[i].set_title(f'{target_cov}')
+        axes[i].legend()
+
+    axes[0].set_ylabel('CDF')
+    fig.supxlabel(xlabel)
+    plt.suptitle(title, fontsize=12)
+    plt.tight_layout()
+    plt.show()
