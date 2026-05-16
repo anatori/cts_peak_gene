@@ -575,6 +575,7 @@ def poisson_irls_multi(X, y, max_iter=100, tol=1e-3, flag_se=False):
 
     if flag_se:
 
+        eta = X @ betas
         eta = np.clip(eta, -MAX_EXP, MAX_EXP)
         mu = np.exp(eta)
         mu = np.clip(mu, MIN_VAL, MAX_VAL)
