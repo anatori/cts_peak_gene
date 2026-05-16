@@ -575,10 +575,10 @@ def poisson_irls_multi(X, y, max_iter=100, tol=1e-3, flag_se=False):
 
     if flag_se:
 
-        eta = X @ betas
         eta = np.clip(eta, -MAX_EXP, MAX_EXP)
         mu = np.exp(eta)
         mu = np.clip(mu, MIN_VAL, MAX_VAL)
+        XtWX = (X * mu[:, None]).T @ X
         jit = 1e-8 + 1e-6 * (np.trace(XtWX) / max(p, 1))
         XtWX_jit = XtWX + jit * np.eye(p, dtype=np.float64)
         cov_beta = np.linalg.pinv(XtWX_jit)
@@ -1523,10 +1523,76 @@ def binned_mcpval(
     return mcpval_dic, ppval_dic, zpval_dic
 
 
-def empirical_fdr(stat, ctrl_stat, target_fdr=0.1, B=None, pi0=1.0):
+######################### fdr methods #########################
+
+
+def fit_gpd_null_tail(ctrl, quantile=0.9, min_exceedances=30, max_floor=1e-15):
+    """
+    Fit a GPD to the upper tail of the null distribution.
+    Returns a function: t -> P(null >= t), valid for all t.
+
+    Uses empirical CDF below the fit threshold, GPD above it.
+    Falls back to Laplace correction if insufficient tail data.
+
+    Parameters
+    ----------
+    ctrl : np.ndarray
+        Null statistics (1-D, finite values only).
+    quantile : float
+        Quantile of ctrl to use as the GPD threshold u.
+    min_exceedances : int
+        Minimum number of exceedances required to fit GPD.
+
+    Returns
+    -------
+    tail_prob : callable
+        Function mapping threshold array -> P(null >= threshold).
+    """
+    ctrl = np.sort(ctrl)
+    B = len(ctrl)
+    u = np.quantile(ctrl, quantile)
+    exceedances = ctrl[ctrl > u] - u
+
+    if len(exceedances) < min_exceedances:
+        # Fallback: Laplace correction only
+        def tail_prob(thresholds):
+            counts = B - np.searchsorted(ctrl, thresholds, side='left')
+            return (counts + 1) / (B + 1)
+        return tail_prob
+
+    # Fit GPD: F(x; xi, sigma) = 1 - (1 + xi*x/sigma)^(-1/xi)
+    xi, _, sigma = sp.stats.genpareto.fit(exceedances, floc=0)
+    p_above_u = (ctrl > u).mean()   # empirical P(null > u)
+
+    def tail_prob(thresholds):
+        thresholds = np.asarray(thresholds, dtype=np.float64)
+        probs = np.empty(len(thresholds))
+        below = thresholds <= u
+        above = ~below
+
+        # Below threshold: empirical counts with Laplace floor
+        counts = B - np.searchsorted(ctrl, thresholds[below], side='left')
+        probs[below] = (counts + 1) / (B + 1)
+
+        # Above threshold: GPD extrapolation
+        # P(null >= t) = P(null > u) * P(GPD >= t - u)
+        if np.any(above):
+            probs[above] = p_above_u * sp.stats.genpareto.sf(
+                thresholds[above] - u, xi, loc=0, scale=sigma
+            )
+            # GPD can give exactly 0 for very extreme t with xi < 0 (bounded support)
+            # add a hard floor
+            probs[above] = np.maximum(probs[above], max_floor)
+
+        return probs
+
+    return tail_prob
+
+
+def empirical_fdr(stat, ctrl_stat, target_fdr=0.1, B=None, pi0=1.0, tail='laplace', gpd_quantile=0.9):
     ''' 
     Compute empirical/local FDR. Find a threshold t s.t. 
-        FDR = (#{ctrl_stat >= t} / B) / (#{stat >= t})
+        FDR = (#{ctrl_stat >= t} + 1 / B + 1) / (#{stat >= t})
 
     Parameters
     ----------
@@ -1540,6 +1606,9 @@ def empirical_fdr(stat, ctrl_stat, target_fdr=0.1, B=None, pi0=1.0):
         Number of controls.
     pi0 : float
         Proportion of true nulls. Default is 1.0, which is conservative.
+    tail : str
+        'laplace'  — (1 + null_counts) / (1 + B)  [default, fast]
+        'gpd'      — GPD extrapolation for statistics beyond max(ctrl)
     Returns
     ----------
     q_values : np.array
@@ -1562,12 +1631,18 @@ def empirical_fdr(stat, ctrl_stat, target_fdr=0.1, B=None, pi0=1.0):
 
     # number of discoveries at all possible thresholds
     n_disc = len(stat_asc) - np.searchsorted(stat_asc, thresholds, side='left')
-    # number of null discoveries at all possible thresholds
-    null_counts = len(ctrl_asc) - np.searchsorted(ctrl_asc, thresholds, side='left')
+    M = len(stat_clean)
 
     # calculate estimated fdr
-    M = len(stat_clean)
-    fdr_vals = np.minimum((pi0 * null_counts / B) / (n_disc / M), 1.0)
+    if tail == 'gpd': # generalized paretto to estimate null tail prob
+        tail_fn = fit_gpd_null_tail(ctrl_clean, quantile=gpd_quantile)
+        null_tail_prob = tail_fn(thresholds)
+        fdr_vals = np.minimum((pi0 * null_tail_prob * B) / (n_disc / M), 1.0)
+    else: # laplace
+        # number of null discoveries at all possible thresholds
+        null_counts = len(ctrl_asc) - np.searchsorted(ctrl_asc, thresholds, side='left')
+        fdr_vals = np.minimum((pi0 * (null_counts + 1) / (B + 1)) / (n_disc / M), 1.0)
+
     fdr_vals = np.minimum.accumulate(fdr_vals[::-1])[::-1]
 
     # find original fdr order
@@ -1594,6 +1669,7 @@ def binned_empirical_fdr(
     stat_col='poissonb', 
     bin_col='combined_bin_5.5.5.5',
     qval_col='q_value',
+    tail='laplace',
 ):
     '''
     Compute empirical FDR per bin null.
@@ -1622,17 +1698,16 @@ def binned_empirical_fdr(
 
     cis_pairs_ls = []
     for bin_id, bin_df in cis_pairs_df.groupby(bin_col):
+        bin_df = bin_df.copy()
         ctrl_stat = ctrl_pairs_dic[bin_id]
         cis_stat = bin_df[stat_col].values
-        q_values, t_star, thresholds, fdr_vals = empirical_fdr(cis_stat, ctrl_stat, target_fdr=target_fdr, B=B)
+        q_values, t_star, thresholds, fdr_vals = empirical_fdr(cis_stat, ctrl_stat, target_fdr=target_fdr, B=B, tail=tail)
         bin_df[qval_col] = q_values
         cis_pairs_ls.append(bin_df)
 
     return pd.concat(cis_pairs_ls)    
 
     
-
-
 ######################### clustering #########################
 
 
