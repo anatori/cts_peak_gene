@@ -527,6 +527,47 @@ def add_tss_distances(query_df, gene_df, gene_col="gene"):
     return out
 
 
+def find_nearest_gene(query_df, gene_df):
+    """
+    For each region in query_df, find the nearest gene TSS in gene_df.
+    
+    Parameters
+    ----------
+    query_df : pd.DataFrame
+        Must have columns ['chr', 'start', 'end'] (or 'start' only).
+    gene_df : pd.DataFrame
+        Output of load_gene_tss_from_gencode(), with ['gene', 'gene_chr', 'tss'].
+    
+    Returns
+    -------
+    out : pd.DataFrame
+        query_df with added columns: nearest_gene, nearest_gene_chr, tss, distance
+    """
+    out = query_df.copy()
+    if 'end' not in out.columns:
+        out['end'] = out['start']
+
+    # build TSS bed from gene_df (point intervals)
+    tss_bed_df = gene_df[['gene_chr', 'tss', 'gene']].copy()
+    tss_bed_df['tss_end'] = tss_bed_df['tss'] + 1
+    tss_bed_df = tss_bed_df[['gene_chr', 'tss', 'tss_end', 'gene']].sort_values(['gene_chr', 'tss'])
+
+    query_bed = BedTool.from_dataframe(out[['chr', 'start', 'end']].assign(idx=range(len(out))))
+    tss_bed = BedTool.from_dataframe(tss_bed_df)
+
+    # closest returns distance in last column (-d), on same chromosome (-s not needed here)
+    closest = query_bed.sort().closest(tss_bed.sort(), d=True, t='first').to_dataframe()
+    closest.columns = ['chr', 'start', 'end', 'idx', 'gene_chr', 'tss', 'tss_end', 'nearest_gene', 'distance']
+
+    out = out.reset_index(drop=True)
+    out['nearest_gene'] = closest['nearest_gene'].values
+    out['nearest_gene_chr'] = closest['gene_chr'].values
+    out['tss'] = closest['tss'].values
+    out['distance'] = closest['distance'].values  # always non-negative from bedtools -d
+
+    return out
+
+
 def add_pli(query_df, pli_dict, gene_col='gene'):
     ''' Maps genes with pLI. pli_dict should be in format {'gene': pLI}.
     '''
