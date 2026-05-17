@@ -1113,11 +1113,11 @@ def create_ctrl_pairs(
     rna_bins_grouped = rna_bins_df[['ind',f'{rna_type}_bin']].groupby([f'{rna_type}_bin']).ind.apply(np.array)
 
     # Build chromosome arrays for cross-chromosome filtering
-    atac_chr_series = atac_bins_df[peak_col].str.extract(r'^([\w]+)[:\-]')[0]
+    atac_chr_series = atac_bins_df[peak_col].str.split(r'[:-]').str[0]
 
     if 'chr' in adata_rna.var.columns:
         # Integer-encode chromosomes for fast vectorized comparison
-        all_chrs = sorted(set(atac_chr_series) | set(adata_rna.var['chr'].dropna()))
+        all_chrs = sorted(set(atac_chr_series.dropna()) | set(adata_rna.var['chr'].dropna()))
         chr_to_int = {c: i for i, c in enumerate(all_chrs)}
 
         atac_chr_arr = np.full(len(adata_atac.var), -1, dtype=np.int8)
