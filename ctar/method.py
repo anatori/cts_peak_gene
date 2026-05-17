@@ -1048,8 +1048,6 @@ def create_ctrl_pairs(
     gene_col = 'gene',
     return_bins_df = True,
     flag_combine_bin = False,
-    add_promoter_bin = False,
-    promoter_bp = 5000,
 ):
 
     ''' Obtain b control pairs for each permutation of bin features.
@@ -1113,15 +1111,33 @@ def create_ctrl_pairs(
     pairs = [(i, j) for i in atac_bins_df[f'{atac_type}_bin'].unique() for j in rna_bins_df[f'{rna_type}_bin'].unique()]
     atac_bins_grouped = atac_bins_df[['ind',f'{atac_type}_bin']].groupby([f'{atac_type}_bin']).ind.apply(np.array)
     rna_bins_grouped = rna_bins_df[['ind',f'{rna_type}_bin']].groupby([f'{rna_type}_bin']).ind.apply(np.array)
-    
+
+    # Build chromosome maps for cross-chromosome filtering
+    atac_chr_series = atac_bins_df[peak_col].str.extract(r'^([\w]+)[:\-]')[0]
+    atac_chr_map = dict(zip(atac_bins_df['ind'], atac_chr_series))
+    if 'chr' in adata_rna.var.columns:
+        rna_chr_vals = adata_rna.var['chr'].values
+        rna_chr_map = {ind: rna_chr_vals[ind] for ind in rna_bins_df['ind']}
+        enforce_diff_chr = True
+        print('# Enforcing cross-chromosome constraint for control pairs.')
+    else:
+        enforce_diff_chr = False
+        print('# Warning: chr column not found in adata_rna.var; skipping cross-chromosome filter.')
+
     # Generate random pairs
     ctrl_dic = {}
     for pair in tqdm(pairs):
         atac_inds = atac_bins_grouped.loc[pair[0]]
         rna_inds = rna_bins_grouped.loc[pair[1]]
-        
+
         # Get Cartesian product of indices
         all_pairs = np.array(np.meshgrid(atac_inds, rna_inds)).T.reshape(-1, 2)
+
+        if enforce_diff_chr:
+            atac_chrs = np.array([atac_chr_map[i] for i in all_pairs[:, 0]])
+            rna_chrs = np.array([rna_chr_map[i] for i in all_pairs[:, 1]])
+            all_pairs = all_pairs[atac_chrs != rna_chrs]
+
         n_pairs = all_pairs.shape[0]
 
         if n_pairs < b:
