@@ -676,9 +676,6 @@ def consolidate_null_dic(path, startswith='ctrl_coeff_dic_', remove_empty=True, 
 
     # sort the filenames based on the extracted ranges
     sorted_filenames = sorted(null_dics, key=extract_range)
-    
-    if print_missing:
-        missing_intervals = check_missing_intervals(sorted_filenames)
 
     consolidated_dic = {}
     for x in sorted_filenames:
