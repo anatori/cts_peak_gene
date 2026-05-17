@@ -1112,15 +1112,27 @@ def create_ctrl_pairs(
     atac_bins_grouped = atac_bins_df[['ind',f'{atac_type}_bin']].groupby([f'{atac_type}_bin']).ind.apply(np.array)
     rna_bins_grouped = rna_bins_df[['ind',f'{rna_type}_bin']].groupby([f'{rna_type}_bin']).ind.apply(np.array)
 
-    # Build chromosome maps for cross-chromosome filtering
+    # Build chromosome arrays for cross-chromosome filtering
     atac_chr_series = atac_bins_df[peak_col].str.extract(r'^([\w]+)[:\-]')[0]
-    atac_chr_map = dict(zip(atac_bins_df['ind'], atac_chr_series))
+
     if 'chr' in adata_rna.var.columns:
+        # Integer-encode chromosomes for fast vectorized comparison
+        all_chrs = sorted(set(atac_chr_series) | set(adata_rna.var['chr'].dropna()))
+        chr_to_int = {c: i for i, c in enumerate(all_chrs)}
+
+        atac_chr_arr = np.full(len(adata_atac.var), -1, dtype=np.int8)
+        for ind, chrom in zip(atac_bins_df['ind'], atac_chr_series):
+            atac_chr_arr[ind] = chr_to_int.get(chrom, -1)
+
+        rna_chr_arr = np.full(len(adata_rna.var), -1, dtype=np.int8)
         rna_chr_vals = adata_rna.var['chr'].values
-        rna_chr_map = {ind: rna_chr_vals[ind] for ind in rna_bins_df['ind']}
+        for ind in rna_bins_df['ind']:
+            rna_chr_arr[ind] = chr_to_int.get(rna_chr_vals[ind], -1)
+
         enforce_diff_chr = True
         print('# Enforcing cross-chromosome constraint for control pairs.')
     else:
+        atac_chr_arr = rna_chr_arr = None
         enforce_diff_chr = False
         print('# Warning: chr column not found in adata_rna.var; skipping cross-chromosome filter.')
 
@@ -1130,13 +1142,14 @@ def create_ctrl_pairs(
         atac_inds = atac_bins_grouped.loc[pair[0]]
         rna_inds = rna_bins_grouped.loc[pair[1]]
 
-        # Get Cartesian product of indices
-        all_pairs = np.array(np.meshgrid(atac_inds, rna_inds)).T.reshape(-1, 2)
-
         if enforce_diff_chr:
-            atac_chrs = np.array([atac_chr_map[i] for i in all_pairs[:, 0]])
-            rna_chrs = np.array([rna_chr_map[i] for i in all_pairs[:, 1]])
-            all_pairs = all_pairs[atac_chrs != rna_chrs]
+            # Vectorized array lookup + outer comparison
+            a_chrs = atac_chr_arr[atac_inds] # (n_atac,)
+            r_chrs = rna_chr_arr[rna_inds] # (n_rna,)
+            a_pos, r_pos = np.where(a_chrs[:, None] != r_chrs[None, :])
+            all_pairs = np.stack([atac_inds[a_pos], rna_inds[r_pos]], axis=1)
+        else:
+            all_pairs = np.array(np.meshgrid(atac_inds, rna_inds)).T.reshape(-1, 2)
 
         n_pairs = all_pairs.shape[0]
 
