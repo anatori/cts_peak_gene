@@ -17,20 +17,20 @@ REPO_ROOT="${REPO_ROOT:-/ocean/projects/bio240051p/aprieto/cts_peak_gene}"
 SCRIPTS_DIR="${SCRIPTS_DIR:-${REPO_ROOT}/experiments/job.overlap_analysis}"
 
 # Methods manifest CSV: columns file_path, dataset_name, method_name, pval_col, fdr_col
-METHODS_CSV="${METHODS_CSV:-${SCRIPTS_DIR}/methods_manifests/blood_methods.csv}"
+METHODS_CSV="${METHODS_CSV:-${SCRIPTS_DIR}/methods_manifests/all_methods.csv}"
 
 # Directory/file paths
 DATASET_DIR="${DATASET_DIR:-/ocean/projects/bio240051p/aprieto/bedfiles/validation/union_links/${FILTER_TAG}}"
 UNION_DIR="${UNION_DIR:-/ocean/projects/bio240051p/aprieto/bedfiles/analysis/${FILTER_TAG}}"
-UNION_BED="${UNION_BED:-${UNION_DIR}/multiome_blood_union.bed}"
-ANALYSIS_BED="${ANALYSIS_BED:-/ocean/projects/bio240051p/aprieto/bedfiles/analysis/tenk10k_eqtl_broad_cts/tenk10k_eqtl_broad_cts.bed}"
-OVERLAP_BED="${OVERLAP_BED:-/ocean/projects/bio240051p/aprieto/bedfiles/analysis/overlap/${FILTER_TAG}/tenk10k_eqtl_broad_cts/tenk10k_eqtl_broad_cts.bed}"
-OUT_PATH="${OUT_PATH:-/ocean/projects/bio240051p/aprieto/multiome/analysis/tenk10k_eqtl_broad_cts/${FILTER_TAG}/tenk10k_eqtl_broad_cts_merged.csv}"
+UNION_BED="${UNION_BED:-${UNION_DIR}/multiome_union.bed}"
+ANALYSIS_BED="${ANALYSIS_BED:-/ocean/projects/bio240051p/aprieto/bedfiles/analysis/gwas_pops/gwas_pops_hg38.bed}"
+OVERLAP_BED="${OVERLAP_BED:-/ocean/projects/bio240051p/aprieto/bedfiles/analysis/overlap/${FILTER_TAG}/multiome_gwas_pops.bed}"
+OUT_PATH="${OUT_PATH:-/ocean/projects/bio240051p/aprieto/multiome/analysis/gwas_pops/${FILTER_TAG}/gwas_pops_merged.csv}"
 
 # Optional SNP annotation join
-SNP_ANNOT_FILE="${SNP_ANNOT_FILE:-/ocean/projects/bio240051p/aprieto/multiome/analysis/tenk10k_eqtl_broad_cts/tenk10k_eqtl_broad_cts_info.tsv}"
+SNP_ANNOT_FILE="${SNP_ANNOT_FILE:-/ocean/projects/bio240051p/aprieto/multiome/analysis/gwas_pops/gwas_pops_info.tsv}"
 SNP_ANNOT_ID_COL="${SNP_ANNOT_ID_COL:-final_col}"
-SNP_ANNOT_COLS="${SNP_ANNOT_COLS:-bcell_celltype,bcell_pip,dendritic_celltype,dendritic_pip,myeloid_celltype,myeloid_pip,tcell_celltype,tcell_pip}"
+SNP_ANNOT_COLS="${SNP_ANNOT_COLS:-trait,variant,ensgid,gene,pops_score,gold}"
 
 DEDUP="${DEDUP:-min}"
 
