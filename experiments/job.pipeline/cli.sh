@@ -4,7 +4,7 @@
 
 MULTIOME_DATASET=brain
 MULTIOME_FILE=/ocean/projects/bio240051p/aprieto/multiome/processed/brain_3k/brain.h5mu
-BIN_CONFIG=5.5.5.5.1000
+BIN_CONFIG=5.5.5.5.50000
 TARGET_PATH=/ocean/projects/bio240051p/aprieto/multiome/results/ctar/corr_eval/${MULTIOME_DATASET}/${MULTIOME_DATASET}_unfiltered_${BIN_CONFIG}
 GENOME_FILE=/ocean/projects/bio240051p/aprieto/bedfiles/ref/GRCh38.p14.genome.fixed.fa
 BIN_TYPE='mean_var'
