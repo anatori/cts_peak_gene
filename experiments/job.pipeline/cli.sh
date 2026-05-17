@@ -2,21 +2,21 @@
 
 # FILE: /ocean/projects/bio240051p/aprieto/cts_peak_gene/experiments/job.pipeline/cli.sh
 
-MULTIOME_DATASET=brain
-MULTIOME_FILE=/ocean/projects/bio240051p/aprieto/multiome/processed/brain_3k/brain.h5mu
+MULTIOME_DATASET=bmmc
+MULTIOME_FILE=/ocean/projects/bio240051p/aprieto/multiome/processed/neurips_bmmc/bmmc.h5mu
 BIN_CONFIG=5.5.5.5.50000
 TARGET_PATH=/ocean/projects/bio240051p/aprieto/multiome/results/ctar/corr_eval/${MULTIOME_DATASET}/${MULTIOME_DATASET}_unfiltered_${BIN_CONFIG}
 GENOME_FILE=/ocean/projects/bio240051p/aprieto/bedfiles/ref/GRCh38.p14.genome.fixed.fa
 BIN_TYPE='mean_var'
 PYBEDTOOLS_PATH=/opt/packages/bedtools/2.30.0
-BATCH_SIZE=100000
+BATCH_SIZE=10000
 RESULTS_PATH=/ocean/projects/bio240051p/aprieto/multiome/results/ctar/corr_eval/${MULTIOME_DATASET}/${MULTIOME_DATASET}_unfiltered_${BIN_CONFIG}
-PARTITION="RM-shared"
+PARTITION="RM-512"
 MAX_CONCURRENT=200
 FLAG_LL='False'
 FLAG_SE='True'
 FLAG_CORR='True'
-N_CORES=64
+N_CORES=128
 RANDOM_SEED=777
 DONOR_COL=''
 
@@ -177,7 +177,7 @@ echo ""
 echo "================================"
 echo "Pipeline submitted successfully!"
 echo "================================"
-echo "Links job:     $LINKS_JOB"
+# echo "Links job:     $LINKS_JOB"
 echo "Cis job:      $CIS_JOB"
 echo "Ctrl job:     $CTRL_JOB"
 echo "P-value job:  $PVAL_JOB"
