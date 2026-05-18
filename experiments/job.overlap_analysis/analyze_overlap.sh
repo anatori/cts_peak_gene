@@ -9,7 +9,7 @@ LOG_DIR="${LOG_DIR:-/ocean/projects/bio240051p/aprieto/logs}"
 CONDA_ENV="${CONDA_ENV:-ctar}"
 
 # Datasets to include in the union BED
-DATASETS="${DATASETS:-bmmc,pbmc}"
+DATASETS="${DATASETS:-brain,bmmc,pbmc,shareseq,neat}"
 FILTER_TAG="${FILTER_TAG:-unfiltered}"
 
 # Paths
@@ -23,14 +23,14 @@ METHODS_CSV="${METHODS_CSV:-${SCRIPTS_DIR}/methods_manifests/all_methods.csv}"
 DATASET_DIR="${DATASET_DIR:-/ocean/projects/bio240051p/aprieto/bedfiles/validation/union_links/${FILTER_TAG}}"
 UNION_DIR="${UNION_DIR:-/ocean/projects/bio240051p/aprieto/bedfiles/analysis/${FILTER_TAG}}"
 UNION_BED="${UNION_BED:-${UNION_DIR}/multiome_union.bed}"
-ANALYSIS_BED="${ANALYSIS_BED:-/ocean/projects/bio240051p/aprieto/bedfiles/analysis/gwas_pops/gwas_pops_hg38.bed}"
-OVERLAP_BED="${OVERLAP_BED:-/ocean/projects/bio240051p/aprieto/bedfiles/analysis/overlap/${FILTER_TAG}/multiome_gwas_pops.bed}"
-OUT_PATH="${OUT_PATH:-/ocean/projects/bio240051p/aprieto/multiome/analysis/gwas_pops/${FILTER_TAG}/gwas_pops_merged.csv}"
+ANALYSIS_BED="${ANALYSIS_BED:-/ocean/projects/bio240051p/aprieto/bedfiles/analysis/ukbb_94traits/ukbb_hg38.bed}"
+OVERLAP_BED="${OVERLAP_BED:-/ocean/projects/bio240051p/aprieto/bedfiles/analysis/overlap/${FILTER_TAG}/multiome_ukbb.bed}"
+OUT_PATH="${OUT_PATH:-/ocean/projects/bio240051p/aprieto/multiome/analysis/ukbb_94traits/${FILTER_TAG}/ukbb_merged.csv}"
 
 # Optional SNP annotation join
-SNP_ANNOT_FILE="${SNP_ANNOT_FILE:-/ocean/projects/bio240051p/aprieto/multiome/analysis/gwas_pops/gwas_pops_info.tsv}"
-SNP_ANNOT_ID_COL="${SNP_ANNOT_ID_COL:-final_col}"
-SNP_ANNOT_COLS="${SNP_ANNOT_COLS:-trait,variant,ensgid,gene,pops_score,gold}"
+SNP_ANNOT_FILE="${SNP_ANNOT_FILE:-/ocean/projects/bio240051p/aprieto/multiome/validation/originals/release1.1/UKBB_94traits_release1_susie_saige.tsv}"
+SNP_ANNOT_ID_COL="${SNP_ANNOT_ID_COL:-variant}"
+SNP_ANNOT_COLS="${SNP_ANNOT_COLS:-rsid,trait,maf,pip}"
 
 DEDUP="${DEDUP:-min}"
 
