@@ -5,13 +5,13 @@
 MULTIOME_DATASET=pbmc
 CELLTYPE=bcell
 MULTIOME_FILE=/ocean/projects/bio240051p/aprieto/multiome/processed/pbmc_sorted_10k/unfilt_broad_celltypes/${CELLTYPE}.h5mu
-BIN_CONFIG=5.5.5.5.1000
-TARGET_PATH=/ocean/projects/bio240051p/aprieto/multiome/results/ctar/final_eval/${MULTIOME_DATASET}/${MULTIOME_DATASET}_broad_celltype_unfilt_corr_${BIN_CONFIG}/${CELLTYPE}
+BIN_CONFIG=5.5.5.5.50000
+TARGET_PATH=/ocean/projects/bio240051p/aprieto/multiome/results/ctar/corr_eval/${MULTIOME_DATASET}/${MULTIOME_DATASET}_broad_celltype_unfilt_${BIN_CONFIG}/${CELLTYPE}
 GENOME_FILE=/ocean/projects/bio240051p/aprieto/bedfiles/ref/GRCh38.p14.genome.fixed.fa
 BIN_TYPE='mean_var'
 PYBEDTOOLS_PATH=/opt/packages/bedtools/2.30.0
 BATCH_SIZE=100000
-RESULTS_PATH=/ocean/projects/bio240051p/aprieto/multiome/results/ctar/final_eval/${MULTIOME_DATASET}/${MULTIOME_DATASET}_broad_celltype_unfilt_corr_${BIN_CONFIG}/${CELLTYPE}
+RESULTS_PATH=/ocean/projects/bio240051p/aprieto/multiome/results/ctar/corr_eval/${MULTIOME_DATASET}/${MULTIOME_DATASET}_broad_celltype_unfilt_${BIN_CONFIG}/${CELLTYPE}
 PARTITION="RM-shared"
 MAX_CONCURRENT=200
 FLAG_LL='False'
