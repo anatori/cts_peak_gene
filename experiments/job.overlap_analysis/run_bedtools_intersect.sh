@@ -26,7 +26,7 @@ if [[ ! -s "${UNION_BED}" ]]; then
 fi
 
 base="$(basename "${ANALYSIS_BED}" .bed)"
-if [[ "${base}" == *eqtl* || "${base}" == *gwas* ]]; then
+if [[ "${base}" == *eqtl* || "${base}" == *gwas* || "${base}" == *ukbb* ]]; then
   bedtools intersect -wo \
     -a "${ANALYSIS_BED}" \
     -b "${UNION_BED}" \
