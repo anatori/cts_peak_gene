@@ -361,11 +361,14 @@ def attach_link_indices(links_df, adata_atac, adata_rna, peak_col='peak', gene_c
     links_df['index_y'] = links_df[gene_col].map(rna_idx_map)
 
     if links_df['index_x'].isna().any():
-        missing_peaks = links_df.loc[links_df['index_x'].isna(), peak_col].astype(str).unique()[:5]
-        raise ValueError(f"Some peaks in cis_links_df.csv were not found in loaded ATAC features: {missing_peaks}")
+        missing_peaks = links_df.loc[links_df['index_x'].isna(), peak_col].astype(str).unique()
+        print(f"Warning: {len(missing_peaks)} peaks not found in ATAC features, skipping: {missing_peaks[:5]}")
+        links_df = links_df[links_df['index_x'].notna()]
+
     if links_df['index_y'].isna().any():
-        missing_genes = links_df.loc[links_df['index_y'].isna(), gene_col].astype(str).unique()[:5]
-        raise ValueError(f"Some genes in cis_links_df.csv were not found in loaded RNA features: {missing_genes}")
+        missing_genes = links_df.loc[links_df['index_y'].isna(), gene_col].astype(str).unique()
+        print(f"Warning: {len(missing_genes)} genes not found in RNA features, skipping: {missing_genes[:5]}")
+        links_df = links_df[links_df['index_y'].notna()]
 
     links_df['index_x'] = links_df['index_x'].astype(int)
     links_df['index_y'] = links_df['index_y'].astype(int)
