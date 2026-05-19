@@ -152,11 +152,37 @@ def _read_methods_csv(methods_csv: str) -> List[Tuple[str, str, str]]:
 	return [(r["file_path"].strip(), r["method_name"].strip(), r["score_col"].strip()) for r in rows]
 
 
+def _resolve_method_rows(args) -> List[Tuple[str, str, str]]:
+	"""
+	Returns list of (file_path, method_name, score_col) from --methods_csv (old)
+	or --config_file+--celltype (new).
+	"""
+	if args.methods_csv:
+		return _read_methods_csv(args.methods_csv)
+	if not os.path.isfile(args.config_file):
+		raise FileNotFoundError(f"Config file not found: {args.config_file}")
+	with open(args.config_file, newline="") as f:
+		reader = csv.DictReader(f)
+		required = {"file_path", "score_col", "method_name"}
+		if not required.issubset(set(reader.fieldnames or [])):
+			raise ValueError(
+				f"config_file must have columns: {required}. Got: {reader.fieldnames}"
+			)
+		rows = list(reader)
+	if args.celltype:
+		rows = [r for r in rows if r.get("celltype", "").strip() == args.celltype]
+		if not rows:
+			raise ValueError(
+				f"No rows found for celltype={args.celltype!r} in {args.config_file}"
+			)
+	return [(r["file_path"].strip(), r["method_name"].strip(), r["score_col"].strip()) for r in rows]
+
+
 def main(args):
 	AGG_PATH = args.agg_path
 	RES_PATH = args.res_path
 
-	raw_sources = _read_methods_csv(args.methods_csv)
+	raw_sources = _resolve_method_rows(args)
 
 	method_sources: List[Tuple[str, str, str]] = []
 	for fp, name, col in raw_sources:
@@ -201,9 +227,22 @@ if __name__ == "__main__":
 	parser.add_argument(
 		"--methods_csv",
 		type=str,
-		required=True,
+		default=None,
 		help="CSV with columns: file_path, score_col, method_name. "
-		     "Row order determines METHOD_COLS order in evaluation.",
+		     "Mutually exclusive with --config_file.",
+	)
+	parser.add_argument(
+		"--config_file",
+		type=str,
+		default=None,
+		help="Celltype config CSV with columns: celltype, file_path, score_col, method_name[, eval_dir]. "
+		     "Use with --celltype to filter rows by cell type.",
+	)
+	parser.add_argument(
+		"--celltype",
+		type=str,
+		default=None,
+		help="Filter --config_file rows to this cell type. No-op without --config_file.",
 	)
 	parser.add_argument(
 		"--agg_path",
@@ -226,4 +265,6 @@ if __name__ == "__main__":
 	)
 
 	args = parser.parse_args()
+	if not args.methods_csv and not args.config_file:
+		parser.error("Provide --methods_csv or --config_file (with optional --celltype).")
 	main(args)

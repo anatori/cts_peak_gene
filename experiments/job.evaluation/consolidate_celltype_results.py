@@ -12,10 +12,9 @@ def main(args):
     
     os.makedirs(OUTPUT_DIR, exist_ok=True)
     
-    # Read cell type configuration
-    config_df = pd.read_csv(CONFIG_FILE,index_col=0)
-    config_df = config_df.reset_index(names='celltype')
-    celltypes = config_df['celltype'].tolist()
+    # Read cell type configuration (unique celltypes in first-occurrence order)
+    config_df = pd.read_csv(CONFIG_FILE)
+    celltypes = config_df['celltype'].unique().tolist()
     
     print(f"Consolidating results for {len(celltypes)} cell types: {celltypes}")
     

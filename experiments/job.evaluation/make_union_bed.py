@@ -57,12 +57,43 @@ def read_methods_csv(methods_csv: str):
     return list(seen.keys())
 
 
+def _resolve_file_paths(args) -> list:
+    """
+    Returns list of unique file_paths from --methods_csv (old) or --config_file+--celltype (new).
+    """
+    if args.methods_csv:
+        return read_methods_csv(args.methods_csv)
+    if not os.path.isfile(args.config_file):
+        raise FileNotFoundError(f"Config file not found: {args.config_file}")
+    with open(args.config_file, newline="") as f:
+        reader = csv.DictReader(f)
+        required = {"file_path", "score_col", "method_name"}
+        if not required.issubset(set(reader.fieldnames or [])):
+            raise ValueError(
+                f"config_file must have columns: {required}. Got: {reader.fieldnames}"
+            )
+        rows = list(reader)
+    if args.celltype:
+        rows = [r for r in rows if r.get("celltype", "").strip() == args.celltype]
+        if not rows:
+            raise ValueError(
+                f"No rows found for celltype={args.celltype!r} in {args.config_file}"
+            )
+    seen: dict = {}
+    for row in rows:
+        fp = row["file_path"].strip()
+        if fp and fp not in seen:
+            seen[fp] = True
+    return list(seen.keys())
+
+
 def main(args):
     BED_PATH = args.bed_path
     DATASET_NAME = args.dataset_name
 
-    source_files = read_methods_csv(args.methods_csv)
-    print(f"Loaded {len(source_files)} unique input files from {args.methods_csv}")
+    source_files = _resolve_file_paths(args)
+    src_label = args.methods_csv or args.config_file
+    print(f"Loaded {len(source_files)} unique input files from {src_label}")
 
     pg_set = set()
     per_label_stats = []
@@ -118,10 +149,22 @@ if __name__ == "__main__":
     parser.add_argument(
         "--methods_csv",
         type=str,
-        required=True,
+        default=None,
         help="CSV with columns: file_path, score_col, method_name. "
-             "Defines which files to include in the union BED. "
-             "A file appearing in multiple rows (different score columns) is included once.",
+             "Mutually exclusive with --config_file.",
+    )
+    parser.add_argument(
+        "--config_file",
+        type=str,
+        default=None,
+        help="Celltype config CSV with columns: celltype, file_path, score_col, method_name[, eval_dir]. "
+             "Use with --celltype to filter rows by cell type.",
+    )
+    parser.add_argument(
+        "--celltype",
+        type=str,
+        default=None,
+        help="Filter --config_file rows to this cell type. No-op without --config_file.",
     )
     parser.add_argument(
         "--bed_path",
@@ -131,4 +174,6 @@ if __name__ == "__main__":
     parser.add_argument("--dataset_name", type=str, default="pbmc")
 
     args = parser.parse_args()
+    if not args.methods_csv and not args.config_file:
+        parser.error("Provide --methods_csv or --config_file (with optional --celltype).")
     main(args)
