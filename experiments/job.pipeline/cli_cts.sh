@@ -2,9 +2,9 @@
 
 # FILE: /ocean/projects/bio240051p/aprieto/cts_peak_gene/experiments/job.pipeline/cli_cts.sh
 
-MULTIOME_DATASET=pbmc
-CELLTYPE=bcell
-MULTIOME_FILE=/ocean/projects/bio240051p/aprieto/multiome/processed/pbmc_sorted_10k/unfilt_broad_celltypes/${CELLTYPE}.h5mu
+MULTIOME_DATASET=bmmc
+CELLTYPE=tcell
+MULTIOME_FILE=/ocean/projects/bio240051p/aprieto/multiome/processed/neurips_bmmc/unfilt_broad_celltypes/${CELLTYPE}.h5mu
 BIN_CONFIG=5.5.5.5.50000
 TARGET_PATH=/ocean/projects/bio240051p/aprieto/multiome/results/ctar/corr_eval/${MULTIOME_DATASET}/${MULTIOME_DATASET}_broad_celltype_unfilt_${BIN_CONFIG}/${CELLTYPE}
 GENOME_FILE=/ocean/projects/bio240051p/aprieto/bedfiles/ref/GRCh38.p14.genome.fixed.fa
@@ -12,12 +12,12 @@ BIN_TYPE='mean_var'
 PYBEDTOOLS_PATH=/opt/packages/bedtools/2.30.0
 BATCH_SIZE=100000
 RESULTS_PATH=/ocean/projects/bio240051p/aprieto/multiome/results/ctar/corr_eval/${MULTIOME_DATASET}/${MULTIOME_DATASET}_broad_celltype_unfilt_${BIN_CONFIG}/${CELLTYPE}
-PARTITION="RM-shared"
+PARTITION="RM-512"
 MAX_CONCURRENT=200
 FLAG_LL='False'
 FLAG_SE='True'
 FLAG_CORR='True'
-N_CORES=64
+N_CORES=128
 RANDOM_SEED=777
 DONOR_COL=''
 
@@ -33,17 +33,17 @@ else
     ARRAY_OPT="--array=0-$((TOTAL_NUM_BATCHES - 1))%${MAX_CONCURRENT}"
 fi
 
-CP_FILE=/ocean/projects/bio240051p/aprieto/multiome/results/ctar/final_eval/${MULTIOME_DATASET}/${MULTIOME_DATASET}_unfiltered_5.5.5.5.1000/cis_links_df.csv
-echo "Submitting CP job from ${CP_FILE} ..."
-CP_JOB=$(sbatch --parsable -p $PARTITION -t 1-00:00:00 \
-  -A bio240051p \
-  --ntasks-per-node=$N_CORES \
-  -o /ocean/projects/bio240051p/aprieto/logs/cp_%j.err -J "cis_$BIN_CONFIG" \
-  --wrap "source ~/.bashrc \
-        mkdir -p ${TARGET_PATH}
-        cut -d ',' -f 1-3 ${CP_FILE} \
-            > ${TARGET_PATH}/cis_links_df.csv")
-echo "CP job ID: $CP_JOB"
+# CP_FILE=/ocean/projects/bio240051p/aprieto/multiome/results/ctar/final_eval/${MULTIOME_DATASET}/${MULTIOME_DATASET}_unfiltered_5.5.5.5.1000/cis_links_df.csv
+# echo "Submitting CP job from ${CP_FILE} ..."
+# CP_JOB=$(sbatch --parsable -p $PARTITION -t 1-00:00:00 \
+#   -A bio240051p \
+#   --ntasks-per-node=$N_CORES \
+#   -o /ocean/projects/bio240051p/aprieto/logs/cp_%j.err -J "cis_$BIN_CONFIG" \
+#   --wrap "source ~/.bashrc \
+#         mkdir -p ${TARGET_PATH}
+#         cut -d ',' -f 1-3 ${CP_FILE} \
+#             > ${TARGET_PATH}/cis_links_df.csv")
+# echo "CP job ID: $CP_JOB"
 
 ###########################################################################################
 ######                            Compute cis coefficients                           ######
@@ -52,7 +52,6 @@ echo "CP job ID: $CP_JOB"
 echo "Submitting $BIN_CONFIG compute_cis_only job..."
 CIS_JOB=$(sbatch --parsable -p $PARTITION -t 1-00:00:00 \
   -A bio240051p \
-  --dependency=afterok:${CP_JOB} \
   --ntasks-per-node=$N_CORES \
   -o /ocean/projects/bio240051p/aprieto/logs/cis_%j.err -J "cis_$BIN_CONFIG" \
   --wrap "source ~/.bashrc && conda activate ctar && python /ocean/projects/bio240051p/aprieto/cts_peak_gene/CLI_ctar.py \
@@ -120,7 +119,6 @@ if [ "$USE_INF_MODE" = true ]; then
         
         CTRL_JOB=$(sbatch --parsable -p $PARTITION -t 2-00:00:00 \
             -A bio240051p \
-            --dependency=afterok:${CP_JOB} \
             --ntasks-per-node=$N_CORES \
             --array=0-$((TOTAL_NUM_BATCHES - 1))%${MAX_CONCURRENT} \
             -o /ocean/projects/bio240051p/aprieto/logs/ctrl_%A_%a.err \
@@ -144,7 +142,6 @@ else
     echo "Submitting $BIN_CONFIG compute_ctrl_only job with $TOTAL_NUM_BATCHES batches..."
     CTRL_JOB=$(sbatch --parsable -p $PARTITION -t 1-00:00:00 $ARRAY_OPT \
       -A bio240051p \
-      --dependency=afterok:${CP_JOB} \
       --ntasks-per-node=$N_CORES \
       -o /ocean/projects/bio240051p/aprieto/logs/ctrl_%A_%a.err -J "ctrl_$BIN_CONFIG" \
       --wrap "source ~/.bashrc && conda activate ctar && python /ocean/projects/bio240051p/aprieto/cts_peak_gene/CLI_ctar.py \
@@ -177,7 +174,7 @@ echo ""
 echo "================================"
 echo "Pipeline submitted successfully!"
 echo "================================"
-echo "CP job:       $CP_JOB"
+# echo "CP job:       $CP_JOB"
 echo "Cis job:      $CIS_JOB"
 echo "Ctrl job:     $CTRL_JOB"
 echo "P-value job:  $PVAL_JOB"
