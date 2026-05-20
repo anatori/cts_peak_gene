@@ -1619,7 +1619,7 @@ def fit_gpd_null_tail(ctrl, quantile=0.9, min_exceedances=30, max_floor=1e-15):
     return tail_prob
 
 
-def empirical_fdr(stat, ctrl_stat, target_fdr=0.1, B=None, pi0=1.0, tail='laplace', gpd_quantile=0.9):
+def empirical_fdr(stat, ctrl_stat, target_fdr=0.1, B=None, pi0=1.0, tail='default', gpd_quantile=0.9):
     ''' 
     Compute empirical/local FDR. Find a threshold t s.t. 
         FDR = (#{ctrl_stat >= t} + 1 / B + 1) / (#{stat >= t})
@@ -1637,7 +1637,8 @@ def empirical_fdr(stat, ctrl_stat, target_fdr=0.1, B=None, pi0=1.0, tail='laplac
     pi0 : float
         Proportion of true nulls. Default is 1.0, which is conservative.
     tail : str
-        'laplace'  — (1 + null_counts) / (1 + B)  [default, fast]
+        'default'  - (null_counts) / (B)
+        'laplace'  — (1 + null_counts) / (1 + B)
         'gpd'      — GPD extrapolation for statistics beyond max(ctrl)
     Returns
     ----------
@@ -1668,10 +1669,14 @@ def empirical_fdr(stat, ctrl_stat, target_fdr=0.1, B=None, pi0=1.0, tail='laplac
         tail_fn = fit_gpd_null_tail(ctrl_clean, quantile=gpd_quantile)
         null_tail_prob = tail_fn(thresholds)
         fdr_vals = np.minimum((pi0 * null_tail_prob * B) / (n_disc / M), 1.0)
-    else: # laplace
+    elif tail == 'laplace':
         # number of null discoveries at all possible thresholds
         null_counts = len(ctrl_asc) - np.searchsorted(ctrl_asc, thresholds, side='left')
         fdr_vals = np.minimum((pi0 * (null_counts + 1) / (B + 1)) / (n_disc / M), 1.0)
+    else:
+        # no correction, q-values can be zero
+        null_counts = len(ctrl_asc) - np.searchsorted(ctrl_asc, thresholds, side='left')
+        fdr_vals = np.minimum((pi0 * null_counts / B) / (n_disc / M), 1.0)
 
     fdr_vals = np.minimum.accumulate(fdr_vals[::-1])[::-1]
 
