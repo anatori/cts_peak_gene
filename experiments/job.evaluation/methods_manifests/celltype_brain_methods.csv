@@ -1,0 +1,17 @@
+celltype,file_path,score_col,method_name
+astrocyte,/ocean/projects/bio240051p/aprieto/multiome/results/signac/broad_celltypes/brain/signac_brain_astrocyte_links.csv,pvalue,signac
+astrocyte,/ocean/projects/bio240051p/aprieto/multiome/results/scmultimap/broad_celltype/brain/scmultimap_brain_astrocyte_cis.csv,pval,scmm
+astrocyte,/ocean/projects/bio240051p/aprieto/multiome/results/ctar/corr_eval/brain/brain_unfiltered_5.5.5.5.50000/cis_links_df.csv,5.5.5.5.50000_mcpval,ctar_5.5.5.5.50k
+astrocyte,/ocean/projects/bio240051p/aprieto/multiome/results/ctar/corr_eval/brain/brain_unfiltered_5.5.5.5.50000/cis_links_df.csv,5.5.5.5.50000_zpval,ctar_5.5.5.5.50k_zpval
+microglia,/ocean/projects/bio240051p/aprieto/multiome/results/signac/broad_celltypes/brain/signac_brain_microglia_links.csv,pvalue,signac
+microglia,/ocean/projects/bio240051p/aprieto/multiome/results/scmultimap/broad_celltype/brain/scmultimap_brain_microglia_cis.csv,pval,scmm
+microglia,/ocean/projects/bio240051p/aprieto/multiome/results/ctar/corr_eval/brain/brain_unfiltered_5.5.5.5.50000/cis_links_df.csv,5.5.5.5.50000_mcpval,ctar_5.5.5.5.50k
+microglia,/ocean/projects/bio240051p/aprieto/multiome/results/ctar/corr_eval/brain/brain_unfiltered_5.5.5.5.50000/cis_links_df.csv,5.5.5.5.50000_zpval,ctar_5.5.5.5.50k_zpval
+neurons,/ocean/projects/bio240051p/aprieto/multiome/results/signac/broad_celltypes/brain/signac_brain_neurons_links.csv,pvalue,signac
+neurons,/ocean/projects/bio240051p/aprieto/multiome/results/scmultimap/broad_celltype/brain/scmultimap_brain_neurons_cis.csv,pval,scmm
+neurons,/ocean/projects/bio240051p/aprieto/multiome/results/ctar/corr_eval/brain/brain_unfiltered_5.5.5.5.50000/cis_links_df.csv,5.5.5.5.50000_mcpval,ctar_5.5.5.5.50k
+neurons,/ocean/projects/bio240051p/aprieto/multiome/results/ctar/corr_eval/brain/brain_unfiltered_5.5.5.5.50000/cis_links_df.csv,5.5.5.5.50000_zpval,ctar_5.5.5.5.50k_zpval
+oligodendrocyte,/ocean/projects/bio240051p/aprieto/multiome/results/signac/broad_celltypes/brain/signac_brain_oligodendrocyte_links.csv,pvalue,signac
+oligodendrocyte,/ocean/projects/bio240051p/aprieto/multiome/results/scmultimap/broad_celltype/brain/scmultimap_brain_oligodendrocyte_cis.csv,pval,scmm
+oligodendrocyte,/ocean/projects/bio240051p/aprieto/multiome/results/ctar/corr_eval/brain/brain_unfiltered_5.5.5.5.50000/cis_links_df.csv,5.5.5.5.50000_mcpval,ctar_5.5.5.5.50k
+oligodendrocyte,/ocean/projects/bio240051p/aprieto/multiome/results/ctar/corr_eval/brain/brain_unfiltered_5.5.5.5.50000/cis_links_df.csv,5.5.5.5.50000_zpval,ctar_5.5.5.5.50k_zpval
