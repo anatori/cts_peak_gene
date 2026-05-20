@@ -13,12 +13,12 @@ REPO_ROOT="${REPO_ROOT:-/ocean/projects/bio240051p/aprieto/cts_peak_gene}"
 SCRIPTS_DIR="${SCRIPTS_DIR:-${REPO_ROOT}/experiments/job.evaluation}"
 
 # Dataset name
-DATASET_NAME="${DATASET_NAME:-pbmc}"
+DATASET_NAME="${DATASET_NAME:-bmmc}"
 FILTER_TAG="${FILTER_TAG:-unfiltered}"
 
 # Celltype config CSV: columns celltype, file_path, score_col, method_name, eval_dir (optional)
 # Multiple rows per celltype (one per method)
-CONFIG_FILE="${CONFIG_FILE:-${SCRIPTS_DIR}/methods_manifests/${DATASET_NAME}_celltype_methods.csv}"
+CONFIG_FILE="${CONFIG_FILE:-${SCRIPTS_DIR}/methods_manifests/celltype_${DATASET_NAME}_methods.csv}"
 
 # Global eval dir override — overrides any eval_dir value in the config CSV.
 # If unset and a celltype has no eval_dir, evaluation steps (2-5) are skipped for that celltype.
@@ -26,7 +26,7 @@ EVAL_DIR="${EVAL_DIR:-/ocean/projects/bio240051p/aprieto/bedfiles/validation/tis
 
 # Shared parameters
 DEDUP="${DEDUP:-min}"
-REFERENCE_METHOD="${REFERENCE_METHOD:-ctar_filt}"
+REFERENCE_METHOD="${REFERENCE_METHOD:-ctar_5.5.5.5.50k}"
 N_BOOTSTRAP="${N_BOOTSTRAP:-1000}"
 
 mkdir -p "${LOG_DIR}"
@@ -90,7 +90,7 @@ print(','.join(names))
   # Step 1: make_union_bed
   echo "Submitting make_union_bed for ${CELLTYPE}..."
   UNION_JOB_ID=$(submit \
-    -t 1-00:00:00 --mem=128G -J "union_${DATASET_NAME}_${CELLTYPE}" \
+    -t 1-00:00:00 --ntasks-per-node=32 -J "union_${DATASET_NAME}_${CELLTYPE}" \
     -o "${LOG_DIR}/union_${DATASET_NAME}_${CELLTYPE}-%j.out" \
     -e "${LOG_DIR}/union_${DATASET_NAME}_${CELLTYPE}-%j.err" \
     --wrap "source ~/.bashrc && conda activate ${CONDA_ENV} && \
@@ -113,7 +113,7 @@ print(','.join(names))
   echo "Submitting bedtools intersect for ${CELLTYPE}..."
   INTERSECT_JOB_ID=$(submit \
     --dependency=afterok:${UNION_JOB_ID} \
-    -t 0-06:00:00 --mem=16G -J "intersect_${DATASET_NAME}_${CELLTYPE}" \
+    -t 0-06:00:00 --ntasks-per-node=32 -J "intersect_${DATASET_NAME}_${CELLTYPE}" \
     -o "${LOG_DIR}/intersect_${DATASET_NAME}_${CELLTYPE}-%j.out" \
     -e "${LOG_DIR}/intersect_${DATASET_NAME}_${CELLTYPE}-%j.err" \
     --wrap "bash '${SCRIPTS_DIR}/run_bedtools_intersect.sh' \
@@ -127,7 +127,7 @@ print(','.join(names))
   echo "Submitting aggregate_overlaps for ${CELLTYPE}..."
   AGG_JOB_ID=$(submit \
     --dependency=afterok:${INTERSECT_JOB_ID} \
-    -t 0-06:00:00 --mem=32G -J "aggregate_${DATASET_NAME}_${CELLTYPE}" \
+    -t 0-06:00:00 --ntasks-per-node=32 -J "aggregate_${DATASET_NAME}_${CELLTYPE}" \
     -o "${LOG_DIR}/aggregate_${DATASET_NAME}_${CELLTYPE}-%j.out" \
     -e "${LOG_DIR}/aggregate_${DATASET_NAME}_${CELLTYPE}-%j.err" \
     --wrap "source ~/.bashrc && conda activate ${CONDA_ENV} && \
@@ -142,7 +142,7 @@ print(','.join(names))
   echo "Submitting merge_methods for ${CELLTYPE}..."
   MERGE_JOB_ID=$(submit \
     --dependency=afterok:${AGG_JOB_ID} \
-    -t 1-00:00:00 --mem=128G -J "merge_${DATASET_NAME}_${CELLTYPE}" \
+    -t 1-00:00:00 --ntasks-per-node=32 -J "merge_${DATASET_NAME}_${CELLTYPE}" \
     -o "${LOG_DIR}/merge_${DATASET_NAME}_${CELLTYPE}-%j.out" \
     -e "${LOG_DIR}/merge_${DATASET_NAME}_${CELLTYPE}-%j.err" \
     --wrap "source ~/.bashrc && conda activate ${CONDA_ENV} && \
@@ -160,7 +160,7 @@ print(','.join(names))
   echo "Submitting calculate_auerc_seeds for ${CELLTYPE}..."
   AURC_JOB_ID=$(submit \
     --dependency=afterok:${MERGE_JOB_ID} \
-    -t 3-00:00:00 --mem=32G -J "auerc_${DATASET_NAME}_${CELLTYPE}" \
+    -t 3-00:00:00 --ntasks-per-node=32 -J "auerc_${DATASET_NAME}_${CELLTYPE}" \
     -o "${LOG_DIR}/auerc_${DATASET_NAME}_${CELLTYPE}-%j.out" \
     -e "${LOG_DIR}/auerc_${DATASET_NAME}_${CELLTYPE}-%j.err" \
     --wrap "source ~/.bashrc && conda activate ${CONDA_ENV} && \
@@ -197,7 +197,7 @@ if [[ -n "${AURC_DEPS}" ]]; then
   echo "Submitting consolidation job..."
   CONSOLIDATE_JOB_ID=$(submit \
     --dependency=afterok:${AURC_DEPS} \
-    -t 0-02:00:00 --mem=16G -J "consolidate_${DATASET_NAME}" \
+    -t 0-02:00:00 --ntasks-per-node=8 -J "consolidate_${DATASET_NAME}" \
     -o "${LOG_DIR}/consolidate_${DATASET_NAME}-%j.out" \
     -e "${LOG_DIR}/consolidate_${DATASET_NAME}-%j.err" \
     --wrap "source ~/.bashrc && conda activate ${CONDA_ENV} && \

@@ -30,13 +30,13 @@ def main(args):
         
         # Find all AUERC result files
         for file in os.listdir(celltype_dir):
-            if not file.endswith('_auerc.csv'):
+            if not file.endswith('_seed_avg.csv'):
                 continue
             
             # Extract ground truth source (e.g., "gtex", "onek1k", "abc", etc.)
             # File format: {source}_{dataset}_{celltype}_auerc.csv
-            # e.g., onek1k_bmmc_nk_auerc.csv -> source = onek1k
-            parts = file.replace('_auerc.csv', '').split('_')
+            # e.g., onek1k_bmmc_nk_seed_avg.csv -> source = onek1k
+            parts = file.replace('_seed_avg.csv', '').split('_')
             
             # Heuristic: first part is usually the source
             source = parts[0]
@@ -65,7 +65,7 @@ def main(args):
         cols = ['celltype'] + [c for c in full_df.columns if c != 'celltype']
         full_df = full_df[cols]
         
-        output_file = os.path.join(OUTPUT_DIR, f'{source}_{DATASET_NAME}_all_celltypes_auerc.csv')
+        output_file = os.path.join(OUTPUT_DIR, f'{source}_{DATASET_NAME}_all_celltypes_seed_avg.csv')
         full_df.to_csv(output_file, index=False)
         
         print(f"\nConsolidated {len(dfs)} cell types for {source}:")
