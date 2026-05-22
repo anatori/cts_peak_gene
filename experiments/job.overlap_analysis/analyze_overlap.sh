@@ -34,6 +34,11 @@ SNP_ANNOT_COLS="${SNP_ANNOT_COLS:-trait,variant,ensgid,gene,pops_score,gold}"
 
 DEDUP="${DEDUP:-min}"
 
+# Optional gene-match filter: keep only overlaps where the gene in the SNP ID matches the
+# link gene. Requires the analysis BED col-4 to be in `variant;gene` compound format.
+# Set to any non-empty value to enable (e.g. FILTER_GENE_MATCH=1); default is off.
+FILTER_GENE_MATCH="${FILTER_GENE_MATCH:-}"
+
 echo "Datasets: ${DATASETS}, filter: ${FILTER_TAG}"
 
 mkdir -p "${LOG_DIR}"
@@ -77,6 +82,12 @@ if [[ -n "${SNP_ANNOT_FILE}" ]]; then
   fi
 fi
 
+# Build optional gene-match filter arg
+GENE_MATCH_ARGS=""
+if [[ "${FILTER_GENE_MATCH,,}" == "true" ]]; then
+  GENE_MATCH_ARGS="--filter_gene_match"
+fi
+
 echo "Submitting merge_methods.py ..."
 MERGE_JOB_ID=$(submit \
   -t 1-00:00:00 --ntasks-per-node=64 -J "merge_analysis" \
@@ -90,7 +101,8 @@ MERGE_JOB_ID=$(submit \
             --methods_csv '${METHODS_CSV}' \
             --out_path '${OUT_PATH}' \
             --dedup '${DEDUP}' \
-            ${ANNOT_ARGS}")
+            ${ANNOT_ARGS} \
+            ${GENE_MATCH_ARGS}")
 echo "MERGE_JOB_ID=${MERGE_JOB_ID}"
 
 echo "Submitted jobs:"

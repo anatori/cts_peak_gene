@@ -185,6 +185,17 @@ def load_overlap_bed(overlap_bed: str) -> pd.DataFrame:
 def main(args):
     overlap_df = load_overlap_bed(args.overlap_bed)
 
+    if args.filter_gene_match:
+        snp_gene = overlap_df["snp_id"].str.split(";", n=2).str[1]
+        mask = snp_gene == overlap_df["gene"]
+        n_before = len(overlap_df)
+        overlap_df = overlap_df[mask].reset_index(drop=True)
+        print(
+            f"[gene match filter] kept {len(overlap_df)}/{n_before} rows "
+            f"({len(overlap_df)/n_before:.1%})",
+            flush=True,
+        )
+
     raw_sources = _read_methods_csv(args.methods_csv)
     method_sources = []
     for fp, dataset, name, col, fdr_col in raw_sources:
@@ -270,6 +281,12 @@ if __name__ == "__main__":
         choices=["min", "max", "mean", "median", "none"],
         help="How to aggregate duplicate (peak,gene) rows within each method file. "
              "For min/max, the q-value is taken from the same row as the selected p-value.",
+    )
+    parser.add_argument(
+        "--filter_gene_match", action="store_true", default=False,
+        help="If set, keep only overlap rows where the gene encoded in snp_id "
+             "(compound `variant;gene` format) matches the peak-gene link gene. "
+             "Has no effect when snp_id does not contain a semicolon.",
     )
     args = parser.parse_args()
     main(args)
