@@ -9,7 +9,7 @@ LOG_DIR="${LOG_DIR:-/ocean/projects/bio240051p/aprieto/logs}"
 CONDA_ENV="${CONDA_ENV:-ctar}"
 
 # Datasets to include in the union BED
-DATASETS="${DATASETS:-bmmc,pbmc}"
+DATASETS="${DATASETS:-bmmc,pbmc,brain,shareseq,neat}"
 FILTER_TAG="${FILTER_TAG:-unfiltered}"
 
 # Paths
