@@ -374,7 +374,7 @@ def main(args):
             overlap_df["label"] = overlap_df["score"] <= 0.1
         elif label.startswith("abc"):
             overlap_df["label"] = overlap_df["score"] >= abc_score_thres
-        elif label.startswith("crispr"):
+        elif label.startswith("crispr") or ("gwas" in label):
             overlap_df["label"] = overlap_df["score"]
         else:
             raise ValueError(f"Unrecognized dataset label prefix for file {file} -> label={label}")

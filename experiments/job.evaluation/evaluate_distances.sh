@@ -9,13 +9,13 @@ LOG_DIR="${LOG_DIR:-/ocean/projects/bio240051p/aprieto/logs}"
 CONDA_ENV="${CONDA_ENV:-ctar}"
 
 # Dataset / repo paths
-DATASET_NAME="${DATASET_NAME:-brain}"
+DATASET_NAME="${DATASET_NAME:-pbmc}"
 REPO_ROOT="${REPO_ROOT:-/ocean/projects/bio240051p/aprieto/cts_peak_gene}"
 SCRIPTS_DIR="${SCRIPTS_DIR:-${REPO_ROOT}/experiments/job.evaluation}"
 
 # Inputs / outputs
-MERGE_DIR="${MERGE_DIR:-/ocean/projects/bio240051p/aprieto/multiome/validation/evaluation_unfiltered/${DATASET_NAME}/gtex_tissues/gtex_best}"
-AURC_DIR="${AURC_DIR:-/ocean/projects/bio240051p/aprieto/multiome/validation/tables/metrics_jitter_no_dedup_unfiltered_distances/${DATASET_NAME}/gtex_tissues}"
+MERGE_DIR="${MERGE_DIR:-/ocean/projects/bio240051p/aprieto/multiome/validation/evaluation_unfiltered/${DATASET_NAME}/gwas_pops}"
+AURC_DIR="${AURC_DIR:-/ocean/projects/bio240051p/aprieto/multiome/validation/tables/metrics_jitter_no_dedup_unfiltered_distances/${DATASET_NAME}/gwas_pops}"
 GENCODE_GTF="${GENCODE_GTF:-/ocean/projects/bio240051p/aprieto/bedfiles/ref/gencode.v49.primary_assembly.annotation.gtf.gz}"
 
 # Evaluation settings

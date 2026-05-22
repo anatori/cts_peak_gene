@@ -14,8 +14,8 @@ REPO_ROOT="${REPO_ROOT:-/ocean/projects/bio240051p/aprieto/cts_peak_gene}"
 SCRIPTS_DIR="${SCRIPTS_DIR:-${REPO_ROOT}/experiments/job.evaluation}"
 
 # Inputs / outputs
-MERGE_DIR="${MERGE_DIR:-/ocean/projects/bio240051p/aprieto/multiome/validation/evaluation_unfiltered/${DATASET_NAME}/gtex_tissues/gtex_best}" # crispr_k562
-AURC_DIR="${AURC_DIR:-/ocean/projects/bio240051p/aprieto/multiome/validation/tables/metrics_jitter_no_dedup_unfiltered_mean/${DATASET_NAME}/gtex_tissues}" # crispr_k562
+MERGE_DIR="${MERGE_DIR:-/ocean/projects/bio240051p/aprieto/multiome/validation/evaluation_unfiltered/${DATASET_NAME}/gwas_pops}" # gwas_pops, crispr_k562, gtex_tissues/gtex_best
+AURC_DIR="${AURC_DIR:-/ocean/projects/bio240051p/aprieto/multiome/validation/tables/metrics_jitter_no_dedup_unfiltered_mean/${DATASET_NAME}/gwas_pops}" # crispr_k562, gtex_tissues
 TRUTH_SPEC_PATH="${TRUTH_SPEC_PATH:-}"
 GENE_SPEC_PATH="${GENE_SPEC_PATH:-/ocean/projects/bio240051p/aprieto/multiome/analysis/log_mean/rna/${DATASET_NAME}_mean.csv}"
 PEAK_SPEC_PATH="${PEAK_SPEC_PATH:-/ocean/projects/bio240051p/aprieto/multiome/analysis/log_mean/atac/${DATASET_NAME}_mean.csv}"

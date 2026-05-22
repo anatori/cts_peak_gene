@@ -116,7 +116,7 @@ def main(args):
             overlap_df["label"] = overlap_df["score"] >= GTEX_SCORE_THRES
         elif label.startswith("abc"):
             overlap_df["label"] = overlap_df["score"] >= ABC_SCORE_THRES
-        elif label.startswith("crispr"):
+        elif label.startswith("crispr") or ('gwas' in label):
             overlap_df["label"] = overlap_df["score"]
         else:
             raise ValueError(f"Unrecognized dataset label prefix for file {file} -> label={label}")
