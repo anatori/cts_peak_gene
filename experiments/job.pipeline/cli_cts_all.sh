@@ -12,7 +12,7 @@ MULTIOME_PATHS[pbmc]=/ocean/projects/bio240051p/aprieto/multiome/processed/pbmc_
 MULTIOME_PATHS[brain]=/ocean/projects/bio240051p/aprieto/multiome/processed/brain_3k/unfilt_broad_celltypes
 MULTIOME_PATHS[bmmc]=/ocean/projects/bio240051p/aprieto/multiome/processed/neurips_bmmc/unfilt_broad_celltypes
 
-BIN_CONFIG=5.5.5.5.50000
+BIN_CONFIG=5.5.5.5.10000
 BIN_TYPE='mean_var'
 PYBEDTOOLS_PATH=/opt/packages/bedtools/2.30.0
 BATCH_SIZE=100000
