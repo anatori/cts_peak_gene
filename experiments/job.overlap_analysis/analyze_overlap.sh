@@ -36,7 +36,6 @@ DEDUP="${DEDUP:-min}"
 
 # Optional gene-match filter: keep only overlaps where the gene in the SNP ID matches the
 # link gene. Requires the analysis BED col-4 to be in `variant;gene` compound format.
-# Set to any non-empty value to enable (e.g. FILTER_GENE_MATCH=1); default is off.
 FILTER_GENE_MATCH="${FILTER_GENE_MATCH:-}"
 
 echo "Datasets: ${DATASETS}, filter: ${FILTER_TAG}"
