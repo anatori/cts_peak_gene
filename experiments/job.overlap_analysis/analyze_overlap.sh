@@ -23,20 +23,70 @@ METHODS_CSV="${METHODS_CSV:-${SCRIPTS_DIR}/methods_manifests/all_methods.csv}"
 DATASET_DIR="${DATASET_DIR:-/ocean/projects/bio240051p/aprieto/bedfiles/validation/union_links/${FILTER_TAG}}"
 UNION_DIR="${UNION_DIR:-/ocean/projects/bio240051p/aprieto/bedfiles/analysis/${FILTER_TAG}}"
 UNION_BED="${UNION_BED:-${UNION_DIR}/multiome_union.bed}"
-ANALYSIS_BED="${ANALYSIS_BED:-/ocean/projects/bio240051p/aprieto/bedfiles/analysis/gwas_pops/gwas_pops_hg38.bed}"
-OVERLAP_BED="${OVERLAP_BED:-/ocean/projects/bio240051p/aprieto/bedfiles/analysis/overlap/${FILTER_TAG}/multiome_gwas_pops.bed}"
-OUT_PATH="${OUT_PATH:-/ocean/projects/bio240051p/aprieto/multiome/analysis/gwas_pops/${FILTER_TAG}/gwas_pops_merged.csv}"
+ANALYSIS_BED="${ANALYSIS_BED:-/ocean/projects/bio240051p/aprieto/bedfiles/analysis/gtex_v8/gtex_susie_hg38.bed}"
+OVERLAP_BED="${OVERLAP_BED:-/ocean/projects/bio240051p/aprieto/bedfiles/analysis/overlap/${FILTER_TAG}/multiome_gtex_susie.bed}"
+OUT_PATH="${OUT_PATH:-/ocean/projects/bio240051p/aprieto/multiome/analysis/gtex_v8/${FILTER_TAG}/gtex_susie_merged.csv}"
 
 # Optional SNP annotation join
-SNP_ANNOT_FILE="${SNP_ANNOT_FILE:-/ocean/projects/bio240051p/aprieto/multiome/analysis/gwas_pops/gwas_pops_info.tsv}"
+SNP_ANNOT_FILE="${SNP_ANNOT_FILE:-gtex_susie_info.tsv}"
 SNP_ANNOT_ID_COL="${SNP_ANNOT_ID_COL:-final_col}"
-SNP_ANNOT_COLS="${SNP_ANNOT_COLS:-trait,variant,ensgid,gene,pops_score,gold}"
+_TISSUE_SNP_ANNOT_COLS="\
+Adipose_Subcutaneous_pip,\
+Adipose_Visceral_Omentum_pip,\
+Adrenal_Gland_pip,\
+Artery_Aorta_pip,\
+Artery_Coronary_pip,\
+Artery_Tibial_pip,\
+Brain_Amygdala_pip,\
+Brain_Anterior_cingulate_cortex_BA24_pip,\
+Brain_Caudate_basal_ganglia_pip,\
+Brain_Cerebellar_Hemisphere_pip,\
+Brain_Cerebellum_pip,\
+Brain_Cortex_pip,\
+Brain_Frontal_Cortex_BA9_pip,\
+Brain_Hippocampus_pip,\
+Brain_Hypothalamus_pip,\
+Brain_Nucleus_accumbens_basal_ganglia_pip,\
+Brain_Putamen_basal_ganglia_pip,\
+Brain_Spinal_cord_cervical_c-1_pip,\
+Brain_Substantia_nigra_pip,\
+Breast_Mammary_Tissue_pip,\
+Cells_Cultured_fibroblasts_pip,\
+Cells_EBV-transformed_lymphocytes_pip,\
+Colon_Sigmoid_pip,\
+Colon_Transverse_pip,\
+Esophagus_Gastroesophageal_Junction_pip,\
+Esophagus_Mucosa_pip,\
+Esophagus_Muscularis_pip,\
+Heart_Atrial_Appendage_pip,\
+Heart_Left_Ventricle_pip,\
+Kidney_Cortex_pip,\
+Liver_pip,\
+Lung_pip,\
+Minor_Salivary_Gland_pip,\
+Muscle_Skeletal_pip,\
+Nerve_Tibial_pip,\
+Ovary_pip,\
+Pancreas_pip,\
+Pituitary_pip,\
+Prostate_pip,\
+Skin_Not_Sun_Exposed_Suprapubic_pip,\
+Skin_Sun_Exposed_Lower_leg_pip,\
+Small_Intestine_Terminal_Ileum_pip,\
+Spleen_pip,\
+Stomach_pip,\
+Testis_pip,\
+Thyroid_pip,\
+Uterus_pip,\
+Vagina_pip,\
+Whole_Blood_pip"
+SNP_ANNOT_COLS="${SNP_ANNOT_COLS:-${_TISSUE_SNP_ANNOT_COLS}}"
 
 DEDUP="${DEDUP:-min}"
 
 # Optional gene-match filter: keep only overlaps where the gene in the SNP ID matches the
 # link gene. Requires the analysis BED col-4 to be in `variant;gene` compound format.
-FILTER_GENE_MATCH="${FILTER_GENE_MATCH:-}"
+FILTER_GENE_MATCH="${FILTER_GENE_MATCH:-True}"
 
 echo "Datasets: ${DATASETS}, filter: ${FILTER_TAG}"
 
