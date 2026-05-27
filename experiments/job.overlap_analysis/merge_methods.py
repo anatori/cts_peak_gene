@@ -100,15 +100,20 @@ def load_method_scores(
         if fdr_source_col not in df.columns:
             raise ValueError(f"File '{file_path}' missing fdr column '{fdr_source_col}'")
         df[qval_col] = pd.to_numeric(df[fdr_source_col], errors="coerce")
-    else:
-        print(f"[{method_name}_{dataset}] no fdr_col — computing BH q-values from '{pval_source_col}'", flush=True)
-        df[qval_col] = _compute_bh_qvalues(df[pval_col])
 
     n_raw = len(df)
     n_unique = df["id"].nunique()
     print(f"[{method_name}_{dataset}] raw_rows={n_raw} unique_ids={n_unique} dup_rows={n_raw - n_unique} dedup={dedup}", flush=True)
 
-    out = _aggregate_duplicates(df, pval_col=pval_col, qval_col=qval_col, how=dedup)
+    if fdr_source_col is not None:
+        out = _aggregate_duplicates(df, pval_col=pval_col, qval_col=qval_col, how=dedup)
+    else:
+        # Dedup first so BH denominator reflects unique (peak, gene) pairs, not raw duplicate rows
+        df[qval_col] = float("nan")  # placeholder so _aggregate_duplicates doesn't KeyError
+        out = _aggregate_duplicates(df, pval_col=pval_col, qval_col=qval_col, how=dedup)
+        print(f"[{method_name}_{dataset}] no fdr_col — computing BH q-values from '{pval_source_col}' (post-dedup)", flush=True)
+        out[qval_col] = _compute_bh_qvalues(out[pval_col])
+
     print(f"[{method_name}_{dataset}] out_rows={len(out)}", flush=True)
     return out
 
