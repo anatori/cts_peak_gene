@@ -1740,9 +1740,59 @@ def binned_empirical_fdr(
         bin_df[qval_col] = q_values
         cis_pairs_ls.append(bin_df)
 
-    return pd.concat(cis_pairs_ls)    
+    return pd.concat(cis_pairs_ls)  
 
+
+def estimate_pi0_by_distance(
+    cis_pairs_df,
+    pval_col,
+    dist_col,
+    n_bins=5,
+    lambda_storey=0.5,
+    min_n=30,
+):
+    """
+    Estimate pi0 per distance bin using Storey lambda=0.5.
     
+    Parameters
+    ----------
+    cis_pairs_df : pd.DataFrame
+    pval_col : str — p-values (use z-score derived pvals, not MC pvals)
+    dist_col : str — distance column (raw bp, will be log-transformed)
+    n_bins : int
+    lambda_storey : float
+    min_n : int — minimum pairs per bin
+
+    Returns
+    -------
+    pi0_by_bin : dict {bin -> pi0}
+    cis_pairs_df : pd.DataFrame with '_dist_bin', '_dist_pi0' column added
+    """
+    df = cis_pairs_df.copy()
+    
+    # bin on distance
+    df['_dist_bin'] = pd.qcut(
+        df[dist_col].rank(method='first'),
+        n_bins, labels=False, duplicates='drop'
+    ).astype(int)
+
+    pi0_by_bin = {}
+    for q in range(n_bins):
+        mask = df['_dist_bin'] == q
+        pvals = df.loc[mask, pval_col].dropna()
+        n = len(pvals)
+
+        if n < min_n:
+            pi0_by_bin[q] = 1.0  # conservative default
+            continue
+
+        pi0 = min(np.mean(pvals > lambda_storey) / (1 - lambda_storey), 1.0)
+        pi0_by_bin[q] = pi0
+
+    df['_dist_pi0'] = df['_dist_bin'].map(pi0_by_bin)
+    return pi0_by_bin, df  
+
+
 ######################### clustering #########################
 
 
