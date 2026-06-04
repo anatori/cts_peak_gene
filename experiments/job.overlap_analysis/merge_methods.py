@@ -30,20 +30,26 @@ def _aggregate_duplicates(
     pval_col: str,
     qval_col: str,
     how: str,
+    stat_col: Optional[str] = None,
 ) -> pd.DataFrame:
+    base_cols = ["id", "peak", "gene", "dataset", pval_col, qval_col]
+    extra_cols = [stat_col] if stat_col is not None else []
+
     if how == "none":
         print("Warning: no deduplication!", flush=True)
-        return df[["id", "peak", "gene", "dataset", pval_col, qval_col]].copy()
+        return df[base_cols + extra_cols].copy()
 
     if how not in {"min", "max", "mean", "median"}:
         raise ValueError(f"Unsupported dedup method: {how}")
 
-    tmp = df[["id", "peak", "gene", "dataset", pval_col, qval_col]].copy()
+    tmp = df[base_cols + extra_cols].copy()
     tmp[pval_col] = pd.to_numeric(tmp[pval_col], errors="coerce")
     tmp[qval_col] = pd.to_numeric(tmp[qval_col], errors="coerce")
+    if stat_col is not None:
+        tmp[stat_col] = pd.to_numeric(tmp[stat_col], errors="coerce")
 
     if how in {"min", "max"}:
-        # Select the row with the chosen p-value extreme; q-value comes from that same row
+        # Select the row with the chosen p-value extreme; q-value and stat come from that same row
         row_idx = (
             tmp.groupby("id", sort=False)[pval_col].idxmin()
             if how == "min"
@@ -51,7 +57,7 @@ def _aggregate_duplicates(
         )
         # idxmin/idxmax returns NaN for all-NaN groups; drop them rather than crash
         row_idx = row_idx.dropna()
-        out = tmp.loc[row_idx.values, ["id", "peak", "gene", "dataset", pval_col, qval_col]].reset_index(drop=True)
+        out = tmp.loc[row_idx.values, base_cols + extra_cols].reset_index(drop=True)
     else:
         # mean/median: independently aggregate both columns
         agg_p = tmp.groupby("id", sort=False)[pval_col].agg(how)
@@ -67,6 +73,8 @@ def _aggregate_duplicates(
             pval_col: agg_p.values,
             qval_col: agg_q.values,
         })
+        if stat_col is not None:
+            out[stat_col] = tmp.groupby("id", sort=False)[stat_col].agg(how).values
 
     return out
 
@@ -77,9 +85,10 @@ def load_method_scores(
     dataset: str,
     pval_source_col: str,
     fdr_source_col: Optional[str],
+    stat_source_col: Optional[str] = None,
     dedup: str = "min",
 ) -> pd.DataFrame:
-    """Returns DataFrame with columns: id, peak, gene, dataset, {method_name}_pval, {method_name}_qval"""
+    """Returns DataFrame with columns: id, peak, gene, dataset, {method_name}_pval, {method_name}_qval[, {method_name}_stat]"""
     if not file_path or not os.path.isfile(file_path):
         raise FileNotFoundError(f"Missing method file: {file_path}")
 
@@ -101,16 +110,23 @@ def load_method_scores(
             raise ValueError(f"File '{file_path}' missing fdr column '{fdr_source_col}'")
         df[qval_col] = pd.to_numeric(df[fdr_source_col], errors="coerce")
 
+    stat_out_col = None
+    if stat_source_col is not None:
+        if stat_source_col not in df.columns:
+            raise ValueError(f"File '{file_path}' missing stat column '{stat_source_col}'")
+        stat_out_col = f"{method_name}_{dataset}_stat"
+        df[stat_out_col] = pd.to_numeric(df[stat_source_col], errors="coerce")
+
     n_raw = len(df)
     n_unique = df["id"].nunique()
     print(f"[{method_name}_{dataset}] raw_rows={n_raw} unique_ids={n_unique} dup_rows={n_raw - n_unique} dedup={dedup}", flush=True)
 
     if fdr_source_col is not None:
-        out = _aggregate_duplicates(df, pval_col=pval_col, qval_col=qval_col, how=dedup)
+        out = _aggregate_duplicates(df, pval_col=pval_col, qval_col=qval_col, how=dedup, stat_col=stat_out_col)
     else:
         # Dedup first so BH denominator reflects unique (peak, gene) pairs, not raw duplicate rows
         df[qval_col] = float("nan")  # placeholder so _aggregate_duplicates doesn't KeyError
-        out = _aggregate_duplicates(df, pval_col=pval_col, qval_col=qval_col, how=dedup)
+        out = _aggregate_duplicates(df, pval_col=pval_col, qval_col=qval_col, how=dedup, stat_col=stat_out_col)
         print(f"[{method_name}_{dataset}] no fdr_col — computing BH q-values from '{pval_source_col}' (post-dedup)", flush=True)
         out[qval_col] = _compute_bh_qvalues(out[pval_col])
 
@@ -128,10 +144,10 @@ def merge_method_tables(method_tables: List[pd.DataFrame]) -> pd.DataFrame:
     return merged
 
 
-def _read_methods_csv(methods_csv: str) -> List[Tuple[str, str, str, str, Optional[str]]]:
+def _read_methods_csv(methods_csv: str) -> List[Tuple[str, str, str, str, Optional[str], Optional[str]]]:
     """
     Parse methods manifest CSV.
-    Returns list of (file_path, dataset_name, method_name, pval_col, fdr_col) in row order.
+    Returns list of (file_path, dataset_name, method_name, pval_col, fdr_col, stat_col) in row order.
     """
     if not os.path.isfile(methods_csv):
         raise FileNotFoundError(f"Methods CSV not found: {methods_csv}")
@@ -152,6 +168,7 @@ def _read_methods_csv(methods_csv: str) -> List[Tuple[str, str, str, str, Option
             r["method_name"].strip(),
             r["pval_col"].strip(),
             _opt_none(r.get("fdr_col", "")),
+            _opt_none(r.get("stat_col", "")),
         )
         for r in rows
     ]
@@ -203,14 +220,14 @@ def main(args):
 
     raw_sources = _read_methods_csv(args.methods_csv)
     method_sources = []
-    for fp, dataset, name, col, fdr_col in raw_sources:
+    for fp, dataset, name, col, fdr_col, stat_col in raw_sources:
         if not fp:
             print(f"[skip] {name}/{dataset}: empty file_path", flush=True); continue
         if not os.path.isfile(fp):
             print(f"[skip] {name}/{dataset}: file not found ({fp})", flush=True); continue
         if not col:
             print(f"[skip] {name}/{dataset}: empty pval_col", flush=True); continue
-        method_sources.append((fp, dataset, name, col, fdr_col))
+        method_sources.append((fp, dataset, name, col, fdr_col, stat_col))
 
     if not method_sources:
         raise RuntimeError("No method sources configured (all rows invalid).")
@@ -219,9 +236,10 @@ def main(args):
     method_tables = [
         load_method_scores(
             fp, method_name=name, dataset=dataset,
-            pval_source_col=col, fdr_source_col=fdr_col, dedup=args.dedup,
+            pval_source_col=col, fdr_source_col=fdr_col,
+            stat_source_col=stat_col, dedup=args.dedup,
         )
-        for fp, dataset, name, col, fdr_col in method_sources
+        for fp, dataset, name, col, fdr_col, stat_col in method_sources
     ]
 
     scores_df = merge_method_tables(method_tables)
