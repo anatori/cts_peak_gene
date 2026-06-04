@@ -1464,8 +1464,8 @@ def basic_mcinterp(ctrl_corr,corr):
 
 
 def binned_mcpval(
-    cis_pairs_dic,
-    ctrl_pairs_dic,
+    cis_links_dic,
+    ctrl_links_dic,
     b=None,
 ):
     '''
@@ -1473,11 +1473,11 @@ def binned_mcpval(
 
     Parameters
     ----------
-    cis_pairs_dic : dict
-        Dictionary of numpy arrays where keys are bins and values are PR coefficients
+    cis_links_dic : dict
+        Dictionary of numpy arrays where keys are bins and values are correlation/coefficients
         for cis-peak-gene pairs.
-    ctrl_pairs_dic : dict
-        Dictionary of numpy arrays where keys are bins and values are PR coefficients
+    ctrl_links_dic : dict
+        Dictionary of numpy arrays where keys are bins and values are correlation/coefficients
         for control peak-gene pairs.
     b : int
         Number of controls. Defaults to length of first array in dictionary.
@@ -1492,10 +1492,10 @@ def binned_mcpval(
         Dictionary of numpy arrays where keys are bins and values are z-score-pvalues.
     '''
 
-    bin_keys = sorted(cis_pairs_dic.keys())
+    bin_keys = sorted(cis_links_dic.keys())
 
     if b is None:
-        b = len(ctrl_pairs_dic[bin_keys[0]])
+        b = len(ctrl_links_dic[bin_keys[0]])
         print(f"Setting n_ctrl to {b}.")
 
     mcpval_dic = {}
@@ -1507,8 +1507,8 @@ def binned_mcpval(
     scatter_plan = []
 
     for bin_key in bin_keys:
-        coeffs = np.asarray(cis_pairs_dic[bin_key])
-        ctrl_coeffs = np.asarray(ctrl_pairs_dic[bin_key]).ravel()[:b]
+        coeffs = np.asarray(cis_links_dic[bin_key])
+        ctrl_coeffs = np.asarray(ctrl_links_dic[bin_key]).ravel()[:b]
 
         valid_cis = np.isfinite(coeffs)
         ctrl_coeffs = ctrl_coeffs[np.isfinite(ctrl_coeffs)]
@@ -1697,54 +1697,68 @@ def empirical_fdr(stat, ctrl_stat, target_fdr=0.1, B=None, pi0=1.0, tail='defaul
 
 
 def binned_empirical_fdr(
-    cis_pairs_df, 
-    ctrl_pairs_dic, 
-    target_fdr=0.1, 
-    B=None, 
-    stat_col='poissonb', 
+    cis_links_df,
+    ctrl_links_dic,
+    target_fdr=0.1,
+    B=None,
+    stat_col='poissonb',
     bin_col='combined_bin_5.5.5.5',
     qval_col='q_value',
     tail='laplace',
+    additional_bin_col=None,
+    pi0_map=None,
 ):
     '''
     Compute empirical FDR per bin null.
 
     Parameters
     ----------
-    cis_pairs_df : pd.DataFrame
+    cis_links_df : pd.DataFrame
         Dataframe containing cis peak-gene pairs. Must contain column stat_col and bin_col.
-    ctrl_pairs_dic : dict
+    ctrl_links_dic : dict
         Dictionary of numpy arrays where keys are bins and values are null statistics
         for control peak-gene pairs.
     stat_col : str
-        Name of column containing observed statistics. Should be the same statistic as ctrl_pairs_dic.values().
+        Name of column containing observed statistics. Should be the same statistic as ctrl_links_dic.values().
     bin_col : str
-        Name of column from which to group stat_col. Unique values must match ctrl_pairs_dic.keys().
+        Name of column from which to group stat_col. Unique values must match ctrl_links_dic.keys().
     qval_col : str
         Name of column to be added containing q-values/FDR.
-    target_fdr, B 
+    target_fdr, B
         Inputs to empirical_fdr.
+    additional_bin_col : str, optional
+        Column containing additional bin label. When provided together with pi0_map,
+        FDR is computed within (bin_col x additional_bin_col) sub-groups, with pi0 drawn
+        from pi0_map per additional_bin_col bin and the null from ctrl_links_dic per bin_col.
+    pi0_map : dict, optional
+        Mapping from additional_bin_col bin label to pi0 scalar. Required when additional_bin_col is set.
 
     Returns
     ----------
-    cis_pairs_df : pd.DataFrame
+    cis_links_df : pd.DataFrame
         Copy of input dataframe containing q-values from binned empirical FDR estimation.
     '''
+    use_additional_bins = additional_bin_col is not None and pi0_map is not None
+    group_cols = [bin_col, additional_bin_col] if use_additional_bins else bin_col
 
     cis_pairs_ls = []
-    for bin_id, bin_df in cis_pairs_df.groupby(bin_col):
+    for group_key, bin_df in cis_links_df.groupby(group_cols):
         bin_df = bin_df.copy()
-        ctrl_stat = ctrl_pairs_dic[bin_id]
+        bin_id = group_key[0] if use_additional_bins else group_key
+        pi0 = pi0_map[group_key[1]] if use_additional_bins else 1.0
+        ctrl_stat = ctrl_links_dic[bin_id]
         cis_stat = bin_df[stat_col].values
-        q_values, t_star, thresholds, fdr_vals = empirical_fdr(cis_stat, ctrl_stat, target_fdr=target_fdr, B=B, tail=tail)
+        q_values, _, _, _ = empirical_fdr(
+            cis_stat, ctrl_stat, target_fdr=target_fdr, B=B, pi0=pi0, tail=tail
+        )
         bin_df[qval_col] = q_values
         cis_pairs_ls.append(bin_df)
 
-    return pd.concat(cis_pairs_ls)  
+    return pd.concat(cis_pairs_ls) 
 
 
 def estimate_pi0_by_distance(
-    cis_pairs_df,
+    cis_links_df,
     pval_col,
     dist_col,
     n_bins=5,
@@ -1756,7 +1770,7 @@ def estimate_pi0_by_distance(
     
     Parameters
     ----------
-    cis_pairs_df : pd.DataFrame
+    cis_links_df : pd.DataFrame
     pval_col : str — p-values (use z-score derived pvals, not MC pvals)
     dist_col : str — distance column (raw bp, will be log-transformed)
     n_bins : int
@@ -1766,9 +1780,9 @@ def estimate_pi0_by_distance(
     Returns
     -------
     pi0_by_bin : dict {bin -> pi0}
-    cis_pairs_df : pd.DataFrame with '_dist_bin', '_dist_pi0' column added
+    cis_links_df : pd.DataFrame with '_dist_bin', '_dist_pi0' column added
     """
-    df = cis_pairs_df.copy()
+    df = cis_links_df.copy()
     
     # bin on distance
     df['_dist_bin'] = pd.qcut(
