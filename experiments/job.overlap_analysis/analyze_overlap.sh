@@ -16,7 +16,7 @@ FILTER_TAG="${FILTER_TAG:-unfiltered}"
 REPO_ROOT="${REPO_ROOT:-/ocean/projects/bio240051p/aprieto/cts_peak_gene}"
 SCRIPTS_DIR="${SCRIPTS_DIR:-${REPO_ROOT}/experiments/job.overlap_analysis}"
 
-# Methods manifest CSV: columns file_path, dataset_name, method_name, pval_col, fdr_col
+# Methods manifest CSV: columns file_path, dataset_name, method_name, pval_col, fdr_col, stat_col
 METHODS_CSV="${METHODS_CSV:-${SCRIPTS_DIR}/methods_manifests/all_methods.csv}"
 
 # Directory/file paths
