@@ -1622,7 +1622,7 @@ def fit_gpd_null_tail(ctrl, quantile=0.9, min_exceedances=30, max_floor=1e-15):
 def empirical_fdr(stat, ctrl_stat, target_fdr=0.1, B=None, pi0=1.0, tail='default', gpd_quantile=0.9):
     ''' 
     Compute empirical/local FDR. Find a threshold t s.t. 
-        FDR = (#{ctrl_stat >= t} + 1 / B + 1) / (#{stat >= t})
+        FDR = (#{ctrl_stat >= t} / B) / (#{stat >= t})
 
     Parameters
     ----------
@@ -1699,112 +1699,157 @@ def empirical_fdr(stat, ctrl_stat, target_fdr=0.1, B=None, pi0=1.0, tail='defaul
 def binned_empirical_fdr(
     cis_links_df,
     ctrl_links_dic,
-    target_fdr=0.1,
-    B=None,
     stat_col='poissonb',
-    bin_col='combined_bin_5.5.5.5',
+    ctrl_bin_col='combined_bin_5.5.5.5',
     qval_col='q_value',
-    tail='laplace',
-    additional_bin_col=None,
-    pi0_map=None,
+    tail=None,
+    fdr_bin_col=None,
+    pi0=1.0,
+    pi0_col=None,
+    pval_col='5.5.5.5.1000_mcpval',
+    lambda_storey=0.5,
+    min_n=30,
 ):
     '''
-    Compute empirical FDR per bin null.
+    Compute empirical FDR and pi0 per FDR bin. Empirical FDR finds a threshold t s.t. 
+        FDR = pi0 * sum_k[ n_k * #{ctrl_stat_k >= t} / B_k ] / #{stat >= t}
+    for k ctrl_bin_col bins within fdr_bin_col, n cis pairs, B controls.
 
     Parameters
     ----------
     cis_links_df : pd.DataFrame
-        Dataframe containing cis peak-gene pairs. Must contain column stat_col and bin_col.
+        Dataframe containing cis peak-gene pairs. Must contain column stat_col and ctrl_bin_col, 
+        fdr_bin_col, pi0_col, and pval_col if set.
     ctrl_links_dic : dict
-        Dictionary of numpy arrays where keys are bins and values are null statistics
-        for control peak-gene pairs.
+        Dictionary of numpy arrays where keys are bins and values are null statistics for 
+        control peak-gene pairs.
     stat_col : str
-        Name of column containing observed statistics. Should be the same statistic as ctrl_links_dic.values().
-    bin_col : str
-        Name of column from which to group stat_col. Unique values must match ctrl_links_dic.keys().
+        Name of column containing observed statistics. Should be the same type of statistic as 
+        ctrl_links_dic.values().
+    ctrl_bin_col : str
+        Name of column from which to group control statistics. Unique values must match 
+        ctrl_links_dic.keys().
     qval_col : str
         Name of column to be added containing q-values/FDR.
-    target_fdr, B
-        Inputs to empirical_fdr.
-    additional_bin_col : str, optional
-        Column containing additional bin label. When provided together with pi0_map,
-        FDR is computed within (bin_col x additional_bin_col) sub-groups, with pi0 drawn
-        from pi0_map per additional_bin_col bin and the null from ctrl_links_dic per bin_col.
-    pi0_map : dict, optional
-        Mapping from additional_bin_col bin label to pi0 scalar. Required when additional_bin_col is set.
+    fdr_bin_col : str, optional
+        Column containing bin assignments for which to compute empirical FDR within. When 
+        provided with pi0 as None, FDR is computed within fdr_bin_col sub-groups, with 
+        pi0 computed per fdr_bin_col bin and null counts from a weighted sum of ctrl_links_dic 
+        per ctrl_bin_col bin within each fdr_bin_col. When set to None, ctrl_bin_col are used 
+        as FDR bins.
+    tail : str
+        laplace - applies +1 pseudo-observation to numerator and denominator per ctrl_bin_col bin
+        None - default; no correction
+    pi0 : int
+        If set, fixed pi0 across bins.
+    pi0_col : str, optional
+        If set, uses values from this column as pi0. Should constant across fdr_bin_col bins (legacy).
+    pval_col : str, optional
+        If set, uses values from this column to calculate pi0 (see `estimate_pi0`).
+    lambda_storey, min_n: (float, int)
+        Parameters for `estimate_pi0`.
 
     Returns
     ----------
     cis_links_df : pd.DataFrame
-        Copy of input dataframe containing q-values from binned empirical FDR estimation.
+        Copy of input dataframe containing q-values and pi0 from binned empirical FDR estimation.
     '''
-    use_additional_bins = additional_bin_col is not None and pi0_map is not None
-    group_cols = [bin_col, additional_bin_col] if use_additional_bins else bin_col
+
+    if pi0 is not None:
+        print(f'Setting pi0={pi0} for all links...')
+    elif pi0_col is not None:
+        print(f'Reading pi0 from column {pi0_col}...')
+    else:
+        assert pval_col is not None, 'Must set pval_col if pi0 is None and pi0_col is None'
+        print(f'Estimating pi0 per bin using Storey procedure (lambda={lambda_storey})...')
+
+    use_fdr_bins = fdr_bin_col is not None
+    group_cols = fdr_bin_col if use_fdr_bins else ctrl_bin_col
 
     cis_pairs_ls = []
-    for group_key, bin_df in cis_links_df.groupby(group_cols):
+
+    for bin_b, bin_df in cis_links_df.groupby(group_cols):
+
         bin_df = bin_df.copy()
-        bin_id = group_key[0] if use_additional_bins else group_key
-        pi0 = pi0_map[group_key[1]] if use_additional_bins else 1.0
-        ctrl_stat = ctrl_links_dic[bin_id]
+
+        # collect number of discoveries within fdr bin b belonging to each ctrl bin k
+        n_disc_k_dict = bin_df.value_counts(ctrl_bin_col).to_dict()
+
+        # cis statistics for bin b, skip nans
         cis_stat = bin_df[stat_col].values
-        q_values, _, _, _ = empirical_fdr(
-            cis_stat, ctrl_stat, target_fdr=target_fdr, B=B, pi0=pi0, tail=tail
-        )
+        nan_mask = np.isnan(cis_stat)
+        cis_stat_clean = cis_stat[~nan_mask]
+
+        # if pi0 is not provided, estimate pi0 within fdr bins
+        if pi0 is not None:
+            bin_pi0 = pi0
+        elif pi0_col is not None:
+            bin_pi0 = bin_df[pi0_col].iloc[0]  # constant within group
+        else:
+            bin_pi0 = estimate_pi0(bin_df, pval_col, lambda_storey=lambda_storey, min_n=min_n)
+
+        ### calculate empirical fdr
+        thresholds = np.sort(np.unique(cis_stat_clean))[::-1] # possible thresholds are each unique stat value
+        stat_asc = np.sort(cis_stat_clean)
+        n_disc = len(stat_asc) - np.searchsorted(stat_asc, thresholds, side='left') # number discoveries at each threshold
+
+        # calulcate fp as weighted sum across k ctrl bins
+        expected_fp = np.zeros(len(thresholds))
+        for ctrl_bin_k, n_disc_k in n_disc_k_dict.items():
+            ctrl_asc = np.sort(ctrl_links_dic[ctrl_bin_k])
+            n_ctrl_k = len(ctrl_asc) # number of controls per bin
+            null_counts = n_ctrl_k - np.searchsorted(ctrl_asc, thresholds, side='left') # number of fp at each threshold
+            # estimate number of fp for this bin, scaled the number of discoveries at bin k (n_disc_k) / controls at bin k (n_ctrl_k)
+            if tail == 'laplace':
+                expected_fp += n_disc_k * (null_counts + 1) / (n_ctrl_k + 1)
+            else:
+                expected_fp += n_disc_k * null_counts / n_ctrl_k
+
+        # fdr = pi0 * expected_fp / expected_discoveries
+        fdr_vals = np.minimum(bin_pi0 * expected_fp / np.maximum(n_disc, 1), 1.0)
+        fdr_vals = np.minimum.accumulate(fdr_vals[::-1])[::-1]  # monotonize descending order
+
+        # sort fdr back into original order, preserve nans
+        thresh_asc = thresholds[::-1]
+        fdr_asc = fdr_vals[::-1]
+        idx = np.clip(np.searchsorted(thresh_asc, cis_stat_clean, side='left'), 0, len(fdr_asc) - 1)
+        q_values = np.full(len(cis_stat), np.nan)
+        q_values[~nan_mask] = fdr_asc[idx]
+
+        # add pi0 and qvalues to df
+        bin_df['pi0'] = bin_pi0
         bin_df[qval_col] = q_values
         cis_pairs_ls.append(bin_df)
 
     return pd.concat(cis_pairs_ls) 
 
 
-def estimate_pi0_by_distance(
+def estimate_pi0(
     cis_links_df,
     pval_col,
-    dist_col,
-    n_bins=5,
     lambda_storey=0.5,
     min_n=30,
 ):
     """
-    Estimate pi0 per distance bin using Storey lambda=0.5.
+    Estimate pi0 using Storey lambda=0.5 by default.
     
     Parameters
     ----------
     cis_links_df : pd.DataFrame
-    pval_col : str — p-values (use z-score derived pvals, not MC pvals)
-    dist_col : str — distance column (raw bp, will be log-transformed)
-    n_bins : int
+    pval_col : str, p-values
     lambda_storey : float
-    min_n : int — minimum pairs per bin
+    min_n : int, minimum pairs per bin
 
     Returns
     -------
-    pi0_by_bin : dict {bin -> pi0}
-    cis_links_df : pd.DataFrame with '_dist_bin', '_dist_pi0' column added
+    pi0 : estimate pi0
     """
-    df = cis_links_df.copy()
-    
-    # bin on distance
-    df['_dist_bin'] = pd.qcut(
-        df[dist_col].rank(method='first'),
-        n_bins, labels=False, duplicates='drop'
-    ).astype(int)
 
-    pi0_by_bin = {}
-    for q in range(n_bins):
-        mask = df['_dist_bin'] == q
-        pvals = df.loc[mask, pval_col].dropna()
-        n = len(pvals)
-
-        if n < min_n:
-            pi0_by_bin[q] = 1.0  # conservative default
-            continue
-
-        pi0 = min(np.mean(pvals > lambda_storey) / (1 - lambda_storey), 1.0)
-        pi0_by_bin[q] = pi0
-
-    df['_dist_pi0'] = df['_dist_bin'].map(pi0_by_bin)
-    return pi0_by_bin, df  
+    pvals = cis_links_df[pval_col].dropna()
+    n = len(pvals)
+    if n < min_n:
+        return 1.0  # conservative default
+    return min(np.mean(pvals > lambda_storey) / (1 - lambda_storey), 1.0)
 
 
 ######################### clustering #########################
