@@ -29,6 +29,10 @@ def make_args(results_path):
         array_idx=None,
         flag_se="False",
         flag_ll="False",
+        flag_corr="False",
+        random_seed=None,
+        donor_col=None,
+        n_length_bins="1",
         n_cores=None,
     )
 

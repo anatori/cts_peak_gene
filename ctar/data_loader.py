@@ -10,7 +10,7 @@ import pickle
 import re
 import os
 
-from ctar.method import get_bins
+from ctar.method import get_bins, compute_peak_length_bins
 
 
 def peak_to_gene(peaks_df,genes_df,clean=True,split_peaks=True,distance=500000,col_names=['chr','start','end'],
@@ -340,8 +340,17 @@ def combine_peak_gene_bins(
         suffix=f'_{rna_suffix}'
     )
 
-    links_df[f'combined_bin_{atac_suffix}.{rna_suffix}'] = links_df[f'atac_{atac_type}_bin_{atac_suffix}'].astype(str) + \
-        '_' + links_df[f'rna_{rna_type}_bin_{rna_suffix}'].astype(str)
+    combined = (
+        links_df[f'atac_{atac_type}_bin_{atac_suffix}'].astype(str)
+        + '_'
+        + links_df[f'rna_{rna_type}_bin_{rna_suffix}'].astype(str)
+    )
+    # If length bins were computed, append them at the END of the key ("atac_rna_lbin").
+    # atac_bins_df is already indexed by peak_col at this point.
+    if 'length_bin' in atac_bins_df.columns:
+        lbin_col = links_df[peak_col].map(atac_bins_df['length_bin']).fillna(0).astype(int).astype(str)
+        combined = combined + '_' + lbin_col
+    links_df[f'combined_bin_{atac_suffix}.{rna_suffix}'] = combined
 
     return links_df
 
@@ -390,6 +399,7 @@ def ensure_combined_bin_column(
     n_rna_mean,
     n_rna_var,
     genome_file,
+    n_length_bins=1,
 ):
     """Add combined_bin column if missing using current ATAC/RNA bins."""
     combined_bin_col = f'combined_bin_{bin_config.rsplit(".", 1)[0]}'
@@ -404,6 +414,10 @@ def ensure_combined_bin_column(
         layer='counts',
         genome_file=genome_file,
     )
+    if n_length_bins > 1:
+        length_bins = compute_peak_length_bins(atac_bins_df['peak'], n_length_bins)
+        if length_bins is not None:
+            atac_bins_df['length_bin'] = length_bins.values
     rna_bins_df = get_bins(
         adata_rna,
         num_bins=[n_rna_mean, n_rna_var],

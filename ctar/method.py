@@ -727,6 +727,21 @@ def ll_reduced_intercept_only(y_col,
 ######################### generate null #########################
 
 
+def compute_peak_length_bins(peaks_series, n_bins):
+    """Quantile-bin peaks by length parsed from 'chrX:start-end' (or 'chrX-start-end') strings.
+
+    Returns integer bin labels (0..n_bins-1) aligned to peaks_series index,
+    or None if n_bins <= 1 or peak lengths have no variance (so callers can skip).
+    """
+    if n_bins <= 1:
+        return None
+    parsed = peaks_series.str.extract(r'[^:+-]+[:-](\d+)-(\d+)')
+    lengths = parsed.iloc[:, 1].astype(float) - parsed.iloc[:, 0].astype(float)
+    if lengths.isna().all() or lengths.std() <= 0:
+        return None
+    return pd.qcut(lengths.rank(method='first'), n_bins, labels=False, duplicates='drop').astype(int)
+
+
 def gc_content(adata, col='gene_ids', genome_file='GRCh38.p13.genome.fa.bgz'):
     
     ''' Finds GC content for peaks.
@@ -1048,6 +1063,7 @@ def create_ctrl_pairs(
     gene_col = 'gene',
     return_bins_df = True,
     flag_combine_bin = False,
+    n_length_bins = 1,
 ):
 
     ''' Obtain b control pairs for each permutation of bin features.
@@ -1106,11 +1122,31 @@ def create_ctrl_pairs(
     if flag_combine_bin:
         rna_bins_df.loc[rna_bins_df.mean_bin == 0, 'mean_bin'] = 1
         rna_bins_df['mean_var_bin'] = rna_bins_df['mean_var_bin'].str.replace(r'^0.','1.',regex=True).values
-    
+
+    # Optionally add peak-length bins as an extra stratification dimension.
+    if n_length_bins > 1:
+        length_bins = compute_peak_length_bins(atac_bins_df[peak_col], n_length_bins)
+        if length_bins is not None:
+            atac_bins_df['length_bin'] = length_bins.values
+            print(f'# Added {n_length_bins} peak-length quantile bins to ATAC binning.')
+        else:
+            print('# Skipping peak-length bins: insufficient variance in peak lengths.')
+
     # Group indices for controls
-    pairs = [(i, j) for i in atac_bins_df[f'{atac_type}_bin'].unique() for j in rna_bins_df[f'{rna_type}_bin'].unique()]
-    atac_bins_grouped = atac_bins_df[['ind',f'{atac_type}_bin']].groupby([f'{atac_type}_bin']).ind.apply(np.array)
     rna_bins_grouped = rna_bins_df[['ind',f'{rna_type}_bin']].groupby([f'{rna_type}_bin']).ind.apply(np.array)
+    use_length_bins = 'length_bin' in atac_bins_df.columns
+    if use_length_bins:
+        pairs = [(i, j, k)
+                 for i in atac_bins_df[f'{atac_type}_bin'].unique()
+                 for j in rna_bins_df[f'{rna_type}_bin'].unique()
+                 for k in sorted(atac_bins_df['length_bin'].unique())]
+        atac_bins_grouped = (
+            atac_bins_df[['ind', f'{atac_type}_bin', 'length_bin']]
+            .groupby([f'{atac_type}_bin', 'length_bin']).ind.apply(np.array)
+        )
+    else:
+        pairs = [(i, j) for i in atac_bins_df[f'{atac_type}_bin'].unique() for j in rna_bins_df[f'{rna_type}_bin'].unique()]
+        atac_bins_grouped = atac_bins_df[['ind',f'{atac_type}_bin']].groupby([f'{atac_type}_bin']).ind.apply(np.array)
 
     # Build chromosome arrays for cross-chromosome filtering
     atac_chr_series = atac_bins_df[peak_col].str.split(r'[:-]').str[0]
@@ -1139,8 +1175,14 @@ def create_ctrl_pairs(
     # Generate random pairs
     ctrl_dic = {}
     for pair in tqdm(pairs):
-        atac_inds = atac_bins_grouped.loc[pair[0]]
-        rna_inds = rna_bins_grouped.loc[pair[1]]
+        if use_length_bins:
+            atac_inds = atac_bins_grouped.loc[(pair[0], pair[2])]
+            rna_inds = rna_bins_grouped.loc[pair[1]]
+            pair_key = f'{pair[0]}_{pair[1]}_{pair[2]}'
+        else:
+            atac_inds = atac_bins_grouped.loc[pair[0]]
+            rna_inds = rna_bins_grouped.loc[pair[1]]
+            pair_key = f'{pair[0]}_{pair[1]}'
 
         if enforce_diff_chr:
             # Vectorized array lookup + outer comparison
@@ -1159,7 +1201,7 @@ def create_ctrl_pairs(
         # Randomly sample without replacement
         selected_idx = np.random.choice(n_pairs, size=b, replace=False)
         ctrl_links = all_pairs[selected_idx]
-        ctrl_dic[str(pair[0]) + '_' + str(pair[1])] = ctrl_links
+        ctrl_dic[pair_key] = ctrl_links
 
     if return_bins_df:
 

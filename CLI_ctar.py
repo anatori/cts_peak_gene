@@ -71,10 +71,11 @@ def main(args):
     ARRAY_IDX = args.array_idx
     FLAG_SE = (args.flag_se == 'True')
     FLAG_LL = (args.flag_ll == 'True')
-    FLAG_CORR = (args.flag_corr == 'True')
+    FLAG_CORR = (getattr(args, 'flag_corr', 'False') == 'True')
     N_CORES = int(args.n_cores) if args.n_cores is not None else None
     RANDOM_SEED = int(args.random_seed) if args.random_seed is not None else None
-    DONOR_COL = args.donor_col if args.donor_col else None
+    DONOR_COL = args.donor_col or None
+    N_LENGTH_BINS = int(args.n_length_bins or '1')
 
     # Parse and check arguments
     LEGAL_JOB_LIST = [
@@ -129,6 +130,7 @@ def main(args):
     header += "--flag_corr %s\\\n" % FLAG_CORR
     header += "--random_seed %s\\\n" % RANDOM_SEED
     header += "--donor_col %s\\\n" % DONOR_COL
+    header += "--n_length_bins %s\\\n" % N_LENGTH_BINS
     print(header)
 
     if RANDOM_SEED is not None:
@@ -289,6 +291,7 @@ def main(args):
                         n_rna_mean,
                         n_rna_var,
                         GENOME_FILE,
+                        n_length_bins=N_LENGTH_BINS,
                     )
 
     if JOB in ["compute_ctar", "compute_ctrl_only", "compute_cis_only"]:
@@ -656,11 +659,12 @@ def main(args):
             ctrl_links_dic, atac_bins_df, rna_bins_df = ctar.method.create_ctrl_pairs(
                 adata_atac, adata_rna, atac_bins=[n_atac_mean,n_atac_gc], rna_bins=[n_rna_mean,n_rna_var],
                 atac_type=atac_type, rna_type=rna_type, b=n_ctrl,
-                atac_layer='counts', rna_layer='counts', genome_file=GENOME_FILE
+                atac_layer='counts', rna_layer='counts', genome_file=GENOME_FILE,
+                n_length_bins=N_LENGTH_BINS,
             )
 
-            cis_links_df = ctar.data_loader.combine_peak_gene_bins(cis_links_df, atac_bins_df, rna_bins_df, 
-                atac_bins=[n_atac_mean,n_atac_gc], 
+            cis_links_df = ctar.data_loader.combine_peak_gene_bins(cis_links_df, atac_bins_df, rna_bins_df,
+                atac_bins=[n_atac_mean,n_atac_gc],
                 rna_bins=[n_rna_mean,n_rna_var]
             )
 
@@ -855,16 +859,17 @@ def main(args):
             ctrl_links_dic, atac_bins_df, rna_bins_df = ctar.method.create_ctrl_pairs(
                 adata_atac, adata_rna, atac_bins=[n_atac_mean,n_atac_gc], rna_bins=[n_rna_mean,n_rna_var],
                 atac_type=atac_type, rna_type=rna_type, b=n_ctrl,
-                atac_layer='counts', rna_layer='counts', genome_file=GENOME_FILE
+                atac_layer='counts', rna_layer='counts', genome_file=GENOME_FILE,
+                n_length_bins=N_LENGTH_BINS,
             )
 
-            cis_links_df = ctar.data_loader.combine_peak_gene_bins(cis_links_df, atac_bins_df, rna_bins_df, 
-                atac_bins=[n_atac_mean,n_atac_gc], 
+            cis_links_df = ctar.data_loader.combine_peak_gene_bins(cis_links_df, atac_bins_df, rna_bins_df,
+                atac_bins=[n_atac_mean,n_atac_gc],
                 rna_bins=[n_rna_mean,n_rna_var]
             )
 
-            cis_links_dic, cis_idx_dic = ctar.data_loader.groupby_combined_bins(cis_links_df, 
-                combined_bin_col=f'combined_bin_{BIN_CONFIG.rsplit(".",1)[0]}', 
+            cis_links_dic, cis_idx_dic = ctar.data_loader.groupby_combined_bins(cis_links_df,
+                combined_bin_col=f'combined_bin_{BIN_CONFIG.rsplit(".",1)[0]}',
                 return_dic=True
             )
 
@@ -900,7 +905,8 @@ def main(args):
             ctrl_links_dic, atac_bins_df, rna_bins_df = ctar.method.create_ctrl_pairs(
                 adata_atac, adata_rna, atac_bins=[n_atac_mean,n_atac_gc], rna_bins=[n_rna_mean,n_rna_var],
                 atac_type=atac_type, rna_type=rna_type, b=n_ctrl,
-                atac_layer='counts', rna_layer='counts', genome_file=GENOME_FILE
+                atac_layer='counts', rna_layer='counts', genome_file=GENOME_FILE,
+                n_length_bins=N_LENGTH_BINS,
             )
 
             cis_links_df = ctar.data_loader.combine_peak_gene_bins(cis_links_df, atac_bins_df, rna_bins_df,
@@ -931,15 +937,16 @@ def main(args):
             adata_rna.var = ctar.data_loader.get_gene_coords(adata_rna.var, add_tss=True)
             cis_links_df = ctar.data_loader.peak_to_gene(adata_atac.var, adata_rna.var, clean=True, split_peaks=True)
 
-            if not USE_INF_MODE: 
+            if not USE_INF_MODE:
                 ctrl_links_dic, atac_bins_df, rna_bins_df = ctar.method.create_ctrl_pairs(
                     adata_atac, adata_rna, atac_bins=[n_atac_mean,n_atac_gc], rna_bins=[n_rna_mean,n_rna_var],
                     atac_type=atac_type, rna_type=rna_type, b=n_ctrl,
-                    atac_layer='counts', rna_layer='counts', genome_file=GENOME_FILE
+                    atac_layer='counts', rna_layer='counts', genome_file=GENOME_FILE,
+                    n_length_bins=N_LENGTH_BINS,
                 )
 
-                cis_links_df = ctar.data_loader.combine_peak_gene_bins(cis_links_df, atac_bins_df, rna_bins_df, 
-                    atac_bins=[n_atac_mean,n_atac_gc], 
+                cis_links_df = ctar.data_loader.combine_peak_gene_bins(cis_links_df, atac_bins_df, rna_bins_df,
+                    atac_bins=[n_atac_mean,n_atac_gc],
                     rna_bins=[n_rna_mean,n_rna_var]
                 )
 
@@ -1021,7 +1028,7 @@ def main(args):
                 cis_links_df['poissonb_se'] = cis_coeff[:, 0]
 
         else:
-            
+
             # Standard binned mode
             cis_links_df = ctar.data_loader.ensure_combined_bin_column(
                 cis_links_df,
@@ -1035,9 +1042,10 @@ def main(args):
                 n_rna_mean,
                 n_rna_var,
                 GENOME_FILE,
+                n_length_bins=N_LENGTH_BINS,
             )
 
-            cis_links_dic, cis_idx_dic = ctar.data_loader.groupby_combined_bins(cis_links_df, 
+            cis_links_dic, cis_idx_dic = ctar.data_loader.groupby_combined_bins(cis_links_df,
                 combined_bin_col=f'combined_bin_{BIN_CONFIG.rsplit(".",1)[0]}', 
                 return_dic=True
             )
@@ -1270,16 +1278,17 @@ def main(args):
                 ctrl_links_dic, atac_bins_df, rna_bins_df = ctar.method.create_ctrl_pairs(
                     adata_atac, adata_rna, atac_bins=[n_atac_mean,n_atac_gc], rna_bins=[n_rna_mean,n_rna_var],
                     atac_type=atac_type, rna_type=rna_type, b=n_ctrl,
-                    atac_layer='counts', rna_layer='counts', genome_file=GENOME_FILE
+                    atac_layer='counts', rna_layer='counts', genome_file=GENOME_FILE,
+                    n_length_bins=N_LENGTH_BINS,
                 )
 
-                cis_links_df = ctar.data_loader.combine_peak_gene_bins(cis_links_df, atac_bins_df, rna_bins_df, 
-                    atac_bins=[n_atac_mean,n_atac_gc], 
+                cis_links_df = ctar.data_loader.combine_peak_gene_bins(cis_links_df, atac_bins_df, rna_bins_df,
+                    atac_bins=[n_atac_mean,n_atac_gc],
                     rna_bins=[n_rna_mean,n_rna_var]
                 )
 
-                cis_links_dic, cis_idx_dic = ctar.data_loader.groupby_combined_bins(cis_links_df, 
-                    combined_bin_col=f'combined_bin_{BIN_CONFIG.rsplit(".",1)[0]}', 
+                cis_links_dic, cis_idx_dic = ctar.data_loader.groupby_combined_bins(cis_links_df,
+                    combined_bin_col=f'combined_bin_{BIN_CONFIG.rsplit(".",1)[0]}',
                     return_dic=True
                 )
 
@@ -1575,6 +1584,7 @@ if __name__ == "__main__":
     parser.add_argument("--n_cores", type=str, required=False, default=None)
     parser.add_argument("--random_seed", type=str, required=False, default=None, help="Random seed for reproducible control link generation")
     parser.add_argument("--donor_col", type=str, required=False, default=None, help="obs column for donor centering before Pearson correlation (requires --flag_corr True)")
+    parser.add_argument("--n_length_bins", type=str, required=False, default='1', help="Number of peak-length quantile bins added to ATAC binning (1 = off, 5 = recommended)")
 
     args = parser.parse_args()
     main(args)
