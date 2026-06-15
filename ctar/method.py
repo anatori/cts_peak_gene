@@ -819,6 +819,15 @@ def compute_is_promoter_peak(peaks, genes_df, promoter_bp=2000,
     return peaks_df[peak_col_name].isin(promoter_set).astype(int)
 
 
+def compute_mean_var(sparse_X, axis=0):
+    ''' Computes mean and variance for each column of a sparse matrix.
+    '''
+    mean = sparse_X.mean(axis=axis).A1
+    e2 = sparse_X.power(2).mean(axis=axis).A1
+    var = e2 - mean ** 2
+    return mean, var
+
+
 def sub_bin(df, group_col, val_col, num_sub_bins, out_col):
     ''' Assigns nested bin labels within groups.
     ''' 
@@ -873,17 +882,14 @@ def get_bins(adata, num_bins=5, type='mean', col='gene_ids', layer='atac_raw', g
     bins['ind'] = adata.var.loc[unique, 'index_z'].values
 
     sparse_X = adata[:, unique].layers[layer]
-    bins['mean'] = sparse_X.mean(axis=0).A1
-    print('Mean done.')
+    bins['mean'], bins['var'] = compute_mean_var(sparse_X)
+    print('Mean and variance done.')
 
     mean_num_bins = num_bins[0] if isinstance(num_bins, list) else num_bins
     alt_num_bins = num_bins[1] if isinstance(num_bins, list) else None
     bins['mean_bin'] = pd.qcut(bins['mean'].rank(method='first'), mean_num_bins, labels=False, duplicates="drop")
 
     if type == 'mean_var':
-        e2 = sparse_X.power(2).mean(axis=0).A1
-        bins['var'] = e2 - bins['mean'] ** 2
-        print('Var done.')
         bins['mean_var_bin'] = ''
         bins = sub_bin(bins, 'mean_bin', 'var', alt_num_bins, 'mean_var_bin')
 
@@ -925,7 +931,7 @@ def get_value_bins(adata, num_bins=5, b=200, type='mean', col='gene_ids', layer=
     bins['ind'] = adata.var.index_z[unique]
     sparse_X = adata[:,unique].layers[layer]
 
-    bins['mean'] = sparse_X.mean(axis=0).A1
+    bins['mean'], _ = compute_mean_var(sparse_X)
 
     bins['mean_bin'] = pd.cut(bins['mean'], num_bins, labels=False, duplicates="drop")
     if bins.mean_bin.value_counts().min() > b:
