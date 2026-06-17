@@ -1872,6 +1872,80 @@ def binned_empirical_fdr(
     return pd.concat(cis_pairs_ls) 
 
 
+def binned_bh_fdr(
+    cis_links_df,
+    pval_col,
+    qval_col='q_value_bh',
+    fdr_bin_col=None,
+    ctrl_bin_col='combined_bin_5.5.5.5',
+    pi0=1.0,
+    pi0_col=None,
+    lambda_storey=0.5,
+    min_n=30,
+):
+    """
+    BH correction within FDR bins, scaled by pi0.
+
+    Parameters
+    ----------
+    cis_links_df : pd.DataFrame
+    pval_col : str
+        Column of p-values to correct.
+    qval_col : str
+        Output q-value column name.
+    fdr_bin_col : str or None
+        Column defining groups within which BH is applied. Falls back to ctrl_bin_col.
+    ctrl_bin_col : str
+        Used as grouping column when fdr_bin_col is None.
+    pi0 : float or None
+        Fixed pi0 for all bins. If None, pi0 is estimated or read from pi0_col.
+    pi0_col : str or None
+        Per-link predicted pi0 column; mean within each bin is used. Takes precedence
+        over pval_col-based estimation when set.
+    lambda_storey, min_n
+        Passed to estimate_pi0 when pi0 is None and pi0_col is None.
+
+    Returns
+    -------
+    pd.DataFrame
+        Copy of input with qval_col and pi0 columns added.
+    """
+    if pi0 is not None:
+        print(f'Setting pi0={pi0} for all links...')
+    elif pi0_col is not None:
+        print(f'Reading pi0 from column {pi0_col}...')
+    else:
+        print(f'Estimating pi0 per bin using Storey procedure (lambda={lambda_storey})...')
+
+    group_col = fdr_bin_col if fdr_bin_col is not None else ctrl_bin_col
+    cis_pairs_ls = []
+
+    for _, bin_df in cis_links_df.groupby(group_col):
+        bin_df = bin_df.copy()
+
+        pvals = bin_df[pval_col].values
+        nan_mask = np.isnan(pvals)
+        pvals_clean = pvals[~nan_mask]
+
+        if pi0 is not None:
+            bin_pi0 = pi0
+        elif pi0_col is not None:
+            bin_pi0 = float(np.clip(bin_df[pi0_col].dropna().mean(), 0.0, 1.0))
+        else:
+            bin_pi0 = estimate_pi0(bin_df, pval_col, lambda_storey=lambda_storey, min_n=min_n)
+
+        q_values = np.full(len(pvals), np.nan)
+        if len(pvals_clean) > 0:
+            _, bh_q, _, _ = stats.multitest.multipletests(pvals_clean, method='fdr_bh')
+            q_values[~nan_mask] = np.minimum(bh_q * bin_pi0, 1.0)
+
+        bin_df['pi0'] = bin_pi0
+        bin_df[qval_col] = q_values
+        cis_pairs_ls.append(bin_df)
+
+    return pd.concat(cis_pairs_ls)
+
+
 def estimate_pi0(
     cis_links_df,
     pval_col,
