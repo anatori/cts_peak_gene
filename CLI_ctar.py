@@ -257,9 +257,10 @@ def main(args):
         sc.pp.log1p(adata_atac_tmp)
         if DONOR_COL is not None:
             assert DONOR_COL in adata_rna.obs.columns, f"--donor_col '{DONOR_COL}' not found in obs"
-            print(f"# Centering by donor column '{DONOR_COL}'...")
-            adata_rna_tmp.X = ctar.method.center_by_donor(adata_rna_tmp.X, adata_rna.obs[DONOR_COL].values)
-            adata_atac_tmp.X = ctar.method.center_by_donor(adata_atac_tmp.X, adata_atac.obs[DONOR_COL].values)
+            print(f"# Donor column '{DONOR_COL}' set — using within-donor Pearson correlation (sparse, no centering).")
+            donor_labels = adata_rna.obs[DONOR_COL].values
+        else:
+            donor_labels = None
         rna_norm = adata_rna_tmp.X
         atac_norm = adata_atac_tmp.X
         del adata_rna_tmp, adata_atac_tmp
@@ -488,6 +489,7 @@ def main(args):
                     rna_sparse=rna_sparse,
                     batch_size=BATCH_SIZE,
                     n_workers=n_cores,
+                    donor_labels=donor_labels,
                 )
                 print('# Cis Pearson time = %0.2fs' % (time.time() - start_time))
                 cis_coeff = np.empty(n_links, dtype=np.float32)
@@ -503,6 +505,7 @@ def main(args):
                     rna_sparse=rna_sparse,
                     batch_size=BATCH_SIZE,
                     n_workers=n_cores,
+                    donor_labels=donor_labels,
                 )
                 print('# Control Pearson time = %0.2fs' % (time.time() - start_time))
                 n_rows = len(cis_links_df) * n_ctrl
@@ -685,6 +688,7 @@ def main(args):
                     rna_sparse=rna_sparse,
                     batch_size=BATCH_SIZE,
                     n_workers=n_cores,
+                    donor_labels=donor_labels,
                 )
                 print('# Cis Pearson time = %0.2fs' % (time.time() - start_time))
 
@@ -696,6 +700,7 @@ def main(args):
                     rna_sparse=rna_sparse,
                     batch_size=BATCH_SIZE,
                     n_workers=n_cores,
+                    donor_labels=donor_labels,
                 )
                 print('# Control Pearson time = %0.2fs' % (time.time() - start_time))
 
@@ -984,6 +989,7 @@ def main(args):
                     rna_sparse=rna_sparse,
                     batch_size=BATCH_SIZE,
                     n_workers=n_cores,
+                    donor_labels=donor_labels,
                 )
                 print('# Cis Pearson time = %0.2fs' % (time.time() - start_time))
                 cis_coeff = np.empty(n_links, dtype=np.float32)
@@ -1076,6 +1082,7 @@ def main(args):
                     rna_sparse=rna_sparse,
                     batch_size=BATCH_SIZE,
                     n_workers=n_cores,
+                    donor_labels=donor_labels,
                 )
                 print('# Cis Pearson time = %0.2fs' % (time.time() - start_time))
                 cis_links_df = ctar.data_loader.map_dic_to_df(cis_links_df, cis_idx_dic, cis_corr_dic, col_name='corr')
@@ -1227,6 +1234,7 @@ def main(args):
                     rna_sparse=rna_sparse,
                     batch_size=BATCH_SIZE,
                     n_workers=n_cores,
+                    donor_labels=donor_labels,
                 )
                 print('# Control Pearson time = %0.2fs' % (time.time() - start_time))
                 ctrl_coeff_flat = np.empty(n_rows, dtype=np.float32)
@@ -1319,6 +1327,7 @@ def main(args):
                     rna_sparse=rna_sparse,
                     batch_size=BATCH_SIZE,
                     n_workers=n_cores,
+                    donor_labels=donor_labels,
                 )
                 print('# Control Pearson time = %0.2fs' % (time.time() - start_time))
             else:

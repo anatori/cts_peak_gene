@@ -12,7 +12,7 @@ from multiprocessing import cpu_count
 from typing import Union, Optional, List, Dict
 from itertools import islice
 
-from ctar.method import poisson_irls_loop, poisson_irls_loop_multi, poisson_irls_loop_sparse, pearson_corr_sparse
+from ctar.method import poisson_irls_loop, poisson_irls_loop_multi, poisson_irls_loop_sparse, pearson_corr_sparse, pearson_corr_within_donor_sparse
 
 
 
@@ -364,12 +364,20 @@ def _pearson_corr_worker(subatch_links, atac_sparse, rna_sparse):
     return pearson_corr_sparse(rna, atac).flatten()
 
 
+def _pearson_corr_within_donor_worker(subatch_links, atac_sparse, rna_sparse, donor_labels):
+    """Worker: compute within-donor Pearson correlation for a batch of link pairs."""
+    atac = atac_sparse[:, subatch_links[:, 0]]
+    rna  = rna_sparse[:,  subatch_links[:, 1]]
+    return pearson_corr_within_donor_sparse(atac, rna, donor_labels).flatten()
+
+
 def multiprocess_pearson_corr(
     links_dict: Dict[str, np.ndarray],
     atac_sparse,
     rna_sparse,
     batch_size: int = 50,
     n_workers: Optional[int] = None,
+    donor_labels=None,
     **compute_kwargs,
 ):
     """Parallel Pearson correlation across link batches using Dask.
@@ -387,6 +395,9 @@ def multiprocess_pearson_corr(
         Number of dict entries to process per Dask batch.
     n_workers : int, optional
         Number of parallel workers.
+    donor_labels : array-like, shape (n_cells,), optional
+        If provided, computes within-donor Pearson correlation (donor fixed effects)
+        without materializing a dense matrix.
 
     Returns
     -------
@@ -406,7 +417,10 @@ def multiprocess_pearson_corr(
 
             for bin_key, link_array in batch:
                 links_re, atac_sub, rna_sub = preprocess_batch(link_array, atac_sparse, rna_sparse)
-                tasks.append(delayed(_pearson_corr_worker)(links_re, atac_sub, rna_sub))
+                if donor_labels is not None:
+                    tasks.append(delayed(_pearson_corr_within_donor_worker)(links_re, atac_sub, rna_sub, donor_labels))
+                else:
+                    tasks.append(delayed(_pearson_corr_worker)(links_re, atac_sub, rna_sub))
                 keys.append(bin_key)
                 del atac_sub, rna_sub, links_re
 
