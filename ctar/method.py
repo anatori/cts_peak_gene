@@ -153,8 +153,8 @@ def pearson_corr_within_donor_sparse(mat_X, mat_Y, donor_labels):
     )
     n_d = np.asarray(D.sum(axis=0)).ravel()  # (n_donors,)
 
-    DtX = np.asarray(D.T @ mat_X)            # (n_donors, n_features)
-    DtY = np.asarray(D.T @ mat_Y)
+    DtX = (D.T @ mat_X).toarray()            # (n_donors, n_features), dense
+    DtY = (D.T @ mat_Y).toarray()
 
     XY = np.asarray(mat_X.multiply(mat_Y).sum(axis=0)).ravel()
     numer = XY - (DtX * DtY / n_d[:, None]).sum(axis=0)

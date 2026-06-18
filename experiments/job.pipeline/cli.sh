@@ -191,7 +191,7 @@ PVAL_JOB=$(sbatch --parsable -p $PARTITION -t 00:30:00 \
   --mail-type=END --mail-user=asprieto@andrew.cmu.edu \
   -o /ocean/projects/bio240051p/aprieto/logs/pval_%j.err -J "pval_$BIN_CONFIG" \
   --wrap "source ~/.bashrc && conda activate ctar && python /ocean/projects/bio240051p/aprieto/cts_peak_gene/CLI_ctar.py \
-          --job compute_pval --binning_config $BIN_CONFIG --binning_type $BIN_TYPE --results_path $RESULTS_PATH --flag_corr $FLAG_CORR")
+          --job compute_pval --binning_config $BIN_CONFIG --binning_type $BIN_TYPE --n_length_bins $N_LENGTH_BINS --results_path $RESULTS_PATH --flag_corr $FLAG_CORR")
 echo "P-value job ID: $PVAL_JOB"
 
 
