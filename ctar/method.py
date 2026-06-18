@@ -123,6 +123,49 @@ def center_by_donor(mat, donor_labels):
     return mat
 
 
+def pearson_corr_within_donor_sparse(mat_X, mat_Y, donor_labels):
+    """Within-donor Pearson correlation for aligned column pairs.
+
+    Equivalent to donor fixed-effects linear regression but never materializes
+    a dense (n_cells, n_features) matrix. Only (n_donors, n_features) intermediates
+    are dense, which are small enough to fit in memory.
+
+    Parameters
+    ----------
+    mat_X : sparse matrix, shape (n_cells, n_features)
+    mat_Y : sparse matrix, shape (n_cells, n_features)
+    donor_labels : array-like, shape (n_cells,)
+
+    Returns
+    -------
+    corr : np.ndarray, shape (n_features,)
+    """
+    if not sp.sparse.issparse(mat_X):
+        mat_X = sp.sparse.csr_matrix(mat_X)
+    if not sp.sparse.issparse(mat_Y):
+        mat_Y = sp.sparse.csr_matrix(mat_Y)
+
+    n_cells = mat_X.shape[0]
+    donors = pd.Categorical(donor_labels)
+    D = sp.sparse.csr_matrix(
+        (np.ones(n_cells, dtype=np.float32), (np.arange(n_cells), donors.codes)),
+        shape=(n_cells, len(donors.categories)),
+    )
+    n_d = np.asarray(D.sum(axis=0)).ravel()  # (n_donors,)
+
+    DtX = np.asarray(D.T @ mat_X)            # (n_donors, n_features)
+    DtY = np.asarray(D.T @ mat_Y)
+
+    XY = np.asarray(mat_X.multiply(mat_Y).sum(axis=0)).ravel()
+    numer = XY - (DtX * DtY / n_d[:, None]).sum(axis=0)
+
+    SS_X = np.asarray(mat_X.power(2).sum(axis=0)).ravel() - (DtX ** 2 / n_d[:, None]).sum(axis=0)
+    SS_Y = np.asarray(mat_Y.power(2).sum(axis=0)).ravel() - (DtY ** 2 / n_d[:, None]).sum(axis=0)
+
+    denom = np.sqrt(SS_X.clip(0) * SS_Y.clip(0)).clip(1e-8)
+    return (numer / denom).astype(np.float32)
+
+
 def poisson_irls_loop_sparse(mat_x_full, mat_y_full, links=None, max_iter=100, tol=1e-3,
                              flag_float32=True, flag_se=False, flag_ll=False, ridge=False):
     """
@@ -727,19 +770,28 @@ def ll_reduced_intercept_only(y_col,
 ######################### generate null #########################
 
 
-def compute_peak_length_bins(peaks_series, n_bins):
-    """Quantile-bin peaks by length parsed from 'chrX:start-end' (or 'chrX-start-end') strings.
+def compute_peak_length_bins(atac_bins_df, atac_type, n_bins):
+    """Quantile-bin peaks by length within each ATAC bin group.
 
-    Returns integer bin labels (0..n_bins-1) aligned to peaks_series index,
-    or None if n_bins <= 1 or peak lengths have no variance (so callers can skip).
+    Returns integer sub-bin labels aligned to atac_bins_df.index,
+    or None if n_bins <= 1 or all peak lengths globally have no variance.
     """
     if n_bins <= 1:
         return None
-    parsed = peaks_series.str.extract(r'[^:+-]+[:-](\d+)-(\d+)')
+    parsed = atac_bins_df['peak'].str.extract(r'[^:+-]+[:-](\d+)-(\d+)')
     lengths = parsed.iloc[:, 1].astype(float) - parsed.iloc[:, 0].astype(float)
     if lengths.isna().all() or lengths.std() <= 0:
         return None
-    return pd.qcut(lengths.rank(method='first'), n_bins, labels=False, duplicates='drop').astype(int)
+    result = pd.Series(np.nan, index=atac_bins_df.index)
+    for _, group in atac_bins_df.groupby(f'{atac_type}_bin'):
+        group_lengths = lengths[group.index]
+        if group_lengths.std() <= 0:
+            result[group.index] = 0
+        else:
+            result[group.index] = pd.qcut(
+                group_lengths.rank(method='first'), n_bins, labels=False, duplicates='drop'
+            ).astype(int).values
+    return result.astype(int)
 
 
 def gc_content(adata, col='gene_ids', genome_file='GRCh38.p13.genome.fa.bgz'):
@@ -1129,12 +1181,16 @@ def create_ctrl_pairs(
         rna_bins_df.loc[rna_bins_df.mean_bin == 0, 'mean_bin'] = 1
         rna_bins_df['mean_var_bin'] = rna_bins_df['mean_var_bin'].str.replace(r'^0.','1.',regex=True).values
 
-    # Optionally add peak-length bins as an extra stratification dimension.
+    # Optionally add peak-length sub-bins within each ATAC bin group.
     if n_length_bins > 1:
-        length_bins = compute_peak_length_bins(atac_bins_df[peak_col], n_length_bins)
+        length_bins = compute_peak_length_bins(atac_bins_df, atac_type, n_length_bins)
         if length_bins is not None:
             atac_bins_df['length_bin'] = length_bins.values
-            print(f'# Added {n_length_bins} peak-length quantile bins to ATAC binning.')
+            n_actual = atac_bins_df.groupby(f'{atac_type}_bin')['length_bin'].nunique()
+            n_reduced = (n_actual < n_length_bins).sum()
+            if n_reduced > 0:
+                print(f'# Warning: {n_reduced}/{len(n_actual)} ATAC bins have fewer than {n_length_bins} length sub-bins (ties or uniform lengths).')
+            print(f'# Added peak-length sub-bins within each ATAC bin.')
         else:
             print('# Skipping peak-length bins: insufficient variance in peak lengths.')
 
@@ -1142,14 +1198,13 @@ def create_ctrl_pairs(
     rna_bins_grouped = rna_bins_df[['ind',f'{rna_type}_bin']].groupby([f'{rna_type}_bin']).ind.apply(np.array)
     use_length_bins = 'length_bin' in atac_bins_df.columns
     if use_length_bins:
-        pairs = [(i, j, k)
-                 for i in atac_bins_df[f'{atac_type}_bin'].unique()
-                 for j in rna_bins_df[f'{rna_type}_bin'].unique()
-                 for k in sorted(atac_bins_df['length_bin'].unique())]
         atac_bins_grouped = (
             atac_bins_df[['ind', f'{atac_type}_bin', 'length_bin']]
             .groupby([f'{atac_type}_bin', 'length_bin']).ind.apply(np.array)
         )
+        pairs = [(i, j, k)
+                 for (i, k) in atac_bins_grouped.index.tolist()
+                 for j in rna_bins_df[f'{rna_type}_bin'].unique()]
     else:
         pairs = [(i, j) for i in atac_bins_df[f'{atac_type}_bin'].unique() for j in rna_bins_df[f'{rna_type}_bin'].unique()]
         atac_bins_grouped = atac_bins_df[['ind',f'{atac_type}_bin']].groupby([f'{atac_type}_bin']).ind.apply(np.array)

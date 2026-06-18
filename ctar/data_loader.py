@@ -415,7 +415,7 @@ def ensure_combined_bin_column(
         genome_file=genome_file,
     )
     if n_length_bins > 1:
-        length_bins = compute_peak_length_bins(atac_bins_df['peak'], n_length_bins)
+        length_bins = compute_peak_length_bins(atac_bins_df, atac_type, n_length_bins)
         if length_bins is not None:
             atac_bins_df['length_bin'] = length_bins.values
     rna_bins_df = get_bins(
