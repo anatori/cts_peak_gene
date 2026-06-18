@@ -161,7 +161,7 @@ def main(args):
         USE_INF_MODE = (f'{n_rna_mean}.{n_rna_var}' == 'inf.inf')
         if not USE_INF_MODE: 
             n_rna_mean, n_rna_var = map(int, [n_rna_mean, n_rna_var])
-        print(f'# Setting n_atac_mean={n_atac_mean}, n_atac_gc={n_atac_gc}, n_rna_mean={n_rna_mean}, n_rna_var={n_rna_var}, n_ctrl={n_ctrl}')
+        print(f'# Setting n_atac_mean={n_atac_mean}, n_atac_gc={n_atac_gc}, n_rna_mean={n_rna_mean}, n_rna_var={n_rna_var}, n_length_bins={N_LENGTH_BINS}, n_ctrl={n_ctrl}')
 
     if JOB in [
         "compute_ctar",

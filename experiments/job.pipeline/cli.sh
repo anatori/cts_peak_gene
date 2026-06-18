@@ -2,15 +2,15 @@
 
 # FILE: /ocean/projects/bio240051p/aprieto/cts_peak_gene/experiments/job.pipeline/cli.sh
 
-MULTIOME_DATASET=bmmc
-MULTIOME_FILE=/ocean/projects/bio240051p/aprieto/multiome/processed/neurips_bmmc/bmmc.h5mu
-BIN_CONFIG=5.5.5.5.1000
-TARGET_PATH=/ocean/projects/bio240051p/aprieto/multiome/results/ctar/corr_eval/${MULTIOME_DATASET}/${MULTIOME_DATASET}_unfiltered_donor_${BIN_CONFIG}
+MULTIOME_DATASET=brain
+MULTIOME_FILE=/ocean/projects/bio240051p/aprieto/multiome/processed/brain_3k/brain.h5mu
+BIN_CONFIG=4.4.4.4.1000
+TARGET_PATH=/ocean/projects/bio240051p/aprieto/multiome/results/ctar/corr_eval/${MULTIOME_DATASET}/${MULTIOME_DATASET}_unfiltered_len_${BIN_CONFIG}
 GENOME_FILE=/ocean/projects/bio240051p/aprieto/bedfiles/ref/GRCh38.p14.genome.fixed.fa
 BIN_TYPE='mean_var'
 PYBEDTOOLS_PATH=/opt/packages/bedtools/2.30.0
 BATCH_SIZE=5
-RESULTS_PATH=/ocean/projects/bio240051p/aprieto/multiome/results/ctar/corr_eval/${MULTIOME_DATASET}/${MULTIOME_DATASET}_unfiltered_donor_${BIN_CONFIG}
+RESULTS_PATH=/ocean/projects/bio240051p/aprieto/multiome/results/ctar/corr_eval/${MULTIOME_DATASET}/${MULTIOME_DATASET}_unfiltered_len_${BIN_CONFIG}
 PARTITION="RM-shared"
 MAX_CONCURRENT=200
 FLAG_LL='False'
@@ -18,8 +18,8 @@ FLAG_SE='True'
 FLAG_CORR='True'
 N_CORES=64
 RANDOM_SEED=777
-DONOR_COL='DonorID'
-N_LENGTH_BINS=1
+DONOR_COL=''
+N_LENGTH_BINS=4
 
 IFS='.' read -r b1 b2 b3 b4 rest <<< "$BIN_CONFIG"
 if [[ "$b3" == "inf" && "$b4" == "inf" ]]; then
@@ -28,7 +28,7 @@ if [[ "$b3" == "inf" && "$b4" == "inf" ]]; then
 else
     echo "Using standard binned mode"
     USE_INF_MODE=false
-    NUM_LINKS=$(( b1 * b2 * b3 * b4 ))
+    NUM_LINKS=$(( b1 * b2 * b3 * b4 * N_LENGTH_BINS ))
     TOTAL_NUM_BATCHES=$(( (NUM_LINKS + BATCH_SIZE - 1) / BATCH_SIZE ))
     ARRAY_OPT="--array=0-$((TOTAL_NUM_BATCHES - 1))%${MAX_CONCURRENT}"
 fi
@@ -191,7 +191,7 @@ PVAL_JOB=$(sbatch --parsable -p $PARTITION -t 00:30:00 \
   --mail-type=END --mail-user=asprieto@andrew.cmu.edu \
   -o /ocean/projects/bio240051p/aprieto/logs/pval_%j.err -J "pval_$BIN_CONFIG" \
   --wrap "source ~/.bashrc && conda activate ctar && python /ocean/projects/bio240051p/aprieto/cts_peak_gene/CLI_ctar.py \
-          --job compute_pval --binning_config $BIN_CONFIG --binning_type $BIN_TYPE --n_length_bins $N_LENGTH_BINS --results_path $RESULTS_PATH --flag_corr $FLAG_CORR")
+          --job compute_pval --binning_config $BIN_CONFIG --binning_type $BIN_TYPE --results_path $RESULTS_PATH --flag_corr $FLAG_CORR")
 echo "P-value job ID: $PVAL_JOB"
 
 
