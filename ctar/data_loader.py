@@ -91,8 +91,20 @@ def peak_to_gene(peaks_df,genes_df,clean=True,split_peaks=True,distance=500000,c
     peak_gene_links = closest_links.merge(peaks_clean,on=peak_col)
     peak_gene_links = peak_gene_links.merge(genes_clean,on=gene_col)
 
-    peak_gene_links = peak_gene_links[[gene_col,peak_col]+['distance','index_x','index_y']]
-    
+    extra_cols = []
+    if 'tss' in genes_clean.columns:
+        peak_start = pd.to_numeric(peak_gene_links['peak_start'], errors='coerce')
+        peak_end = pd.to_numeric(peak_gene_links['peak_end'], errors='coerce')
+        tss = pd.to_numeric(peak_gene_links['tss'], errors='coerce')
+        signed = np.where(
+            peak_end < tss, peak_end - tss,
+            np.where(peak_start > tss, peak_start - tss, 0)
+        )
+        peak_gene_links['abs_distance'] = np.abs(signed).astype('Int64')
+        extra_cols = ['abs_distance']
+
+    peak_gene_links = peak_gene_links[[gene_col,peak_col]+['distance','index_x','index_y']+extra_cols]
+
     # use unique indices
     peak_gene_links.index = peak_gene_links[peak_col].astype(str) + sep + peak_gene_links[gene_col].astype(str)
 

@@ -76,6 +76,8 @@ def main(args):
     RANDOM_SEED = int(args.random_seed) if args.random_seed is not None else None
     DONOR_COL = args.donor_col or None
     N_LENGTH_BINS = int(args.n_length_bins or '1')
+    FDR_BIN_TYPE = getattr(args, 'fdr_bin_type', None) or None
+    N_DIST_BINS = int(args.n_dist_bins or '5')
 
     # Parse and check arguments
     LEGAL_JOB_LIST = [
@@ -131,6 +133,8 @@ def main(args):
     header += "--random_seed %s\\\n" % RANDOM_SEED
     header += "--donor_col %s\\\n" % DONOR_COL
     header += "--n_length_bins %s\\\n" % N_LENGTH_BINS
+    header += "--fdr_bin_type %s\\\n" % FDR_BIN_TYPE
+    header += "--n_dist_bins %s\\\n" % N_DIST_BINS
     print(header)
 
     if RANDOM_SEED is not None:
@@ -342,6 +346,11 @@ def main(args):
         ]
         print(f"# Found {len(ctrl_coeff_files)} ctrl coefficient files")
 
+        if FDR_BIN_TYPE is not None:
+            assert FDR_BIN_TYPE == 'dist_mean_var', (
+                f"--fdr_bin_type '{FDR_BIN_TYPE}' is not implemented; only 'dist_mean_var' is currently supported."
+            )
+
         if USE_INF_MODE:
             if ctrl_coeff_files:
                 print("# Consolidating array outputs...")
@@ -430,7 +439,7 @@ def main(args):
 
         print("# Running --job compute_ctar")
 
-        adata_rna.var = ctar.data_loader.get_gene_coords(adata_rna.var, add_tss=False)
+        adata_rna.var = ctar.data_loader.get_gene_coords(adata_rna.var, add_tss=True)
         cis_links_df = ctar.data_loader.peak_to_gene(adata_atac.var, adata_rna.var, clean=True, split_peaks=True)
 
         if USE_INF_MODE: 
@@ -842,7 +851,7 @@ def main(args):
 
         print("# Running --job generate_links")
 
-        adata_rna.var = ctar.data_loader.get_gene_coords(adata_rna.var, add_tss=False)
+        adata_rna.var = ctar.data_loader.get_gene_coords(adata_rna.var, add_tss=True)
         cis_links_df = ctar.data_loader.peak_to_gene(adata_atac.var, adata_rna.var, clean=True, split_peaks=True)
 
         if USE_INF_MODE:
@@ -1526,8 +1535,8 @@ def main(args):
                 if stat_col_bin not in cis_links_df.columns:
                     cis_links_df = ctar.data_loader.map_dic_to_df(cis_links_df, cis_idx_dic, cis_coeff_dic, col_name=stat_col_bin)
 
-            # FDR (binned mode)
-            print("# Computing empirical FDR (binned mode)...")
+            # FDR
+            print("# Computing stratified empirical FDR...")
             stat_col_bin = 'corr' if FLAG_CORR else 'poissonb'
             first_key = list(ctrl_coeff_dic.keys())[0]
             if ctrl_coeff_dic[first_key].ndim == 2 and ctrl_coeff_dic[first_key].shape[1] == 2:
@@ -1539,15 +1548,40 @@ def main(args):
                 stat_col=stat_col_bin,
                 ctrl_bin_col=combined_bin_col,
                 pi0=None,
-                fdr_bin_col=fdr_bin_col,
+                fdr_bin_col=None,
                 qval_col='q_value',
             )
+
+            if FDR_BIN_TYPE == 'dist_mean_var':
+                rna_bin_col = f'rna_mean_var_bin_{n_rna_mean}.{n_rna_var}'
+                if 'abs_distance' in cis_links_df.columns and rna_bin_col in cis_links_df.columns:
+                    cis_links_df['dist_bin'] = pd.qcut(
+                        cis_links_df['abs_distance'].rank(method='first'),
+                        N_DIST_BINS, labels=False, duplicates='drop'
+                    ).astype(int)
+                    cis_links_df['fdr_bin_dist_rmean_rvar'] = (
+                        cis_links_df['dist_bin'].astype(str)
+                        + '_'
+                        + cis_links_df[rna_bin_col].astype(str)
+                    )
+                    cis_links_df = ctar.method.binned_empirical_fdr(
+                        cis_links_df, ctrl_fdr_dic,
+                        stat_col=stat_col_bin,
+                        ctrl_bin_col=combined_bin_col,
+                        pi0=None,
+                        fdr_bin_col='fdr_bin_dist_rmean_rvar',
+                        qval_col='q_value_dist_rmean_rvar',
+                    )
+                    print('# Added q_value_dist_rmean_rvar.')
+                else:
+                    print(f'# WARNING: --fdr_bin_type dist_mean_var skipped — '
+                          f'abs_distance or {rna_bin_col} missing from cis_links_df.')
 
         # Save updated dataframe
         output_file = os.path.join(RESULTS_PATH, 'cis_links_df.csv')
         print(f"# Saving updated cis_links_df to {output_file}")
         cis_links_df.to_csv(output_file)
-        print(f"# Added columns: {[col for col in cis_links_df.columns if BIN_CONFIG in col or col == 'q_value']}")
+        print(f"# Added columns: {[col for col in cis_links_df.columns if BIN_CONFIG in col or col.startswith('q_value')]}")
 
 
     ###########################################################################################
@@ -1596,6 +1630,8 @@ if __name__ == "__main__":
     parser.add_argument("--random_seed", type=str, required=False, default=None, help="Random seed for reproducible control link generation")
     parser.add_argument("--donor_col", type=str, required=False, default=None, help="obs column for donor centering before Pearson correlation (requires --flag_corr True)")
     parser.add_argument("--n_length_bins", type=str, required=False, default='1', help="Number of peak-length quantile bins added to ATAC binning (1 = off, 5 = recommended)")
+    parser.add_argument("--fdr_bin_type", type=str, required=False, default=None, help="FDR stratification type for compute_pval. Only 'dist_mean_var' is currently supported.")
+    parser.add_argument("--n_dist_bins", type=str, required=False, default='5', help="Number of quantile bins for abs_distance when --fdr_bin_type dist_mean_var is used.")
 
     args = parser.parse_args()
     main(args)

@@ -20,6 +20,8 @@ N_CORES=64
 RANDOM_SEED=777
 DONOR_COL=''
 N_LENGTH_BINS=4
+FDR_BIN_TYPE='dist_mean_var'
+N_DIST_BINS=5
 
 IFS='.' read -r b1 b2 b3 b4 rest <<< "$BIN_CONFIG"
 if [[ "$b3" == "inf" && "$b4" == "inf" ]]; then
@@ -191,7 +193,8 @@ PVAL_JOB=$(sbatch --parsable -p $PARTITION -t 00:30:00 \
   --mail-type=END --mail-user=asprieto@andrew.cmu.edu \
   -o /ocean/projects/bio240051p/aprieto/logs/pval_%j.err -J "pval_$BIN_CONFIG" \
   --wrap "source ~/.bashrc && conda activate ctar && python /ocean/projects/bio240051p/aprieto/cts_peak_gene/CLI_ctar.py \
-          --job compute_pval --binning_config $BIN_CONFIG --binning_type $BIN_TYPE --results_path $RESULTS_PATH --flag_corr $FLAG_CORR")
+          --job compute_pval --binning_config $BIN_CONFIG --binning_type $BIN_TYPE --results_path $RESULTS_PATH --flag_corr $FLAG_CORR \
+          ${FDR_BIN_TYPE:+--fdr_bin_type $FDR_BIN_TYPE --n_dist_bins $N_DIST_BINS}")
 echo "P-value job ID: $PVAL_JOB"
 
 
