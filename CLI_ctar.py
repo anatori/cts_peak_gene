@@ -1537,7 +1537,9 @@ def main(args):
             cis_links_df = ctar.method.binned_empirical_fdr(
                 cis_links_df, ctrl_fdr_dic,
                 stat_col=stat_col_bin,
-                bin_col=combined_bin_col,
+                ctrl_bin_col=combined_bin_col,
+                pi0=None,
+                fdr_bin_col=fdr_bin_col,
                 qval_col='q_value',
             )
 
