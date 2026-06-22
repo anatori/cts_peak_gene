@@ -15,6 +15,7 @@ import scanpy as sc
 import muon as mu
 import os
 import re
+from skmisc.loess import loess as _loess
 
 ######################### regression methods #########################
 
@@ -878,6 +879,95 @@ def compute_mean_var(sparse_X, axis=0):
     e2 = sparse_X.power(2).mean(axis=axis).A1
     var = e2 - mean ** 2
     return mean, var
+
+
+def compute_technical_variance(mean, var, span=0.3, degree=2):
+    ''' Estimates technical variance for each feature using LOESS regression
+    of log10(variance) on log10(mean). Features with zero mean or variance
+    are assigned technical variance equal to the mean (Poisson floor).
+
+    Parameters
+    ----------
+    mean : np.ndarray
+        Array of shape (M,) containing mean expression for each feature.
+    var : np.ndarray
+        Array of shape (M,) containing observed variance for each feature.
+    span : float
+        LOESS smoothing span parameter.
+    degree : int
+        Degree of the local polynomial fit.
+
+    Returns
+    ----------
+    var_tech : np.ndarray
+        Array of shape (M,) containing estimated technical variance for each feature.
+
+    '''
+    mean = np.asarray(mean, dtype=np.float64)
+    var = np.asarray(var, dtype=np.float64)
+    var_tech = mean.copy()
+
+    not_const = (var > 0) & (mean > 0)
+    if not_const.sum() > 0:
+        y = np.log10(var[not_const])
+        x = np.log10(mean[not_const])
+        model = _loess(x, y, span=span, degree=degree)
+        model.fit()
+        var_tech[not_const] = 10 ** model.outputs.fitted_values
+
+    return var_tech
+
+
+def compute_biological_variance(mean, var, span=0.3, degree=2):
+    ''' Estimates biological and technical variance for each feature using
+    LOESS regression of log10(variance) on log10(mean). Biological variance
+    is the residual above the technical noise floor, clipped to zero.
+
+    Parameters
+    ----------
+    mean : np.ndarray
+        Array of shape (M,) containing mean expression for each feature.
+    var : np.ndarray
+        Array of shape (M,) containing observed variance for each feature.
+    span : float
+        LOESS smoothing span parameter.
+    degree : int
+        Degree of the local polynomial fit.
+
+    Returns
+    ----------
+    var_tech : np.ndarray
+        Array of shape (M,) containing estimated technical variance for each feature.
+    var_bio : np.ndarray
+        Array of shape (M,) containing estimated biological variance for each feature,
+        clipped to zero.
+
+    '''
+    var_tech = compute_technical_variance(mean, var, span=span, degree=degree)
+    var_bio = np.clip(var - var_tech, 0, None)
+    return var_tech, var_bio
+
+
+def compute_cv(mean, var):
+    ''' Computes coefficient of variation (CV = std / mean) for each feature.
+    Returns 0 for features with zero or negative mean.
+
+    Parameters
+    ----------
+    mean : np.ndarray
+        Array of shape (M,) containing mean expression for each feature.
+    var : np.ndarray
+        Array of shape (M,) containing variance for each feature.
+
+    Returns
+    ----------
+    cv : np.ndarray
+        Array of shape (M,) containing coefficient of variation for each feature.
+
+    '''
+    mean = np.asarray(mean, dtype=np.float64)
+    var = np.asarray(var, dtype=np.float64)
+    return np.where(mean > 0, np.sqrt(np.clip(var, 0, None)) / mean, 0.0)
 
 
 def sub_bin(df, group_col, val_col, num_sub_bins, out_col):
