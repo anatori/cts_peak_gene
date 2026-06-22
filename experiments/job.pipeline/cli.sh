@@ -2,9 +2,9 @@
 
 # FILE: /ocean/projects/bio240051p/aprieto/cts_peak_gene/experiments/job.pipeline/cli.sh
 
-MULTIOME_DATASET=brain
-MULTIOME_FILE=/ocean/projects/bio240051p/aprieto/multiome/processed/brain_3k/brain.h5mu
-BIN_CONFIG=4.4.4.4.1000
+MULTIOME_DATASET=neat
+MULTIOME_FILE=/ocean/projects/bio240051p/aprieto/multiome/processed/neatseq/neat.h5mu
+BIN_CONFIG=4.4.4.4.10000
 TARGET_PATH=/ocean/projects/bio240051p/aprieto/multiome/results/ctar/corr_eval/${MULTIOME_DATASET}/${MULTIOME_DATASET}_unfiltered_len_${BIN_CONFIG}
 GENOME_FILE=/ocean/projects/bio240051p/aprieto/bedfiles/ref/GRCh38.p14.genome.fixed.fa
 BIN_TYPE='mean_var'
@@ -21,7 +21,7 @@ RANDOM_SEED=777
 DONOR_COL=''
 N_LENGTH_BINS=4
 FDR_BIN_TYPE='dist_mean_var'
-N_DIST_BINS=5
+N_DIST_BINS=4
 
 IFS='.' read -r b1 b2 b3 b4 rest <<< "$BIN_CONFIG"
 if [[ "$b3" == "inf" && "$b4" == "inf" ]]; then

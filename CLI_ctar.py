@@ -1548,6 +1548,7 @@ def main(args):
                 stat_col=stat_col_bin,
                 ctrl_bin_col=combined_bin_col,
                 pi0=None,
+                pval_col=f'{BIN_CONFIG}_mcpval',
                 fdr_bin_col=None,
                 qval_col='q_value',
             )
@@ -1558,7 +1559,7 @@ def main(args):
                     cis_links_df['dist_bin'] = pd.qcut(
                         cis_links_df['abs_distance'].rank(method='first'),
                         N_DIST_BINS, labels=False, duplicates='drop'
-                    ).astype(int)
+                    ).astype('Int64')
                     cis_links_df['fdr_bin_dist_rmean_rvar'] = (
                         cis_links_df['dist_bin'].astype(str)
                         + '_'
@@ -1569,6 +1570,7 @@ def main(args):
                         stat_col=stat_col_bin,
                         ctrl_bin_col=combined_bin_col,
                         pi0=None,
+                        pval_col=f'{BIN_CONFIG}_mcpval',
                         fdr_bin_col='fdr_bin_dist_rmean_rvar',
                         qval_col='q_value_dist_rmean_rvar',
                     )
