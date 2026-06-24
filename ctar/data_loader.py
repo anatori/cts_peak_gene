@@ -441,6 +441,8 @@ def ensure_combined_bin_column(
         links_df,
         atac_bins_df,
         rna_bins_df,
+        atac_type=atac_type,
+        rna_type=rna_type,
         atac_bins=[n_atac_mean, n_atac_gc],
         rna_bins=[n_rna_mean, n_rna_var],
     )

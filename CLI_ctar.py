@@ -680,6 +680,7 @@ def main(args):
             )
 
             cis_links_df = ctar.data_loader.combine_peak_gene_bins(cis_links_df, atac_bins_df, rna_bins_df,
+                atac_type=atac_type, rna_type=rna_type,
                 atac_bins=[n_atac_mean,n_atac_gc],
                 rna_bins=[n_rna_mean,n_rna_var]
             )
@@ -882,6 +883,7 @@ def main(args):
             )
 
             cis_links_df = ctar.data_loader.combine_peak_gene_bins(cis_links_df, atac_bins_df, rna_bins_df,
+                atac_type=atac_type, rna_type=rna_type,
                 atac_bins=[n_atac_mean,n_atac_gc],
                 rna_bins=[n_rna_mean,n_rna_var]
             )
@@ -928,6 +930,7 @@ def main(args):
             )
 
             cis_links_df = ctar.data_loader.combine_peak_gene_bins(cis_links_df, atac_bins_df, rna_bins_df,
+                atac_type=atac_type, rna_type=rna_type,
                 atac_bins=[n_atac_mean,n_atac_gc],
                 rna_bins=[n_rna_mean,n_rna_var]
             )
@@ -964,6 +967,7 @@ def main(args):
                 )
 
                 cis_links_df = ctar.data_loader.combine_peak_gene_bins(cis_links_df, atac_bins_df, rna_bins_df,
+                    atac_type=atac_type, rna_type=rna_type,
                     atac_bins=[n_atac_mean,n_atac_gc],
                     rna_bins=[n_rna_mean,n_rna_var]
                 )
@@ -1304,6 +1308,7 @@ def main(args):
                 )
 
                 cis_links_df = ctar.data_loader.combine_peak_gene_bins(cis_links_df, atac_bins_df, rna_bins_df,
+                    atac_type=atac_type, rna_type=rna_type,
                     atac_bins=[n_atac_mean,n_atac_gc],
                     rna_bins=[n_rna_mean,n_rna_var]
                 )
