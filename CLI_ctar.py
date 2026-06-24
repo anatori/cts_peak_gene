@@ -227,11 +227,15 @@ def main(args):
         if BIN_TYPE == 'cholesky':
             atac_type = 'chol_logsum_gc'
             atac_bins = [n_atac_mean, n_atac_gc]
+        elif BIN_TYPE in ('mean_fano_bio', 'mean_fano_cvbio'):
+            atac_type = 'mean_fano_bio'
+            atac_bins = [n_atac_mean, n_atac_gc]
         else:
             atac_type = 'mean_gc'
             atac_bins = [n_atac_mean, n_atac_gc]
         print(f'# Setting atac bin type to {atac_type}...')
-        rna_type = 'mean_var'
+        rna_type = 'mean_cv_bio' if BIN_TYPE in ('mean_cv_bio', 'mean_fano_cvbio') else 'mean_var'
+        print(f'# Setting rna bin type to {rna_type}...')
 
         print("# Setting --pybedtools_path")
         pybedtools.helpers.set_bedtools_path(PYBEDTOOLS_PATH)
@@ -1625,7 +1629,7 @@ if __name__ == "__main__":
         default=None,
         help="{# ATAC mean bins}.{# ATAC GC bins}.{# RNA mean bins}.{# RNA var bins}.{# Sampled controls per bin}. Use 'inf.inf' for RNA bins to skip RNA binning",
     )
-    parser.add_argument("--binning_type", type=str, required=False, default='mean_var', help='mean_var, cholesky')
+    parser.add_argument("--binning_type", type=str, required=False, default='mean_var', help='mean_var, cholesky, mean_cv_bio, mean_fano_bio, mean_fano_cvbio')
     parser.add_argument("--pybedtools_path", type=str, required=False, default=None)
     parser.add_argument("--array_idx", type=str, required=False, default=None)
     parser.add_argument("--n_cores", type=str, required=False, default=None)

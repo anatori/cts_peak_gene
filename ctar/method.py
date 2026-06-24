@@ -970,6 +970,28 @@ def compute_cv(mean, var):
     return np.where(mean > 0, np.sqrt(np.clip(var, 0, None)) / mean, 0.0)
 
 
+def compute_fano(mean, var):
+    ''' Computes Fano factor (var / mean) for each feature.
+    Returns 0 for features with zero or negative mean.
+
+    Parameters
+    ----------
+    mean : np.ndarray
+        Array of shape (M,) containing mean expression for each feature.
+    var : np.ndarray
+        Array of shape (M,) containing variance for each feature.
+
+    Returns
+    ----------
+    fano : np.ndarray
+        Array of shape (M,) containing Fano factor for each feature.
+
+    '''
+    mean = np.asarray(mean, dtype=np.float64)
+    var = np.asarray(var, dtype=np.float64)
+    return np.where(mean > 0, np.clip(var, 0, None) / mean, 0.0)
+
+
 def sub_bin(df, group_col, val_col, num_sub_bins, out_col):
     ''' Assigns nested bin labels within groups.
     ''' 
@@ -1054,6 +1076,18 @@ def get_bins(adata, num_bins=5, type='mean', col='gene_ids', layer='atac_raw', g
         bins['chol_logsum_bin'] = pd.qcut(bins['chol_logsum'].rank(method='first'), mean_num_bins, labels=False, duplicates='drop')
         bins['chol_logsum_gc_bin'] = ''
         bins = sub_bin(bins, 'chol_logsum_bin', 'chol_gc', alt_num_bins, 'chol_logsum_gc_bin')
+
+    elif type == 'mean_cv_bio':
+        _, var_bio = compute_biological_variance(bins['mean'].values, bins['var'].values)
+        bins['cv_bio'] = compute_cv(bins['mean'].values, var_bio)
+        bins['mean_cv_bio_bin'] = ''
+        bins = sub_bin(bins, 'mean_bin', 'cv_bio', alt_num_bins, 'mean_cv_bio_bin')
+
+    elif type == 'mean_fano_bio':
+        _, var_bio = compute_biological_variance(bins['mean'].values, bins['var'].values)
+        bins['fano_bio'] = compute_fano(bins['mean'].values, var_bio)
+        bins['mean_fano_bio_bin'] = ''
+        bins = sub_bin(bins, 'mean_bin', 'fano_bio', alt_num_bins, 'mean_fano_bio_bin')
 
     return bins
 
@@ -1257,11 +1291,11 @@ def create_ctrl_pairs(
     
     '''
 
-    assert atac_type in ['mean', 'mean_gc', 'chol_logsum_gc'], (
-        'atac_type must be mean, mean_gc, or chol_logsum_gc.'
+    assert atac_type in ['mean', 'mean_gc', 'chol_logsum_gc', 'mean_fano_bio'], (
+        'atac_type must be mean, mean_gc, chol_logsum_gc, or mean_fano_bio.'
         )
-    assert rna_type in ['mean', 'mean_var'], (
-        'rna_type must be mean or mean_var.'
+    assert rna_type in ['mean', 'mean_var', 'mean_cv_bio'], (
+        'rna_type must be mean, mean_var, or mean_cv_bio.'
         )
     
     atac_bins_df = get_bins(adata_atac,num_bins=atac_bins,type=atac_type,col=peak_col,layer=atac_layer,genome_file=genome_file)
