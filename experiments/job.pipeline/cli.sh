@@ -2,15 +2,15 @@
 
 # FILE: /ocean/projects/bio240051p/aprieto/cts_peak_gene/experiments/job.pipeline/cli.sh
 
-MULTIOME_DATASET=neat
-MULTIOME_FILE=/ocean/projects/bio240051p/aprieto/multiome/processed/neatseq/neat.h5mu
-BIN_CONFIG=4.4.4.4.10000
-TARGET_PATH=/ocean/projects/bio240051p/aprieto/multiome/results/ctar/corr_eval/${MULTIOME_DATASET}/${MULTIOME_DATASET}_unfiltered_len_${BIN_CONFIG}
+MULTIOME_DATASET=bmmc
+MULTIOME_FILE=/ocean/projects/bio240051p/aprieto/multiome/processed/neurips_bmmc/bmmc.h5mu
+BIN_CONFIG=4.4.4.4.1000
+TARGET_PATH=/ocean/projects/bio240051p/aprieto/multiome/results/ctar/corr_eval/${MULTIOME_DATASET}/${MULTIOME_DATASET}_unfiltered_len_donor_rcv_afano_${BIN_CONFIG}
 GENOME_FILE=/ocean/projects/bio240051p/aprieto/bedfiles/ref/GRCh38.p14.genome.fixed.fa
-BIN_TYPE='mean_var'
+BIN_TYPE='mean_fano_cvbio'
 PYBEDTOOLS_PATH=/opt/packages/bedtools/2.30.0
 BATCH_SIZE=5
-RESULTS_PATH=/ocean/projects/bio240051p/aprieto/multiome/results/ctar/corr_eval/${MULTIOME_DATASET}/${MULTIOME_DATASET}_unfiltered_len_${BIN_CONFIG}
+RESULTS_PATH=/ocean/projects/bio240051p/aprieto/multiome/results/ctar/corr_eval/${MULTIOME_DATASET}/${MULTIOME_DATASET}_unfiltered_len_donor_rcv_afano_${BIN_CONFIG}
 PARTITION="RM-shared"
 MAX_CONCURRENT=200
 FLAG_LL='False'
@@ -18,7 +18,7 @@ FLAG_SE='True'
 FLAG_CORR='True'
 N_CORES=64
 RANDOM_SEED=777
-DONOR_COL=''
+DONOR_COL='DonorID'
 N_LENGTH_BINS=4
 FDR_BIN_TYPE='dist_mean_var'
 N_DIST_BINS=4
