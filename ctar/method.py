@@ -992,6 +992,26 @@ def compute_fano(mean, var):
     return np.where(mean > 0, np.clip(var, 0, None) / mean, 0.0)
 
 
+def log_dist_bins(abs_distance, n_bins=15, min_count=500):
+    ''' Get distance bins based on log absolute distance.
+    Merge upwards if bin count is below min_count.
+    '''
+    log_dist = np.log10(abs_distance.clip(lower=1))
+    bins = pd.cut(log_dist, bins=n_bins, labels=False, duplicates='drop')
+    
+    counts = bins.value_counts().sort_index()
+    while (counts < min_count).any():
+        small = counts[counts < min_count].index[0]
+        # merge with next bin, fall back to previous if at the top
+        target = small + 1 if small < counts.index.max() else small - 1
+        bins = bins.replace(small, target)
+        mapping = {v: i for i, v in enumerate(sorted(bins.dropna().unique()))}
+        bins = bins.map(mapping)
+        counts = bins.value_counts().sort_index()
+    
+    return bins
+
+
 def sub_bin(df, group_col, val_col, num_sub_bins, out_col):
     ''' Assigns nested bin labels within groups.
     ''' 
