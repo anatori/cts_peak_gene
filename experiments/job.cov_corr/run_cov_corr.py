@@ -23,6 +23,7 @@ from dask.diagnostics import ProgressBar
 from scdrs.pp import category2dummy, reg_out
 
 import ctar.method
+import ctar.data_loader
 from ctar.method import pearson_corr_sparse
 from ctar.parallel import batched_iterable, preprocess_batch
 
@@ -245,8 +246,11 @@ def main():
     # 5. Load existing link structures
     print('# Loading ctar link structures...', flush=True)
     cis_links_df   = pd.read_csv(ctar_dir / 'cis_links_df.csv',  index_col=0)
-    cis_links_dic  = pickle.load(open(ctar_dir / 'cis_links_dic.pkl',  'rb'))
-    cis_idx_dic    = pickle.load(open(ctar_dir / 'cis_idx_dic.pkl',    'rb'))
+    cis_links_dic, cis_idx_dic = ctar.data_loader.groupby_combined_bins(
+        cis_links_df,
+        combined_bin_col='combined_bin_4.4.4.4',
+        return_dic=True,
+    )
     ctrl_links_dic = pickle.load(open(ctar_dir / 'ctrl_links_dic.pkl', 'rb'))
 
     first_ctrl_key = next(iter(ctrl_links_dic))
@@ -259,9 +263,6 @@ def main():
         cis_links_dic, atac_norm, rna_norm, cov_mat, beta_atac, beta_rna,
         batch_size=args.batch_size, n_workers=n_workers,
     )
-    cis_coeff = np.empty(len(cis_links_df), dtype=np.float32)
-    for bin_key, idxs in cis_idx_dic.items():
-        cis_coeff[np.array(idxs)] = cis_corr_dic[bin_key]
 
     # 7. Control correlations
     print('# Computing control covariate-corrected correlations...', flush=True)
