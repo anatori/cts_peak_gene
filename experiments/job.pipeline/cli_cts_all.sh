@@ -24,10 +24,11 @@ FLAG_CORR='True'
 N_CORES=64
 RANDOM_SEED=777
 DONOR_COL=''
+N_LENGTH_BINS=1
 GENOME_FILE=/ocean/projects/bio240051p/aprieto/bedfiles/ref/GRCh38.p14.genome.fixed.fa
 
 IFS='.' read -r b1 b2 b3 b4 rest <<< "$BIN_CONFIG"
-NUM_LINKS=$(( b1 * b2 * b3 * b4 ))
+NUM_LINKS=$(( b1 * b2 * b3 * b4 * N_LENGTH_BINS ))
 TOTAL_NUM_BATCHES=$(( (NUM_LINKS + BATCH_SIZE - 1) / BATCH_SIZE ))
 ARRAY_OPT="--array=0-$((TOTAL_NUM_BATCHES - 1))%${MAX_CONCURRENT}"
 
@@ -51,6 +52,7 @@ for MULTIOME_DATASET in "${!CELLTYPES[@]}"; do
                   --target_path $TARGET_PATH --results_path $RESULTS_PATH \
                   --pybedtools_path $PYBEDTOOLS_PATH --n_cores $N_CORES \
                   --flag_ll $FLAG_LL --flag_se $FLAG_SE --flag_corr $FLAG_CORR --random_seed $RANDOM_SEED \
+                  --n_length_bins $N_LENGTH_BINS \
                   ${DONOR_COL:+--donor_col $DONOR_COL}")
         echo "  Cis job:  $CIS_JOB"
 
@@ -65,6 +67,7 @@ for MULTIOME_DATASET in "${!CELLTYPES[@]}"; do
                   --binning_config $BIN_CONFIG --binning_type $BIN_TYPE --genome_file $GENOME_FILE \
                   --pybedtools_path $PYBEDTOOLS_PATH --n_cores $N_CORES \
                   --flag_ll $FLAG_LL --flag_se $FLAG_SE --flag_corr $FLAG_CORR --random_seed $RANDOM_SEED \
+                  --n_length_bins $N_LENGTH_BINS \
                   ${DONOR_COL:+--donor_col $DONOR_COL}")
         echo "  Ctrl job: $CTRL_JOB"
 
@@ -77,7 +80,7 @@ for MULTIOME_DATASET in "${!CELLTYPES[@]}"; do
           -J "pval_${MULTIOME_DATASET}_${CELLTYPE}" \
           --wrap "source ~/.bashrc && conda activate ctar && python /ocean/projects/bio240051p/aprieto/cts_peak_gene/CLI_ctar.py \
                   --job compute_pval --binning_config $BIN_CONFIG --binning_type $BIN_TYPE \
-                  --results_path $RESULTS_PATH --flag_corr $FLAG_CORR")
+                  --n_length_bins $N_LENGTH_BINS --results_path $RESULTS_PATH --flag_corr $FLAG_CORR")
         echo "  Pval job: $PVAL_JOB"
         echo ""
 

@@ -19,6 +19,7 @@ FLAG_CORR='True'
 N_CORES=128
 RANDOM_SEED=777
 DONOR_COL=''
+N_LENGTH_BINS=1
 
 IFS='.' read -r b1 b2 b3 b4 rest <<< "$BIN_CONFIG"
 if [[ "$b3" == "inf" && "$b4" == "inf" ]]; then
@@ -45,7 +46,8 @@ GEN_CTRL_JOB=$(sbatch --parsable -p $PARTITION -t 1-00:00:00 \
   --wrap "source ~/.bashrc && conda activate ctar && python /ocean/projects/bio240051p/aprieto/cts_peak_gene/CLI_ctar.py \
           --job generate_controls --multiome_file $MULTIOME_FILE --batch_size $BATCH_SIZE \
           --binning_config $BIN_CONFIG --binning_type $BIN_TYPE --genome_file $GENOME_FILE --target_path $TARGET_PATH \
-          --pybedtools_path $PYBEDTOOLS_PATH --results_path $RESULTS_PATH --random_seed $RANDOM_SEED")
+          --pybedtools_path $PYBEDTOOLS_PATH --results_path $RESULTS_PATH --random_seed $RANDOM_SEED \
+          --n_length_bins $N_LENGTH_BINS")
 echo "Generate controls job ID: $GEN_CTRL_JOB"
 
 ###########################################################################################
@@ -62,6 +64,7 @@ CIS_JOB=$(sbatch --parsable -p $PARTITION -t 1-00:00:00 \
           --binning_config $BIN_CONFIG --binning_type $BIN_TYPE --genome_file $GENOME_FILE --target_path $TARGET_PATH \
           --results_path $RESULTS_PATH --pybedtools_path $PYBEDTOOLS_PATH --n_cores $N_CORES \
           --flag_ll $FLAG_LL --flag_se $FLAG_SE --flag_corr $FLAG_CORR --random_seed $RANDOM_SEED \
+          --n_length_bins $N_LENGTH_BINS \
           ${DONOR_COL:+--donor_col $DONOR_COL}")
 echo "Cis job ID: $CIS_JOB"
 
@@ -132,6 +135,7 @@ if [ "$USE_INF_MODE" = true ]; then
                     --batch_size $BATCH_SIZE --target_path $TARGET_PATH --results_path $RESULTS_PATH --array_idx \$SLURM_ARRAY_TASK_ID \
                     --binning_config $BIN_CONFIG --binning_type $BIN_TYPE --genome_file $GENOME_FILE --pybedtools_path $PYBEDTOOLS_PATH \
                     --n_cores $N_CORES --flag_ll $FLAG_LL --flag_se $FLAG_SE --flag_corr $FLAG_CORR --random_seed $RANDOM_SEED \
+                    --n_length_bins $N_LENGTH_BINS \
                     ${DONOR_COL:+--donor_col $DONOR_COL}")
         echo "Ctrl job ID: $CTRL_JOB"
         CTRL_JOB_FOR_DEPENDENCY=$CTRL_JOB
@@ -153,6 +157,7 @@ else
               --batch_size $BATCH_SIZE --target_path $TARGET_PATH --results_path $RESULTS_PATH \
               --binning_config $BIN_CONFIG --binning_type $BIN_TYPE --genome_file $GENOME_FILE --pybedtools_path $PYBEDTOOLS_PATH \
               --n_cores $N_CORES --flag_ll $FLAG_LL --flag_se $FLAG_SE --flag_corr $FLAG_CORR --random_seed $RANDOM_SEED \
+              --n_length_bins $N_LENGTH_BINS \
               ${DONOR_COL:+--donor_col $DONOR_COL}")
     echo "Ctrl job ID: $CTRL_JOB"
     CTRL_JOB_FOR_DEPENDENCY=$CTRL_JOB
@@ -170,7 +175,7 @@ PVAL_JOB=$(sbatch --parsable -p $PARTITION -t 00:30:00 \
   --mail-type=END --mail-user=asprieto@andrew.cmu.edu \
   -o /ocean/projects/bio240051p/aprieto/logs/pval_%j.err -J "pval_$BIN_CONFIG" \
   --wrap "source ~/.bashrc && conda activate ctar && python /ocean/projects/bio240051p/aprieto/cts_peak_gene/CLI_ctar.py \
-          --job compute_pval --binning_config $BIN_CONFIG --binning_type $BIN_TYPE --results_path $RESULTS_PATH --flag_corr $FLAG_CORR")
+          --job compute_pval --binning_config $BIN_CONFIG --binning_type $BIN_TYPE --n_length_bins $N_LENGTH_BINS --results_path $RESULTS_PATH --flag_corr $FLAG_CORR")
 echo "P-value job ID: $PVAL_JOB"
 
 
