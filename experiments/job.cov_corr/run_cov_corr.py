@@ -175,7 +175,7 @@ def main():
     n_workers = args.n_workers if args.n_workers is not None else max(cpu_count() - 1, 1)
 
     # 1. Load data
-    print('# Loading --multiome_file')
+    print('# Loading --multiome_file', flush=True)
     if args.multiome_file.endswith('.h5mu'):
         mdata      = mu.read(args.multiome_file)
         adata_atac = mdata.mod['atac']
@@ -185,7 +185,7 @@ def main():
         adata_atac = adata_full[:, adata_full.var.feature_types == 'ATAC'].copy()
         adata_rna  = adata_full[:, adata_full.var.feature_types == 'GEX'].copy()
 
-    print(f'# RNA: {adata_rna.shape},  ATAC: {adata_atac.shape}')
+    print(f'# RNA: {adata_rna.shape},  ATAC: {adata_atac.shape}', flush=True)
 
     if adata_atac.var_names.str.match(r'^[^-]+-\d+-\d+$').any():
         adata_atac.var_names = adata_atac.var_names.astype(str).str.replace(
@@ -201,7 +201,7 @@ def main():
         _ = adata_rna.layers['counts']
         _ = adata_atac.layers['counts']
     except KeyError:
-        print('# Assuming counts are in .X')
+        print('# Assuming counts are in .X', flush=True)
         adata_rna.layers['counts']  = adata_rna.X
         adata_atac.layers['counts'] = adata_atac.X
 
@@ -209,16 +209,16 @@ def main():
         if 'gene_id' in adata_rna.var.columns:
             adata_rna.var['gene'] = adata_rna.var.gene_id
             adata_rna.var.index   = adata_rna.var.gene_id
-            print('# Using gene_id for RNA genes')
+            print('# Using gene_id for RNA genes', flush=True)
         elif 'gene_ids' in adata_rna.var.columns:
             adata_rna.var['gene'] = adata_rna.var.gene_ids
             adata_rna.var.index   = adata_rna.var.gene_ids
-            print('# Using gene_ids for RNA genes')
+            print('# Using gene_ids for RNA genes', flush=True)
         assert adata_rna.var.gene.str.startswith('ENSG').all(), \
             'Must use ENSEMBL IDs for genes'
 
     # 2. Normalize
-    print('# Normalizing (normalize_total + log1p)...')
+    print('# Normalizing (normalize_total + log1p)...', flush=True)
     adata_rna_tmp  = adata_rna.copy()
     adata_atac_tmp = adata_atac.copy()
     sc.pp.normalize_total(adata_rna_tmp,  layer='counts')
@@ -228,33 +228,33 @@ def main():
     rna_norm  = adata_rna_tmp.X
     atac_norm = adata_atac_tmp.X
     del adata_rna_tmp, adata_atac_tmp
-    print(f'# rna_norm: {rna_norm.shape},  atac_norm: {atac_norm.shape}')
+    print(f'# rna_norm: {rna_norm.shape},  atac_norm: {atac_norm.shape}', flush=True)
 
     # 3. Build covariate matrix
-    print(f'# Building covariate matrix from: {cov_cols}')
+    print(f'# Building covariate matrix from: {cov_cols}', flush=True)
     cov_mat = build_cov_matrix(adata_rna, cov_cols)
-    print(f'# cov_mat: {cov_mat.shape}')
+    print(f'# cov_mat: {cov_mat.shape}', flush=True)
 
     # 4. Compute OLS betas
-    print('# Computing OLS betas (RNA)...')
+    print('# Computing OLS betas (RNA)...', flush=True)
     beta_rna  = compute_beta(rna_norm,  cov_mat)       # (n_cov, n_genes)
-    print('# Computing OLS betas (ATAC)...')
+    print('# Computing OLS betas (ATAC)...', flush=True)
     beta_atac = compute_beta(atac_norm, cov_mat)       # (n_cov, n_peaks)
-    print(f'# beta_rna: {beta_rna.shape},  beta_atac: {beta_atac.shape}')
+    print(f'# beta_rna: {beta_rna.shape},  beta_atac: {beta_atac.shape}', flush=True)
 
     # 5. Load existing link structures
-    print('# Loading ctar link structures...')
+    print('# Loading ctar link structures...', flush=True)
     cis_links_df   = pd.read_csv(ctar_dir / 'cis_links_df.csv',  index_col=0)
     cis_links_dic  = pickle.load(open(ctar_dir / 'cis_links_dic.pkl',  'rb'))
     cis_idx_dic    = pickle.load(open(ctar_dir / 'cis_idx_dic.pkl',    'rb'))
     ctrl_links_dic = pickle.load(open(ctar_dir / 'ctrl_links_dic.pkl', 'rb'))
 
-    first_bin = next(iter(cis_idx_dic))
-    n_ctrl = len(ctrl_links_dic[first_bin]) // len(cis_idx_dic[first_bin])
-    print(f'# n_links={len(cis_links_df)}, n_ctrl={n_ctrl}')
+    first_ctrl_key = next(iter(ctrl_links_dic))
+    n_ctrl = len(ctrl_links_dic[first_ctrl_key])
+    print(f'# n_links={len(cis_links_df)}, n_ctrl={n_ctrl}', flush=True)
 
     # 6. Cis correlations
-    print('# Computing cis covariate-corrected correlations...')
+    print('# Computing cis covariate-corrected correlations...', flush=True)
     cis_corr_dic = multiprocess_pearson_corr_cov(
         cis_links_dic, atac_norm, rna_norm, cov_mat, beta_atac, beta_rna,
         batch_size=args.batch_size, n_workers=n_workers,
@@ -264,31 +264,32 @@ def main():
         cis_coeff[np.array(idxs)] = cis_corr_dic[bin_key]
 
     # 7. Control correlations
-    print('# Computing control covariate-corrected correlations...')
+    print('# Computing control covariate-corrected correlations...', flush=True)
     ctrl_corr_dic = multiprocess_pearson_corr_cov(
         ctrl_links_dic, atac_norm, rna_norm, cov_mat, beta_atac, beta_rna,
         batch_size=args.batch_size, n_workers=n_workers,
     )
-    ctrl_coeff = np.empty((len(cis_links_df), n_ctrl), dtype=np.float32)
-    for bin_key, idxs in cis_idx_dic.items():
-        idxs = np.array(idxs)
-        n_in_bin = len(idxs)
-        ctrl_coeff[idxs] = ctrl_corr_dic[bin_key].reshape(n_in_bin, n_ctrl)
 
     # 8. P-values
-    print('# Computing p-values...')
-    cis_links_df['cov_corr']   = cis_coeff
-    cis_links_df['cov_mcpval'] = ctar.method.initial_mcpval(ctrl_coeff, cis_coeff)
-    cis_links_df['cov_zpval']  = ctar.method.zscore_pval(ctrl_coeff, cis_coeff)[0]
-    cis_links_df['cov_ppval']  = ctar.method.pooled_mcpval(ctrl_coeff, cis_coeff)
+    print('# Computing p-values...', flush=True)
+    mcpval_dic, ppval_dic, zpval_dic = ctar.method.binned_mcpval(cis_corr_dic, ctrl_corr_dic)
+    cis_links_df = ctar.data_loader.map_dic_to_df(cis_links_df, cis_idx_dic, cis_corr_dic, col_name='cov_corr')
+    cis_links_df = ctar.data_loader.map_dic_to_df(cis_links_df, cis_idx_dic, mcpval_dic, col_name='cov_mcpval')
+    cis_links_df = ctar.data_loader.map_dic_to_df(cis_links_df, cis_idx_dic, ppval_dic, col_name='cov_ppval')
+    cis_links_df = ctar.data_loader.map_dic_to_df(cis_links_df, cis_idx_dic, zpval_dic, col_name='cov_zpval')
 
     # 9. Save
     out_csv  = output_path / 'cis_links_cov_corr.csv'
-    out_ctrl = output_path / 'ctrl_cov_corr.npy'
+    out_cis  = output_path / 'cis_corr_dic.pkl'
+    out_ctrl = output_path / 'ctrl_corr_dic.pkl'
     cis_links_df.to_csv(out_csv)
-    np.save(str(out_ctrl), ctrl_coeff)
-    print(f'# Done. Saved: {out_csv}')
-    print(f'#       Saved: {out_ctrl}')
+    with open(out_cis, 'wb') as f:
+        pickle.dump(cis_corr_dic, f)
+    with open(out_ctrl, 'wb') as f:
+        pickle.dump(ctrl_corr_dic, f)
+    print(f'# Done. Saved: {out_csv}', flush=True)
+    print(f'#       Saved: {out_cis}', flush=True)
+    print(f'#       Saved: {out_ctrl}', flush=True)
 
 
 if __name__ == '__main__':
