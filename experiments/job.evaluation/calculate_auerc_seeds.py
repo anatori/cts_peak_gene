@@ -29,6 +29,7 @@ def main(args):
     RES_PATH = args.res_path
     DATASET_NAME = args.dataset_name
     HANDLE_DUP = args.handle_dup
+    USE_QVAL = args.use_qval
 
     EQTL_PIP_THRES_LIST = _parse_float_list(args.eqtl_pip_thres_list)
     if len(EQTL_PIP_THRES_LIST) == 0:
@@ -49,6 +50,27 @@ def main(args):
 
     for file in files:
         merge_df0 = pd.read_csv(f"{MERGE_PATH}/{file}")
+
+        if USE_QVAL:
+            resolved_methods = []
+            for m in METHOD_COLS:
+                qcol = f"{m}_qval"
+                if qcol not in merge_df0.columns:
+                    raise ValueError(
+                        f"--use_qval is set but '{qcol}' not found in {file}. "
+                        f"Run merge_methods.py with --fdr_correction or add an 'fdr' column to the manifest."
+                    )
+                resolved_methods.append(qcol)
+            ref_qcol = f"{REFERENCE_METHOD}_qval"
+            if ref_qcol not in merge_df0.columns:
+                raise ValueError(
+                    f"--use_qval is set but reference method column '{ref_qcol}' not found in {file}."
+                )
+            ref_resolved = ref_qcol
+        else:
+            resolved_methods = METHOD_COLS
+            ref_resolved = REFERENCE_METHOD
+
         label = os.path.basename(file).removesuffix('.csv').removesuffix(f'_{DATASET_NAME}')
 
         # skipping hic for now
@@ -119,10 +141,10 @@ def main(args):
 
             res_df = ctar.metrics.compute_bootstrap_table_seed_avg(
                 all_df=merge_df,
-                methods=METHOD_COLS,
+                methods=resolved_methods,
                 metrics_list=metric_specs,
                 gold_col=GOLD_COL,
-                reference_method=REFERENCE_METHOD,
+                reference_method=ref_resolved,
                 n_bootstrap=N_BOOTSTRAP,
                 fillna=FILLNA,
                 jitter_amount=1e-12,
@@ -166,11 +188,17 @@ if __name__ == "__main__":
     parser.add_argument("--fillna", type=str, default=True)
     parser.add_argument("--n_bootstrap", type=str, default="1000")
     
-    parser.add_argument("--handle_dup", 
-        type=str, 
+    parser.add_argument("--handle_dup",
+        type=str,
         default=None,
         choices=[None, 'any', 'consensus', 'proportion'],
         help="Handle deduplication of evaluation pairs."
+    )
+    parser.add_argument(
+        "--use_qval",
+        action="store_true",
+        default=False,
+        help="Use {method}_qval columns for evaluation. Raises an error if any expected _qval column is missing.",
     )
 
     parser.add_argument("--eqtl_filter_mode",

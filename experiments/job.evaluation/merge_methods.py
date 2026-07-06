@@ -2,7 +2,9 @@ import argparse
 import csv
 import os
 from typing import List, Optional, Tuple
+import numpy as np
 import pandas as pd
+from statsmodels.stats.multitest import multipletests
 import ctar
 
 
@@ -53,11 +55,17 @@ def load_method_scores(
 	file_path: str,
 	out_label: str,
 	source_col: str,
+	fdr_col: Optional[str] = None,
+	fdr_correction: bool = False,
 	dedup: str = "min",
 ) -> pd.DataFrame:
 	"""
-	Returns a DataFrame with columns: id, peak, gene, <out_label>
+	Returns a DataFrame with columns: id, peak, gene, <out_label>[, <out_label>_qval]
 	One row per (peak,gene) after dedup unless dedup='none'.
+
+	If fdr_col is given and found in the file, it is deduplicated and carried as
+	<out_label>_qval. If fdr_col is None and fdr_correction is True, BH correction
+	is applied to the deduplicated p-values of this method's own universe.
 	"""
 	if not file_path or not os.path.isfile(file_path):
 		raise FileNotFoundError(f"Missing method file: {file_path}")
@@ -81,6 +89,25 @@ def load_method_scores(
 	n_out = len(out)
 	dup = n_raw - n_unique
 	print(f"[{out_label}] raw_rows={n_raw} unique_ids={n_unique} dup_rows={dup} out_rows={n_out} dedup={dedup}")
+
+	qval_col = f"{out_label}_qval"
+	if fdr_col is not None:
+		if fdr_col not in df.columns:
+			print(f"[{out_label}] WARNING: fdr col '{fdr_col}' not found in {file_path} — skipping")
+		else:
+			df[qval_col] = df[fdr_col]
+			qval_agg = _aggregate_duplicates(df, id_col="id", score_col=qval_col, how=dedup)
+			out = out.merge(qval_agg[["id", qval_col]], on="id", how="left")
+			print(f"[{out_label}] using pre-existing fdr column '{fdr_col}'")
+	elif fdr_correction:
+		pvals = pd.to_numeric(out[out_label], errors="coerce").values
+		nan_mask = np.isnan(pvals)
+		q = np.full(len(pvals), np.nan)
+		if (~nan_mask).sum() > 0:
+			_, bh_q, _, _ = multipletests(pvals[~nan_mask], method="fdr_bh")
+			q[~nan_mask] = np.minimum(bh_q, 1.0)
+		out[qval_col] = q
+		print(f"[{out_label}] computed BH q-values on {(~nan_mask).sum()} deduplicated pairs")
 
 	return out
 
@@ -131,10 +158,11 @@ def merge_scores_onto_eval(
 	merged.to_csv(out_path, index=False)
 
 
-def _read_methods_csv(methods_csv: str) -> List[Tuple[str, str, str]]:
+def _read_methods_csv(methods_csv: str) -> List[Tuple[str, str, str, Optional[str]]]:
 	"""
 	Parse methods manifest CSV.
-	Returns list of (file_path, method_name, score_col) in row order.
+	Returns list of (file_path, method_name, score_col, fdr_col) in row order.
+	fdr_col is None if the 'fdr' column is absent or blank.
 	Row order determines METHOD_COLS order in downstream evaluation.
 	"""
 	if not os.path.isfile(methods_csv):
@@ -149,12 +177,20 @@ def _read_methods_csv(methods_csv: str) -> List[Tuple[str, str, str]]:
 		rows = list(reader)
 	if not rows:
 		raise ValueError(f"methods_csv has no data rows: {methods_csv}")
-	return [(r["file_path"].strip(), r["method_name"].strip(), r["score_col"].strip()) for r in rows]
+	return [
+		(
+			r["file_path"].strip(),
+			r["method_name"].strip(),
+			r["score_col"].strip(),
+			_opt_none(r.get("fdr", "")),
+		)
+		for r in rows
+	]
 
 
-def _resolve_method_rows(args) -> List[Tuple[str, str, str]]:
+def _resolve_method_rows(args) -> List[Tuple[str, str, str, Optional[str]]]:
 	"""
-	Returns list of (file_path, method_name, score_col) from --methods_csv (old)
+	Returns list of (file_path, method_name, score_col, fdr_col) from --methods_csv (old)
 	or --config_file+--celltype (new).
 	"""
 	if args.methods_csv:
@@ -175,17 +211,26 @@ def _resolve_method_rows(args) -> List[Tuple[str, str, str]]:
 			raise ValueError(
 				f"No rows found for celltype={args.celltype!r} in {args.config_file}"
 			)
-	return [(r["file_path"].strip(), r["method_name"].strip(), r["score_col"].strip()) for r in rows]
+	return [
+		(
+			r["file_path"].strip(),
+			r["method_name"].strip(),
+			r["score_col"].strip(),
+			_opt_none(r.get("fdr", "")),
+		)
+		for r in rows
+	]
 
 
 def main(args):
 	AGG_PATH = args.agg_path
 	RES_PATH = args.res_path
+	FDR_CORRECTION = args.fdr_correction
 
 	raw_sources = _resolve_method_rows(args)
 
-	method_sources: List[Tuple[str, str, str]] = []
-	for fp, name, col in raw_sources:
+	method_sources: List[Tuple[str, str, str, Optional[str]]] = []
+	for fp, name, col, fdr_col in raw_sources:
 		if not fp:
 			print(f"[skip] {name}: empty file_path")
 			continue
@@ -195,15 +240,19 @@ def main(args):
 		if not col:
 			print(f"[skip] {name}: empty score_col")
 			continue
-		method_sources.append((fp, name, col))
+		method_sources.append((fp, name, col, fdr_col))
 
 	if not method_sources:
 		raise RuntimeError("No method sources configured (all rows invalid).")
 
 	print(f"Loading using {args.dedup}...")
 	method_tables = []
-	for fp, out_label, col in method_sources:
-		method_tables.append(load_method_scores(fp, out_label=out_label, source_col=col, dedup=args.dedup))
+	for fp, out_label, col, fdr_col in method_sources:
+		method_tables.append(load_method_scores(
+			fp, out_label=out_label, source_col=col,
+			fdr_col=fdr_col, fdr_correction=FDR_CORRECTION,
+			dedup=args.dedup,
+		))
 
 	scores_df = merge_method_tables(method_tables)
 
@@ -262,6 +311,12 @@ if __name__ == "__main__":
 		default="min",
 		choices=["min", "max", "mean", "median", "none"],
 		help="How to aggregate duplicate (peak,gene) rows within each method file before merging.",
+	)
+	parser.add_argument(
+		"--fdr_correction",
+		action="store_true",
+		default=False,
+		help="Compute BH q-values for methods with no pre-existing fdr column in the manifest.",
 	)
 
 	args = parser.parse_args()
