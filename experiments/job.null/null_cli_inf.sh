@@ -5,7 +5,7 @@
 MULTIOME_FILE=/projects/zhanglab/users/ana/multiome/processed/pbmc_sorted_10k/pbmc.h5mu
 BIN_PREFIX=4.4.inf.inf
 BIN_CONFIG=${BIN_PREFIX}.1000
-TARGET_PATH=/projects/zhanglab/users/ana/multiome/simulations/null/null_pbmc/full/corr/with_peak_len${BIN_PREFIX}
+TARGET_PATH=/projects/zhanglab/users/ana/multiome/simulations/null/null_pbmc/full/corr/with_peak_len/${BIN_PREFIX}
 GENOME_FILE=/projects/zhanglab/users/ana/bedtools2/ana_bedfiles/ref/GRCh38.p14.genome.fa.bgz
 BIN_TYPE='mean_var'
 PYBEDTOOLS_PATH=/projects/zhanglab/users/ana/bedtools2/bin
@@ -16,7 +16,7 @@ MAX_CONCURRENT=200
 FLAG_LL='False'
 FLAG_SE='True'
 FLAG_CORR='True'
-N_CORES=32
+N_CORES=16
 RANDOM_SEED=777
 DONOR_COL=''
 N_LENGTH_BINS=4

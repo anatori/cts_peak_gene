@@ -1,19 +1,19 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# bash /ocean/projects/bio240051p/aprieto/cts_peak_gene/experiments/job.evaluation/evaluate.sh
+# bash /projects/zhanglab/users/ana/cts_peak_gene/experiments/job.evaluation/evaluate.sh
 
 # Slurm settings
-PARTITIONS="${PARTITIONS:-RM-shared}"
-LOG_DIR="${LOG_DIR:-/ocean/projects/bio240051p/aprieto/logs}"
+PARTITIONS="${PARTITIONS:-mzhang,statgen}"
+LOG_DIR="${LOG_DIR:-/projects/zhanglab/users/ana/logs}"
 CONDA_ENV="${CONDA_ENV:-ctar}"
 
 # Dataset name used consistently across steps
-DATASET_NAME="${DATASET_NAME:-brain}"
+DATASET_NAME="${DATASET_NAME:-pbmc}"
 FILTER_TAG="${FILTER_TAG:-unfiltered}"
 
 # Paths
-REPO_ROOT="${REPO_ROOT:-/ocean/projects/bio240051p/aprieto/cts_peak_gene}"
+REPO_ROOT="${REPO_ROOT:-/projects/zhanglab/users/ana/cts_peak_gene}"
 SCRIPTS_DIR="${SCRIPTS_DIR:-${REPO_ROOT}/experiments/job.evaluation}"
 
 # Methods manifest CSV: columns file_path, score_col, method_name (row order = METHOD_COLS order)
@@ -33,18 +33,18 @@ print(','.join(names))
 fi
 
 # Directory paths
-UNION_DIR="${UNION_DIR:-/ocean/projects/bio240051p/aprieto/bedfiles/validation/union_links/${FILTER_TAG}}"
-EVAL_DIR="${EVAL_DIR:-/ocean/projects/bio240051p/aprieto/bedfiles/validation/tissue_max/gwas_pops}"
-OVERLAP_DIR="${OVERLAP_DIR:-/ocean/projects/bio240051p/aprieto/bedfiles/validation/overlap/${DATASET_NAME}/${FILTER_TAG}/gwas_pops}"
-AGG_DIR="${AGG_DIR:-/ocean/projects/bio240051p/aprieto/multiome/validation/overlap_${FILTER_TAG}/${DATASET_NAME}/gwas_pops}"
-MERGE_DIR="${MERGE_DIR:-/ocean/projects/bio240051p/aprieto/multiome/validation/evaluation_${FILTER_TAG}/${DATASET_NAME}/gwas_pops}"
-AURC_DIR="${AURC_DIR:-/ocean/projects/bio240051p/aprieto/multiome/validation/tables/metrics_jitter_no_dedup_${FILTER_TAG}/${DATASET_NAME}}"
+UNION_DIR="${UNION_DIR:-/projects/zhanglab/users/ana/bedtools2/ana_bedfiles/validation/union_links/${FILTER_TAG}}"
+EVAL_DIR="${EVAL_DIR:-/projects/zhanglab/users/ana/bedtools2/ana_bedfiles/validation/tissue_max/crispr_k562}"
+OVERLAP_DIR="${OVERLAP_DIR:-/projects/zhanglab/users/ana/bedtools2/ana_bedfiles/validation/overlap/${DATASET_NAME}/${FILTER_TAG}/crispr_k562}"
+AGG_DIR="${AGG_DIR:-/projects/zhanglab/users/ana/multiome/validation/overlap_${FILTER_TAG}/${DATASET_NAME}/crispr_k562}"
+MERGE_DIR="${MERGE_DIR:-/projects/zhanglab/users/ana/multiome/validation/evaluation_${FILTER_TAG}/${DATASET_NAME}/crispr_k562}"
+AURC_DIR="${AURC_DIR:-/projects/zhanglab/users/ana/multiome/validation/tables/metrics_jitter_no_dedup_${FILTER_TAG}_qvalue/${DATASET_NAME}}"
 
 DEDUP="${DEDUP:-min}"
-REFERENCE_METHOD="${REFERENCE_METHOD:-ctar_5.5.5.5}"
+REFERENCE_METHOD="${REFERENCE_METHOD:-ctar}"
 N_BOOTSTRAP="${N_BOOTSTRAP:-1000}"
-FDR_CORRECTION="${FDR_CORRECTION:-false}"
-USE_QVAL="${USE_QVAL:-false}"
+FDR_CORRECTION="${FDR_CORRECTION:-true}"
+USE_QVAL="${USE_QVAL:-true}"
 
 # Pre-compute optional flags so they interpolate cleanly into --wrap strings
 FDR_FLAG=""
@@ -58,27 +58,25 @@ echo "METHOD_COLS: ${METHOD_COLS}"
 mkdir -p "${LOG_DIR}"
 
 submit() {
-  sbatch --parsable -p "${PARTITIONS}" -A bio240051p "$@"
+  sbatch --parsable -p "${PARTITIONS}" "$@"
 }
 
-# echo "Submitting make_union_bed.py ..."
-# UNION_JOB_ID=$(submit \
-#   -A bio250028p \
-#   -t 1-00:00:00 --ntasks-per-node=6 -J "union_${DATASET_NAME}" \
-#   -o "${LOG_DIR}/union_${DATASET_NAME}-%j.out" \
-#   -e "${LOG_DIR}/union_${DATASET_NAME}-%j.err" \
-#   --wrap "source ~/.bashrc && conda activate ${CONDA_ENV} && \
-#           mkdir -p '${UNION_DIR}' && \
-#           python ${SCRIPTS_DIR}/make_union_bed.py \
-#             --dataset_name '${DATASET_NAME}' \
-#             --bed_path '${UNION_DIR}' \
-#             --methods_csv '${METHODS_CSV}'")
-# echo "UNION_JOB_ID=${UNION_JOB_ID}"
+echo "Submitting make_union_bed.py ..."
+UNION_JOB_ID=$(submit \
+  -t 1-00:00:00 --mem 128Gb -J "union_${DATASET_NAME}" \
+  -o "${LOG_DIR}/union_${DATASET_NAME}-%j.out" \
+  -e "${LOG_DIR}/union_${DATASET_NAME}-%j.err" \
+  --wrap "source ~/.bashrc && conda activate ${CONDA_ENV} && \
+          mkdir -p '${UNION_DIR}' && \
+          python ${SCRIPTS_DIR}/make_union_bed.py \
+            --dataset_name '${DATASET_NAME}' \
+            --bed_path '${UNION_DIR}' \
+            --methods_csv '${METHODS_CSV}'")
+echo "UNION_JOB_ID=${UNION_JOB_ID}"
 
 echo "Submitting bedtools intersect (after union) ..."
 INTERSECT_JOB_ID=$(submit \
-  -A bio250028p \
-  -t 0-02:00:00 --ntasks-per-node=4 -J "intersect_${DATASET_NAME}" \
+  -t 0-02:00:00 --mem 128Gb -J "intersect_${DATASET_NAME}" \
   -o "${LOG_DIR}/intersect_${DATASET_NAME}-%j.out" \
   -e "${LOG_DIR}/intersect_${DATASET_NAME}-%j.err" \
   --wrap "mkdir -p '${OVERLAP_DIR}' && \
@@ -91,9 +89,8 @@ echo "INTERSECT_JOB_ID=${INTERSECT_JOB_ID}"
 
 echo "Submitting aggregate_overlaps.py (after intersect) ..."
 AGG_JOB_ID=$(submit \
-  -A bio250028p \
   --dependency=afterok:${INTERSECT_JOB_ID} \
-  -t 0-06:00:00 --ntasks-per-node=32 -J "aggregate_${DATASET_NAME}" \
+  -t 0-06:00:00 --mem 128Gb -J "aggregate_${DATASET_NAME}" \
   -o "${LOG_DIR}/aggregate_${DATASET_NAME}-%j.out" \
   -e "${LOG_DIR}/aggregate_${DATASET_NAME}-%j.err" \
   --wrap "source ~/.bashrc && conda activate ${CONDA_ENV} && \
@@ -106,9 +103,8 @@ echo "AGG_JOB_ID=${AGG_JOB_ID}"
 
 echo "Submitting merge_methods.py ..."
 MERGE_JOB_ID=$(submit \
-  -A bio250028p \
   --dependency=afterok:${AGG_JOB_ID} \
-  -t 1-00:00:00 --ntasks-per-node=64 -J "merge_${DATASET_NAME}" \
+  -t 1-00:00:00 --mem 128Gb -J "merge_${DATASET_NAME}" \
   -o "${LOG_DIR}/merge_${DATASET_NAME}-%j.out" \
   -e "${LOG_DIR}/merge_${DATASET_NAME}-%j.err" \
   --wrap "source ~/.bashrc && conda activate ${CONDA_ENV} && \
@@ -124,9 +120,8 @@ echo "MERGE_JOB_ID=${MERGE_JOB_ID}"
 
 echo "Submitting calculate_auerc_seeds.py (after merge) ..."
 AURC_JOB_ID=$(submit \
-  -A bio250028p \
   --dependency=afterok:${MERGE_JOB_ID} \
-  -t 3-00:00:00 --ntasks-per-node=64 -J "auerc_${DATASET_NAME}" \
+  -t 3-00:00:00 --mem 128Gb -J "auerc_${DATASET_NAME}" \
   -o "${LOG_DIR}/auerc_${DATASET_NAME}-%j.out" \
   -e "${LOG_DIR}/auerc_${DATASET_NAME}-%j.err" \
   --wrap "source ~/.bashrc && conda activate ${CONDA_ENV} && \
