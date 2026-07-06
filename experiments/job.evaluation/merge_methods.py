@@ -162,7 +162,7 @@ def _read_methods_csv(methods_csv: str) -> List[Tuple[str, str, str, Optional[st
 	"""
 	Parse methods manifest CSV.
 	Returns list of (file_path, method_name, score_col, fdr_col) in row order.
-	fdr_col is None if the 'fdr' column is absent or blank.
+	fdr_col is None if the 'fdr_col' column is absent or blank.
 	Row order determines METHOD_COLS order in downstream evaluation.
 	"""
 	if not os.path.isfile(methods_csv):
@@ -170,11 +170,12 @@ def _read_methods_csv(methods_csv: str) -> List[Tuple[str, str, str, Optional[st
 	with open(methods_csv, newline="") as f:
 		reader = csv.DictReader(f)
 		required = {"file_path", "score_col", "method_name"}
-		if not required.issubset(set(reader.fieldnames or [])):
+		stripped_fieldnames = [f.strip() for f in (reader.fieldnames or [])]
+		if not required.issubset(set(stripped_fieldnames)):
 			raise ValueError(
 				f"methods_csv must have columns: {required}. Got: {reader.fieldnames}"
 			)
-		rows = list(reader)
+		rows = [{k.strip(): v for k, v in row.items()} for row in reader]
 	if not rows:
 		raise ValueError(f"methods_csv has no data rows: {methods_csv}")
 	return [
@@ -182,7 +183,7 @@ def _read_methods_csv(methods_csv: str) -> List[Tuple[str, str, str, Optional[st
 			r["file_path"].strip(),
 			r["method_name"].strip(),
 			r["score_col"].strip(),
-			_opt_none(r.get("fdr", "")),
+			_opt_none(r.get("fdr_col", "")),
 		)
 		for r in rows
 	]
@@ -200,11 +201,12 @@ def _resolve_method_rows(args) -> List[Tuple[str, str, str, Optional[str]]]:
 	with open(args.config_file, newline="") as f:
 		reader = csv.DictReader(f)
 		required = {"file_path", "score_col", "method_name"}
-		if not required.issubset(set(reader.fieldnames or [])):
+		stripped_fieldnames = [f.strip() for f in (reader.fieldnames or [])]
+		if not required.issubset(set(stripped_fieldnames)):
 			raise ValueError(
 				f"config_file must have columns: {required}. Got: {reader.fieldnames}"
 			)
-		rows = list(reader)
+		rows = [{k.strip(): v for k, v in row.items()} for row in reader]
 	if args.celltype:
 		rows = [r for r in rows if r.get("celltype", "").strip() == args.celltype]
 		if not rows:
@@ -216,7 +218,7 @@ def _resolve_method_rows(args) -> List[Tuple[str, str, str, Optional[str]]]:
 			r["file_path"].strip(),
 			r["method_name"].strip(),
 			r["score_col"].strip(),
-			_opt_none(r.get("fdr", "")),
+			_opt_none(r.get("fdr_col", "")),
 		)
 		for r in rows
 	]
