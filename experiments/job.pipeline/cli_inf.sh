@@ -1,25 +1,25 @@
 #!/bin/sh
 
-# FILE: /ocean/projects/bio240051p/aprieto/cts_peak_gene/experiments/job.pipeline/cli_inf.sh
+# FILE: /projects/zhanglab/users/ana/cts_peak_gene/experiments/job.pipeline/cli_inf.sh
 
 MULTIOME_DATASET=brain
-MULTIOME_FILE=/ocean/projects/bio240051p/aprieto/multiome/processed/brain_3k/brain.h5mu
-BIN_CONFIG=5.5.inf.inf.1000
-TARGET_PATH=/ocean/projects/bio240051p/aprieto/multiome/results/ctar/corr_eval/${MULTIOME_DATASET}/${MULTIOME_DATASET}_unfiltered_${BIN_CONFIG}
-GENOME_FILE=/ocean/projects/bio240051p/aprieto/bedfiles/ref/GRCh38.p14.genome.fixed.fa
+MULTIOME_FILE=/projects/zhanglab/users/ana/multiome/processed/brain_3k/brain.h5mu
+BIN_CONFIG=4.4.inf.inf.1000
+TARGET_PATH=/projects/zhanglab/users/ana/multiome/results/ctar/corr_eval/${MULTIOME_DATASET}/${MULTIOME_DATASET}_unfiltered_len_${BIN_CONFIG}
+GENOME_FILE=/projects/zhanglab/users/ana/bedtools2/ana_bedfiles/ref/GRCh38.p14.genome.fa.bgz
 BIN_TYPE='mean_var'
-PYBEDTOOLS_PATH=/opt/packages/bedtools/2.30.0
+PYBEDTOOLS_PATH=/projects/zhanglab/users/ana/bedtools2/bin
 BATCH_SIZE=5000
-RESULTS_PATH=/ocean/projects/bio240051p/aprieto/multiome/results/ctar/corr_eval/${MULTIOME_DATASET}/${MULTIOME_DATASET}_unfiltered_${BIN_CONFIG}
-PARTITION="RM"
-MAX_CONCURRENT=200
+RESULTS_PATH=/projects/zhanglab/users/ana/multiome/results/ctar/corr_eval/${MULTIOME_DATASET}/${MULTIOME_DATASET}_unfiltered_len_${BIN_CONFIG}
+PARTITION="mzhang,statgen,pool1"
+MAX_CONCURRENT=100
 FLAG_LL='False'
 FLAG_SE='True'
 FLAG_CORR='True'
-N_CORES=128
+N_CORES=16
 RANDOM_SEED=777
 DONOR_COL=''
-N_LENGTH_BINS=1
+N_LENGTH_BINS=4
 
 IFS='.' read -r b1 b2 b3 b4 rest <<< "$BIN_CONFIG"
 if [[ "$b3" == "inf" && "$b4" == "inf" ]]; then
@@ -40,10 +40,9 @@ fi
 
 echo "Submitting $BIN_CONFIG generate_controls job..."
 GEN_CTRL_JOB=$(sbatch --parsable -p $PARTITION -t 1-00:00:00 \
-  -A bio250028p \
-  --ntasks-per-node=32 \
-  -o /ocean/projects/bio240051p/aprieto/logs/gen_ctrl_%j.err -J "gen_ctrl_$BIN_CONFIG" \
-  --wrap "source ~/.bashrc && conda activate ctar && python /ocean/projects/bio240051p/aprieto/cts_peak_gene/CLI_ctar.py \
+  -c 16 --mem 128Gb \
+  -o /projects/zhanglab/users/ana/logs/gen_ctrl_%j.err -J "gen_ctrl_$BIN_CONFIG" \
+  --wrap "source ~/.bashrc && conda activate ctar && python /projects/zhanglab/users/ana/cts_peak_gene/CLI_ctar.py \
           --job generate_controls --multiome_file $MULTIOME_FILE --batch_size $BATCH_SIZE \
           --binning_config $BIN_CONFIG --binning_type $BIN_TYPE --genome_file $GENOME_FILE --target_path $TARGET_PATH \
           --pybedtools_path $PYBEDTOOLS_PATH --results_path $RESULTS_PATH --random_seed $RANDOM_SEED \
@@ -56,10 +55,9 @@ echo "Generate controls job ID: $GEN_CTRL_JOB"
 
 echo "Submitting $BIN_CONFIG compute_cis_only job..."
 CIS_JOB=$(sbatch --parsable -p $PARTITION -t 1-00:00:00 \
-  -A bio250028p \
-  --ntasks-per-node=$N_CORES \
-  -o /ocean/projects/bio240051p/aprieto/logs/cis_%j.err -J "cis_$BIN_CONFIG" \
-  --wrap "source ~/.bashrc && conda activate ctar && python /ocean/projects/bio240051p/aprieto/cts_peak_gene/CLI_ctar.py \
+  -c $N_CORES --mem 128Gb \
+  -o /projects/zhanglab/users/ana/logs/cis_%j.err -J "cis_$BIN_CONFIG" \
+  --wrap "source ~/.bashrc && conda activate ctar && python /projects/zhanglab/users/ana/cts_peak_gene/CLI_ctar.py \
           --job compute_cis_only --multiome_file $MULTIOME_FILE --batch_size $BATCH_SIZE \
           --binning_config $BIN_CONFIG --binning_type $BIN_TYPE --genome_file $GENOME_FILE --target_path $TARGET_PATH \
           --results_path $RESULTS_PATH --pybedtools_path $PYBEDTOOLS_PATH --n_cores $N_CORES \
@@ -124,13 +122,12 @@ if [ "$USE_INF_MODE" = true ]; then
         echo "Submitting single array job with $TOTAL_NUM_BATCHES tasks..."
         
         CTRL_JOB=$(sbatch --parsable -p $PARTITION -t 2-00:00:00 \
-            -A bio250028p \
             --dependency=afterok:${GEN_CTRL_JOB} \
-            --ntasks-per-node=$N_CORES \
+            -c $N_CORES --mem 128Gb \
             --array=0-$((TOTAL_NUM_BATCHES - 1))%${MAX_CONCURRENT} \
-            -o /ocean/projects/bio240051p/aprieto/logs/ctrl_%A_%a.err \
+            -o /projects/zhanglab/users/ana/logs/ctrl_%A_%a.err \
             -J "ctrl_$BIN_CONFIG" \
-            --wrap "source ~/.bashrc && conda activate ctar && python /ocean/projects/bio240051p/aprieto/cts_peak_gene/CLI_ctar.py \
+            --wrap "source ~/.bashrc && conda activate ctar && python /projects/zhanglab/users/ana/cts_peak_gene/CLI_ctar.py \
                     --job compute_ctrl_only --multiome_file $MULTIOME_FILE \
                     --batch_size $BATCH_SIZE --target_path $TARGET_PATH --results_path $RESULTS_PATH --array_idx \$SLURM_ARRAY_TASK_ID \
                     --binning_config $BIN_CONFIG --binning_type $BIN_TYPE --genome_file $GENOME_FILE --pybedtools_path $PYBEDTOOLS_PATH \
@@ -149,10 +146,9 @@ if [ "$USE_INF_MODE" = true ]; then
 else
     echo "Submitting $BIN_CONFIG compute_ctrl_only job with $TOTAL_NUM_BATCHES batches..."
     CTRL_JOB=$(sbatch --parsable -p $PARTITION -t 1-00:00:00 $ARRAY_OPT \
-      -A bio250028p \
-      --ntasks-per-node=$N_CORES \
-      -o /ocean/projects/bio240051p/aprieto/logs/ctrl_%A_%a.err -J "ctrl_$BIN_CONFIG" \
-      --wrap "source ~/.bashrc && conda activate ctar && python /ocean/projects/bio240051p/aprieto/cts_peak_gene/CLI_ctar.py \
+      -c $N_CORES --mem 128Gb \
+      -o /projects/zhanglab/users/ana/logs/ctrl_%A_%a.err -J "ctrl_$BIN_CONFIG" \
+      --wrap "source ~/.bashrc && conda activate ctar && python /projects/zhanglab/users/ana/cts_peak_gene/CLI_ctar.py \
               --job compute_ctrl_only --multiome_file $MULTIOME_FILE \
               --batch_size $BATCH_SIZE --target_path $TARGET_PATH --results_path $RESULTS_PATH \
               --binning_config $BIN_CONFIG --binning_type $BIN_TYPE --genome_file $GENOME_FILE --pybedtools_path $PYBEDTOOLS_PATH \
@@ -168,13 +164,12 @@ fi
 ###########################################################################################
 
 echo "Submitting $BIN_CONFIG compute_pval job..."
-PVAL_JOB=$(sbatch --parsable -p $PARTITION -t 00:30:00 \
-  -A bio250028p \
+PVAL_JOB=$(sbatch --parsable -p $PARTITION -t 0-00:30:00 \
+  -c 16 --mem 128Gb \
   --dependency=afterok:${CTRL_JOB}:${CIS_JOB} \
-  --ntasks-per-node=32 \
   --mail-type=END --mail-user=asprieto@andrew.cmu.edu \
-  -o /ocean/projects/bio240051p/aprieto/logs/pval_%j.err -J "pval_$BIN_CONFIG" \
-  --wrap "source ~/.bashrc && conda activate ctar && python /ocean/projects/bio240051p/aprieto/cts_peak_gene/CLI_ctar.py \
+  -o /projects/zhanglab/users/ana/logs/pval_%j.err -J "pval_$BIN_CONFIG" \
+  --wrap "source ~/.bashrc && conda activate ctar && python /projects/zhanglab/users/ana/cts_peak_gene/CLI_ctar.py \
           --job compute_pval --binning_config $BIN_CONFIG --binning_type $BIN_TYPE --n_length_bins $N_LENGTH_BINS --results_path $RESULTS_PATH --flag_corr $FLAG_CORR")
 echo "P-value job ID: $PVAL_JOB"
 
