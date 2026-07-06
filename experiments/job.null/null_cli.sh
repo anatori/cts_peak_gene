@@ -3,9 +3,9 @@
 # FILE: /ocean/projects/bio240051p/aprieto/cts_peak_gene/experiments/job.null/null_cli.sh
 
 MULTIOME_FILE=/ocean/projects/bio240051p/aprieto/multiome/processed/pbmc_sorted_10k/pbmc.h5mu
-BIN_PREFIX=10.10.10.10
+BIN_PREFIX=4.4.4.4
 BIN_CONFIG=${BIN_PREFIX}.10000
-TARGET_PATH=/ocean/projects/bio240051p/aprieto/multiome/simulations/null_pbmc/celltype_specificity/corr/${BIN_PREFIX}
+TARGET_PATH=/ocean/projects/bio240051p/aprieto/multiome/simulations/null_pbmc/high_expr_x_acc/corr/with_peak_len/${BIN_PREFIX}
 GENOME_FILE=/ocean/projects/bio240051p/aprieto/bedfiles/ref/GRCh38.p14.genome.fixed.fa
 BIN_TYPE='mean_var'
 PYBEDTOOLS_PATH=/opt/packages/bedtools/2.30.0
@@ -19,7 +19,7 @@ FLAG_CORR='True'
 N_CORES=128
 RANDOM_SEED=777
 DONOR_COL=''
-N_LENGTH_BINS=1
+N_LENGTH_BINS=4
 
 IFS='.' read -r b1 b2 b3 b4 rest <<< "$BIN_CONFIG"
 if [[ "$b3" == "inf" && "$b4" == "inf" ]]; then

@@ -3,15 +3,15 @@
 # FILE: /ocean/projects/bio240051p/aprieto/cts_peak_gene/experiments/job.null/null_cli_inf.sh
 
 MULTIOME_FILE=/ocean/projects/bio240051p/aprieto/multiome/processed/pbmc_sorted_10k/pbmc.h5mu
-BIN_PREFIX=5.5.inf.inf
+BIN_PREFIX=4.4.inf.inf
 BIN_CONFIG=${BIN_PREFIX}.1000
-TARGET_PATH=/ocean/projects/bio240051p/aprieto/multiome/simulations/null_pbmc/full/corr/${BIN_PREFIX}.1k
+TARGET_PATH=/ocean/projects/bio240051p/aprieto/multiome/simulations/null_pbmc/full/corr/with_peak_len/${BIN_PREFIX}
 GENOME_FILE=/ocean/projects/bio240051p/aprieto/bedfiles/ref/GRCh38.p14.genome.fixed.fa
 BIN_TYPE='mean_var'
 PYBEDTOOLS_PATH=/opt/packages/bedtools/2.30.0
 BATCH_SIZE=5000
-RESULTS_PATH=/ocean/projects/bio240051p/aprieto/multiome/simulations/null_pbmc/full/corr/${BIN_PREFIX}.1k
-PARTITION="RM-shared"
+RESULTS_PATH=/ocean/projects/bio240051p/aprieto/multiome/simulations/null_pbmc/full/corr/with_peak_len/${BIN_PREFIX}
+PARTITION="RM"
 MAX_CONCURRENT=200
 FLAG_LL='False'
 FLAG_SE='True'
@@ -19,7 +19,7 @@ FLAG_CORR='True'
 N_CORES=64
 RANDOM_SEED=777
 DONOR_COL=''
-N_LENGTH_BINS=1
+N_LENGTH_BINS=4
 
 IFS='.' read -r b1 b2 b3 b4 rest <<< "$BIN_CONFIG"
 if [[ "$b3" == "inf" && "$b4" == "inf" ]]; then
