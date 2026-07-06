@@ -34,6 +34,11 @@ print(','.join(names))
 fi
 REFERENCE_METHOD="${REFERENCE_METHOD:-ctar_5.5.5.5}"
 N_BOOTSTRAP="${N_BOOTSTRAP:-1000}"
+USE_QVAL="${USE_QVAL:-false}"
+if [[ "${USE_QVAL}" == "true" ]]; then
+  METHOD_COLS=$(python3 -c "print(','.join(c.strip()+'_qval' for c in '${METHOD_COLS}'.split(',')))")
+  REFERENCE_METHOD="${REFERENCE_METHOD}_qval"
+fi
 
 # Optional distance-script settings
 GTEX_SCORE_THRES="${GTEX_SCORE_THRES:-0.5}"

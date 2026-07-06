@@ -28,6 +28,13 @@ EVAL_DIR="${EVAL_DIR:-/ocean/projects/bio240051p/aprieto/bedfiles/validation/tis
 DEDUP="${DEDUP:-min}"
 REFERENCE_METHOD="${REFERENCE_METHOD:-ctar_5.5.5.5.50k}"
 N_BOOTSTRAP="${N_BOOTSTRAP:-1000}"
+FDR_CORRECTION="${FDR_CORRECTION:-false}"
+USE_QVAL="${USE_QVAL:-false}"
+
+FDR_FLAG=""
+[[ "${FDR_CORRECTION}" == "true" ]] && FDR_FLAG="--fdr_correction"
+USE_QVAL_FLAG=""
+[[ "${USE_QVAL}" == "true" ]] && USE_QVAL_FLAG="--use_qval"
 
 mkdir -p "${LOG_DIR}"
 
@@ -153,7 +160,8 @@ print(','.join(names))
               --celltype '${CELLTYPE}' \
               --dedup '${DEDUP}' \
               --agg_path '${AGG_DIR}' \
-              --res_path '${MERGE_DIR}'")
+              --res_path '${MERGE_DIR}' \
+              ${FDR_FLAG}")
   echo "  MERGE_JOB_ID=${MERGE_JOB_ID}"
 
   # Step 5: calculate_auerc
@@ -171,7 +179,8 @@ print(','.join(names))
               --dataset_name '${DATASET_NAME}_${CELLTYPE}' \
               --n_bootstrap '${N_BOOTSTRAP}' \
               --reference_method '${REFERENCE_METHOD}' \
-              --method_cols '${CELLTYPE_METHOD_COLS}'")
+              --method_cols '${CELLTYPE_METHOD_COLS}' \
+              ${USE_QVAL_FLAG}")
   echo "  AURC_JOB_ID=${AURC_JOB_ID}"
 
   echo "${AURC_JOB_ID}" >> "${TEMP_JOB_FILE}"

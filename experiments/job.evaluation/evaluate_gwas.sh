@@ -44,6 +44,13 @@ DEDUP="${DEDUP:-min}"
 REFERENCE_METHOD="${REFERENCE_METHOD:-ctar_5.5.5.5}"
 N_BOOTSTRAP="${N_BOOTSTRAP:-1000}"
 GENE_MISMATCH="${GENE_MISMATCH:-zero}"
+FDR_CORRECTION="${FDR_CORRECTION:-false}"
+USE_QVAL="${USE_QVAL:-false}"
+
+FDR_FLAG=""
+[[ "${FDR_CORRECTION}" == "true" ]] && FDR_FLAG="--fdr_correction"
+USE_QVAL_FLAG=""
+[[ "${USE_QVAL}" == "true" ]] && USE_QVAL_FLAG="--use_qval"
 
 echo "Evaluating ${DATASET_NAME}, ${FILTER_TAG} (gene_mismatch=${GENE_MISMATCH})..."
 echo "METHOD_COLS: ${METHOD_COLS}"
@@ -112,7 +119,8 @@ MERGE_JOB_ID=$(submit \
             --methods_csv '${METHODS_CSV}' \
             --dedup '${DEDUP}' \
             --agg_path '${AGG_DIR}' \
-            --res_path '${MERGE_DIR}'")
+            --res_path '${MERGE_DIR}' \
+            ${FDR_FLAG}")
 echo "MERGE_JOB_ID=${MERGE_JOB_ID}"
 
 echo "Submitting calculate_auerc_seeds.py (after merge) ..."
@@ -132,7 +140,8 @@ AURC_JOB_ID=$(submit \
             --eqtl_pip_thres_list '0.5' \
             --eqtl_filter_mode 'all_only' \
             --reference_method '${REFERENCE_METHOD}' \
-            --method_cols '${METHOD_COLS}'")
+            --method_cols '${METHOD_COLS}' \
+            ${USE_QVAL_FLAG}")
 echo "AURC_JOB_ID=${AURC_JOB_ID}"
 
 echo "Submitted jobs:"
