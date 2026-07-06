@@ -992,12 +992,16 @@ def compute_fano(mean, var):
     return np.where(mean > 0, np.clip(var, 0, None) / mean, 0.0)
 
 
-def log_dist_bins(abs_distance, n_bins=15, min_count=500):
+def log_dist_bins(abs_distance, custom_bins=None, n_bins=15, min_count=500):
     ''' Get distance bins based on log absolute distance.
     Merge upwards if bin count is below min_count.
+    Assumes custom_bins are in linear space!
     '''
     log_dist = np.log10(abs_distance.clip(lower=1))
-    bins = pd.cut(log_dist, bins=n_bins, labels=False, duplicates='drop')
+    if custom_bins is not None:
+        bins = pd.cut(abs_distance, bins=custom_bins, labels=False, duplicates='drop')
+    else:
+        bins = pd.cut(log_dist, bins=n_bins, labels=False, duplicates='drop')
     
     counts = bins.value_counts().sort_index()
     while (counts < min_count).any():
