@@ -2,23 +2,23 @@
 
 # FILE: /projects/zhanglab/users/ana/cts_peak_gene/experiments/job.pipeline/cli_inf.sh
 
-MULTIOME_DATASET=pbmc
-MULTIOME_FILE=/projects/zhanglab/users/ana/multiome/processed/pbmc_sorted_10k/pbmc.h5mu
+MULTIOME_DATASET=bmmc
+MULTIOME_FILE=/projects/zhanglab/users/ana/multiome/processed/neurips_bmmc/bmmc.h5mu
 BIN_CONFIG=4.4.inf.inf.1000
-TARGET_PATH=/projects/zhanglab/users/ana/multiome/results/ctar/corr_eval/${MULTIOME_DATASET}/${MULTIOME_DATASET}_unfiltered_len_${BIN_CONFIG}
+TARGET_PATH=/projects/zhanglab/users/ana/multiome/results/ctar/corr_eval/${MULTIOME_DATASET}/${MULTIOME_DATASET}_unfiltered_len_donor_${BIN_CONFIG}
 GENOME_FILE=/projects/zhanglab/users/ana/bedtools2/ana_bedfiles/ref/GRCh38.p14.genome.fa.bgz
 BIN_TYPE='mean_var'
 PYBEDTOOLS_PATH=/projects/zhanglab/users/ana/bedtools2/bin
 BATCH_SIZE=5000
-RESULTS_PATH=/projects/zhanglab/users/ana/multiome/results/ctar/corr_eval/${MULTIOME_DATASET}/${MULTIOME_DATASET}_unfiltered_len_${BIN_CONFIG}
+RESULTS_PATH=/projects/zhanglab/users/ana/multiome/results/ctar/corr_eval/${MULTIOME_DATASET}/${MULTIOME_DATASET}_unfiltered_len_donor_${BIN_CONFIG}
 PARTITION="mzhang,statgen,pool1"
-MAX_CONCURRENT=100
+MAX_CONCURRENT=50
 FLAG_LL='False'
 FLAG_SE='True'
 FLAG_CORR='True'
-N_CORES=16
+N_CORES=32
 RANDOM_SEED=777
-DONOR_COL=''
+DONOR_COL='DonorID'
 N_LENGTH_BINS=4
 
 IFS='.' read -r b1 b2 b3 b4 rest <<< "$BIN_CONFIG"
