@@ -2,8 +2,8 @@
 
 # FILE: /projects/zhanglab/users/ana/cts_peak_gene/experiments/job.pipeline/cli_inf.sh
 
-MULTIOME_DATASET=brain
-MULTIOME_FILE=/projects/zhanglab/users/ana/multiome/processed/brain_3k/brain.h5mu
+MULTIOME_DATASET=pbmc
+MULTIOME_FILE=/projects/zhanglab/users/ana/multiome/processed/pbmc_sorted_10k/pbmc.h5mu
 BIN_CONFIG=4.4.inf.inf.1000
 TARGET_PATH=/projects/zhanglab/users/ana/multiome/results/ctar/corr_eval/${MULTIOME_DATASET}/${MULTIOME_DATASET}_unfiltered_len_${BIN_CONFIG}
 GENOME_FILE=/projects/zhanglab/users/ana/bedtools2/ana_bedfiles/ref/GRCh38.p14.genome.fa.bgz

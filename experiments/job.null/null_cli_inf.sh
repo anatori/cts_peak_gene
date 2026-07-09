@@ -35,37 +35,37 @@ fi
 
 
 
-###########################################################################################
-######                              Generate Controls                              ######
-###########################################################################################
+# ###########################################################################################
+# ######                              Generate Controls                              ######
+# ###########################################################################################
 
-echo "Submitting $BIN_CONFIG generate_controls job..."
-GEN_CTRL_JOB=$(sbatch --parsable -p $PARTITION -t 1-00:00:00 \
-  -c 16 --mem 128Gb \
-  -o /projects/zhanglab/users/ana/logs/gen_ctrl_%j.err -J "gen_ctrl_$BIN_CONFIG" \
-  --wrap "source ~/.bashrc && conda activate ctar && python /projects/zhanglab/users/ana/cts_peak_gene/CLI_ctar.py \
-          --job generate_controls --multiome_file $MULTIOME_FILE --batch_size $BATCH_SIZE \
-          --binning_config $BIN_CONFIG --binning_type $BIN_TYPE --genome_file $GENOME_FILE --target_path $TARGET_PATH \
-          --pybedtools_path $PYBEDTOOLS_PATH --results_path $RESULTS_PATH --random_seed $RANDOM_SEED \
-          --n_length_bins $N_LENGTH_BINS")
-echo "Generate controls job ID: $GEN_CTRL_JOB"
+# echo "Submitting $BIN_CONFIG generate_controls job..."
+# GEN_CTRL_JOB=$(sbatch --parsable -p $PARTITION -t 1-00:00:00 \
+#   -c 16 --mem 128Gb \
+#   -o /projects/zhanglab/users/ana/logs/gen_ctrl_%j.err -J "gen_ctrl_$BIN_CONFIG" \
+#   --wrap "source ~/.bashrc && conda activate ctar && python /projects/zhanglab/users/ana/cts_peak_gene/CLI_ctar.py \
+#           --job generate_controls --multiome_file $MULTIOME_FILE --batch_size $BATCH_SIZE \
+#           --binning_config $BIN_CONFIG --binning_type $BIN_TYPE --genome_file $GENOME_FILE --target_path $TARGET_PATH \
+#           --pybedtools_path $PYBEDTOOLS_PATH --results_path $RESULTS_PATH --random_seed $RANDOM_SEED \
+#           --n_length_bins $N_LENGTH_BINS")
+# echo "Generate controls job ID: $GEN_CTRL_JOB"
 
-###########################################################################################
-######                            Compute cis coefficients                           ######
-###########################################################################################
+# ###########################################################################################
+# ######                            Compute cis coefficients                           ######
+# ###########################################################################################
 
-echo "Submitting $BIN_CONFIG compute_cis_only job..."
-CIS_JOB=$(sbatch --parsable -p $PARTITION -t 1-00:00:00 \
-  -c $N_CORES --mem 128Gb \
-  -o /projects/zhanglab/users/ana/logs/cis_%j.err -J "cis_$BIN_CONFIG" \
-  --wrap "source ~/.bashrc && conda activate ctar && python /projects/zhanglab/users/ana/cts_peak_gene/CLI_ctar.py \
-          --job compute_cis_only --multiome_file $MULTIOME_FILE --batch_size $BATCH_SIZE \
-          --binning_config $BIN_CONFIG --binning_type $BIN_TYPE --genome_file $GENOME_FILE --target_path $TARGET_PATH \
-          --results_path $RESULTS_PATH --pybedtools_path $PYBEDTOOLS_PATH --n_cores $N_CORES \
-          --flag_ll $FLAG_LL --flag_se $FLAG_SE --flag_corr $FLAG_CORR --random_seed $RANDOM_SEED \
-          --n_length_bins $N_LENGTH_BINS \
-          ${DONOR_COL:+--donor_col $DONOR_COL}")
-echo "Cis job ID: $CIS_JOB"
+# echo "Submitting $BIN_CONFIG compute_cis_only job..."
+# CIS_JOB=$(sbatch --parsable -p $PARTITION -t 1-00:00:00 \
+#   -c $N_CORES --mem 128Gb \
+#   -o /projects/zhanglab/users/ana/logs/cis_%j.err -J "cis_$BIN_CONFIG" \
+#   --wrap "source ~/.bashrc && conda activate ctar && python /projects/zhanglab/users/ana/cts_peak_gene/CLI_ctar.py \
+#           --job compute_cis_only --multiome_file $MULTIOME_FILE --batch_size $BATCH_SIZE \
+#           --binning_config $BIN_CONFIG --binning_type $BIN_TYPE --genome_file $GENOME_FILE --target_path $TARGET_PATH \
+#           --results_path $RESULTS_PATH --pybedtools_path $PYBEDTOOLS_PATH --n_cores $N_CORES \
+#           --flag_ll $FLAG_LL --flag_se $FLAG_SE --flag_corr $FLAG_CORR --random_seed $RANDOM_SEED \
+#           --n_length_bins $N_LENGTH_BINS \
+#           ${DONOR_COL:+--donor_col $DONOR_COL}")
+# echo "Cis job ID: $CIS_JOB"
 
 ###########################################################################################
 ######                    Wait for Links Job and Count Cis-Links                     ######
@@ -123,9 +123,8 @@ if [ "$USE_INF_MODE" = true ]; then
         echo "Submitting single array job with $TOTAL_NUM_BATCHES tasks..."
         
         CTRL_JOB=$(sbatch --parsable -p $PARTITION -t 2-00:00:00 \
-            --dependency=afterok:${GEN_CTRL_JOB} \
             -c $N_CORES --mem 128Gb \
-            --array=0-$((TOTAL_NUM_BATCHES - 1))%${MAX_CONCURRENT} \
+            --array=3 \
             -o /projects/zhanglab/users/ana/logs/ctrl_%A_%a.err \
             -J "ctrl_$BIN_CONFIG" \
             --wrap "source ~/.bashrc && conda activate ctar && python /projects/zhanglab/users/ana/cts_peak_gene/CLI_ctar.py \
@@ -166,7 +165,7 @@ fi
 
 echo "Submitting $BIN_CONFIG compute_pval job..."
 PVAL_JOB=$(sbatch --parsable -p $PARTITION -t 00:30:00 \
-  --dependency=afterok:${CTRL_JOB}:${CIS_JOB} \
+  --dependency=afterok:${CTRL_JOB} \
   -c 16 --mem 128Gb \
   --mail-type=END --mail-user=asprieto@andrew.cmu.edu \
   -o /projects/zhanglab/users/ana/logs/pval_%j.err -J "pval_$BIN_CONFIG" \

@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# bash /ocean/projects/bio240051p/aprieto/cts_peak_gene/experiments/job.overlap_analysis/analyze_overlap.sh
+# bash /projects/zhanglab/users/ana/cts_peak_gene/experiments/job.overlap_analysis/analyze_overlap.sh
 
 # Slurm settings
 PARTITIONS="${PARTITIONS:-RM-shared}"
-LOG_DIR="${LOG_DIR:-/ocean/projects/bio240051p/aprieto/logs}"
+LOG_DIR="${LOG_DIR:-/projects/zhanglab/users/ana/logs}"
 CONDA_ENV="${CONDA_ENV:-ctar}"
 
 # Datasets to include in the union BED
@@ -13,22 +13,22 @@ DATASETS="${DATASETS:-bmmc,pbmc,brain,shareseq,neat}"
 FILTER_TAG="${FILTER_TAG:-unfiltered}"
 
 # Paths
-REPO_ROOT="${REPO_ROOT:-/ocean/projects/bio240051p/aprieto/cts_peak_gene}"
+REPO_ROOT="${REPO_ROOT:-/projects/zhanglab/users/ana/cts_peak_gene}"
 SCRIPTS_DIR="${SCRIPTS_DIR:-${REPO_ROOT}/experiments/job.overlap_analysis}"
 
 # Methods manifest CSV: columns file_path, dataset_name, method_name, pval_col, fdr_col, stat_col
 METHODS_CSV="${METHODS_CSV:-${SCRIPTS_DIR}/methods_manifests/all_methods.csv}"
 
 # Directory/file paths
-DATASET_DIR="${DATASET_DIR:-/ocean/projects/bio240051p/aprieto/bedfiles/validation/union_links/${FILTER_TAG}}"
-UNION_DIR="${UNION_DIR:-/ocean/projects/bio240051p/aprieto/bedfiles/analysis/${FILTER_TAG}}"
+DATASET_DIR="${DATASET_DIR:-/projects/zhanglab/users/ana/bedtools2/ana_bedfiles/validation/union_links/${FILTER_TAG}}"
+UNION_DIR="${UNION_DIR:-/projects/zhanglab/users/ana/bedtools2/ana_bedfiles/analysis/${FILTER_TAG}}"
 UNION_BED="${UNION_BED:-${UNION_DIR}/multiome_union.bed}"
-ANALYSIS_BED="${ANALYSIS_BED:-/ocean/projects/bio240051p/aprieto/bedfiles/analysis/gwas_pops/gwas_pops_hg38.bed}"
-OVERLAP_BED="${OVERLAP_BED:-/ocean/projects/bio240051p/aprieto/bedfiles/analysis/overlap/${FILTER_TAG}/multiome_gwas_pops.bed}"
-OUT_PATH="${OUT_PATH:-/ocean/projects/bio240051p/aprieto/multiome/analysis/gwas_pops/${FILTER_TAG}/gwas_pops_merged.csv}"
+ANALYSIS_BED="${ANALYSIS_BED:-/projects/zhanglab/users/ana/bedtools2/ana_bedfiles/analysis/gwas_pops/gwas_pops_hg38.bed}"
+OVERLAP_BED="${OVERLAP_BED:-/projects/zhanglab/users/ana/bedtools2/ana_bedfiles/analysis/overlap/${FILTER_TAG}/multiome_gwas_pops.bed}"
+OUT_PATH="${OUT_PATH:-/projects/zhanglab/users/ana/multiome/analysis/gwas_pops/${FILTER_TAG}/gwas_pops_merged.csv}"
 
 # Optional SNP annotation join
-SNP_ANNOT_FILE="${SNP_ANNOT_FILE:-/ocean/projects/bio240051p/aprieto/multiome/analysis/gwas_pops/gwas_pops_info.tsv}"
+SNP_ANNOT_FILE="${SNP_ANNOT_FILE:-/projects/zhanglab/users/ana/multiome/analysis/gwas_pops/gwas_pops_info.tsv}"
 SNP_ANNOT_ID_COL="${SNP_ANNOT_ID_COL:-final_col}"
 SNP_ANNOT_COLS="${SNP_ANNOT_COLS:-trait,variant,ensgid,gene_symbol,pops_score,gold}"
 
@@ -43,12 +43,12 @@ echo "Datasets: ${DATASETS}, filter: ${FILTER_TAG}"
 mkdir -p "${LOG_DIR}"
 
 submit() {
-  sbatch --parsable -p "${PARTITIONS}" -A bio250028p "$@"
+  sbatch --parsable -p "${PARTITIONS}" "$@"
 }
 
 echo "Submitting make_multiome_union_bed.py ..."
 UNION_JOB_ID=$(submit \
-  -t 1-00:00:00 --ntasks-per-node=64 -J "union_multiome" \
+  -t 1-00:00:00 --mem 128Gb -J "union_multiome" \
   -o "${LOG_DIR}/union_multiome-%j.out" \
   -e "${LOG_DIR}/union_multiome-%j.err" \
   --wrap "source ~/.bashrc && conda activate ${CONDA_ENV} && \
@@ -62,7 +62,7 @@ echo "UNION_JOB_ID=${UNION_JOB_ID}"
 echo "Submitting bedtools intersect ..."
 INTERSECT_JOB_ID=$(submit \
   --dependency=afterok:${UNION_JOB_ID} \
-  -t 0-02:00:00 --ntasks-per-node=64 -J "intersect_analysis" \
+  -t 0-02:00:00 --mem 128Gb -J "intersect_analysis" \
   -o "${LOG_DIR}/intersect_analysis-%j.out" \
   -e "${LOG_DIR}/intersect_analysis-%j.err" \
   --wrap "mkdir -p '$(dirname ${OVERLAP_BED})' && \
@@ -89,7 +89,7 @@ fi
 
 echo "Submitting merge_methods.py ..."
 MERGE_JOB_ID=$(submit \
-  -t 1-00:00:00 --ntasks-per-node=64 -J "merge_analysis" \
+  -t 1-00:00:00 --mem 128Gb -J "merge_analysis" \
   --dependency=afterok:${INTERSECT_JOB_ID} \
   -o "${LOG_DIR}/merge_analysis-%j.out" \
   -e "${LOG_DIR}/merge_analysis-%j.err" \
