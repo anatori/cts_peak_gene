@@ -243,6 +243,13 @@ def main(args):
         if COVAR_FILE:
             print("# Loading --covar_file")
             covar_mat = np.load(COVAR_FILE)
+        elif DONOR_COL and not FLAG_CORR:
+            assert DONOR_COL in adata_rna.obs.columns, f"--donor_col '{DONOR_COL}' not found in obs"
+            print(f"# Building one-hot donor covariate matrix from '{DONOR_COL}'...")
+            covar_mat = pd.get_dummies(adata_rna.obs[DONOR_COL], drop_first=True).to_numpy(dtype=np.float32)
+            print(f"# covar_mat shape: {covar_mat.shape} ({covar_mat.shape[1]} donor dummies)")
+        else:
+            covar_mat = None
 
         if ARRAY_IDX:
             ARRAY_IDX = int(ARRAY_IDX)
@@ -545,7 +552,7 @@ def main(args):
                 print('# Starting cis-links IRLS...')
                 start_time = time.time()
 
-                if COVAR_FILE:
+                if covar_mat is not None:
                     cis_coeff_dic = ctar.parallel.multiprocess_poisson_irls_multivar(
                         links_dict=cis_links_dic,
                         atac_sparse=atac_sparse,
@@ -586,7 +593,7 @@ def main(args):
                 print('# Starting control links IRLS...')
                 start_time = time.time()
 
-                if COVAR_FILE:
+                if covar_mat is not None:
                     ctrl_coeff_dic = ctar.parallel.multiprocess_poisson_irls_multivar(
                         links_dict=ctrl_links_dic,
                         atac_sparse=atac_sparse,
@@ -740,7 +747,7 @@ def main(args):
                 print('# Starting cis-links IRLS...')
                 start_time = time.time()
 
-                if COVAR_FILE:
+                if covar_mat is not None:
                     cis_coeff_dic = ctar.parallel.multiprocess_poisson_irls_multivar(
                         links_dict=cis_links_dic,
                         atac_sparse=atac_sparse,
@@ -766,7 +773,7 @@ def main(args):
                 print('# Starting control links IRLS...')
                 start_time = time.time()
 
-                if COVAR_FILE:
+                if covar_mat is not None:
                     ctrl_coeff_dic = ctar.parallel.multiprocess_poisson_irls_multivar(
                         links_dict=ctrl_links_dic,
                         atac_sparse=atac_sparse,
@@ -1018,7 +1025,7 @@ def main(args):
                 print('# Starting cis-links IRLS...')
                 start_time = time.time()
 
-                if COVAR_FILE:
+                if covar_mat is not None:
                     cis_coeff_dic = ctar.parallel.multiprocess_poisson_irls_multivar(
                         links_dict=cis_links_dic,
                         atac_sparse=atac_sparse,
@@ -1107,7 +1114,7 @@ def main(args):
                 print('# Starting cis-links IRLS...')
                 start_time = time.time()
 
-                if COVAR_FILE:
+                if covar_mat is not None:
                     cis_coeff_dic = ctar.parallel.multiprocess_poisson_irls_multivar(
                         links_dict=cis_links_dic,
                         atac_sparse=atac_sparse,
@@ -1263,7 +1270,7 @@ def main(args):
                 print('# Starting control links IRLS...')
                 start_time = time.time()
 
-                if COVAR_FILE:
+                if covar_mat is not None:
                     ctrl_coeff_dic = ctar.parallel.multiprocess_poisson_irls_multivar(
                         links_dict=ctrl_links_dic,
                         atac_sparse=atac_sparse,
@@ -1352,7 +1359,7 @@ def main(args):
                 print('# Starting control links IRLS...')
                 start_time = time.time()
 
-                if COVAR_FILE:
+                if covar_mat is not None:
                     ctrl_coeff_dic = ctar.parallel.multiprocess_poisson_irls_multivar(
                         links_dict=ctrl_links_dic,
                         atac_sparse=atac_sparse,
