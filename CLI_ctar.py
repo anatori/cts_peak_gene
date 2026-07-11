@@ -327,10 +327,39 @@ def main(args):
             cis_coeff_file = os.path.join(RESULTS_PATH, 'cis_coeff.npy' if USE_INF_MODE else 'cis_coeff_dic.pkl')
 
         if USE_INF_MODE:
-            if not os.path.exists(cis_coeff_file):
-                raise FileNotFoundError(f"{os.path.basename(cis_coeff_file)} not found at {cis_coeff_file}")
-            cis_coeff = np.load(cis_coeff_file)
-            print(f"# Loaded {os.path.basename(cis_coeff_file)} with shape {cis_coeff.shape}")
+            cis_prefix = 'cis_corr_' if FLAG_CORR else 'cis_coeff_'
+            cis_chunk_files = [
+                f for f in os.listdir(RESULTS_PATH)
+                if f.startswith(cis_prefix) and f.endswith('.npy')
+            ]
+            if cis_chunk_files:
+                print(f"# Found {len(cis_chunk_files)} cis coefficient chunks — consolidating...")
+                cis_coeff, cis_coeff_ranges = ctar.data_loader.consolidate_ranged_npy(
+                    RESULTS_PATH, startswith=cis_prefix, allow_pickle=False
+                )
+                cis_id_chunks = [
+                    f for f in os.listdir(RESULTS_PATH)
+                    if f.startswith('cis_link_ids_') and f.endswith('.npy')
+                ]
+                if cis_id_chunks:
+                    cis_ids_consolidated, _ = ctar.data_loader.consolidate_ranged_npy(
+                        RESULTS_PATH, startswith='cis_link_ids_', allow_pickle=True
+                    )
+                    np.save(os.path.join(RESULTS_PATH, 'cis_link_ids.npy'), cis_ids_consolidated, allow_pickle=True)
+                    for fname in os.listdir(RESULTS_PATH):
+                        if fname.startswith('cis_link_ids_') and fname.endswith('.npy'):
+                            os.remove(os.path.join(RESULTS_PATH, fname))
+                    print("# Saved cis_link_ids.npy and deleted chunks")
+                single_fname = 'cis_corr.npy' if FLAG_CORR else 'cis_coeff.npy'
+                np.save(os.path.join(RESULTS_PATH, single_fname), cis_coeff)
+                for fname in cis_chunk_files:
+                    os.remove(os.path.join(RESULTS_PATH, fname))
+                print(f"# Saved {single_fname} and deleted {len(cis_chunk_files)} chunk(s)")
+            else:
+                if not os.path.exists(cis_coeff_file):
+                    raise FileNotFoundError(f"{os.path.basename(cis_coeff_file)} not found at {cis_coeff_file}")
+                cis_coeff = np.load(cis_coeff_file)
+            print(f"# Loaded cis coefficients with shape {cis_coeff.shape}")
         else:
             if not os.path.exists(cis_coeff_file):
                 raise FileNotFoundError(f"{os.path.basename(cis_coeff_file)} not found at {cis_coeff_file}")
@@ -985,6 +1014,13 @@ def main(args):
 
             # For inf.inf mode, compute all cis links
             cis_links_df = ctar.data_loader.attach_link_indices(cis_links_df, adata_atac, adata_rna)
+
+            if ARRAY_IDX is not None:
+                start_idx = ARRAY_IDX * BATCH_SIZE
+                end_idx = min((ARRAY_IDX + 1) * BATCH_SIZE, len(cis_links_df))
+                cis_links_df = cis_links_df.iloc[start_idx:end_idx]
+                file_suffix = f'_{start_idx}_{end_idx}'
+
             cis_links_array = cis_links_df[['atac_idx', 'rna_idx']].to_numpy()
             link_ids = cis_links_df.index.to_numpy()
 
@@ -1161,7 +1197,8 @@ def main(args):
             else:
                 np.save(f'{results_folder}/cis_coeff{file_suffix}.npy', cis_coeff)
             np.save(f'{results_folder}/cis_link_ids{file_suffix}.npy', link_ids, allow_pickle=True)
-            cis_links_df.to_csv(f'{results_folder}/cis_links_df.csv')
+            if ARRAY_IDX is None:
+                cis_links_df.to_csv(f'{results_folder}/cis_links_df.csv')
         else:
             if FLAG_CORR:
                 with open(f'{results_folder}/cis_corr_dic{file_suffix}.pkl', 'wb') as f:
