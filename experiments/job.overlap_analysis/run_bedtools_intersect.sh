@@ -31,6 +31,11 @@ if [[ "${base}" == *eqtl* || "${base}" == *gwas* || "${base}" == *ukbb* || "${ba
     -a "${ANALYSIS_BED}" \
     -b "${UNION_BED}" \
     > "${OVERLAP_BED}"
+elif [[ "${base}" == *hichip* ]]; then
+  bedtools intersect -wo -F 0.5 \
+    -a "${ANALYSIS_BED}" \
+    -b "${UNION_BED}" \
+    > "${OVERLAP_BED}"
 else
   bedtools intersect -wo -f 0.5 -r \
     -a "${ANALYSIS_BED}" \
