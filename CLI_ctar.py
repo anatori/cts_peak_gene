@@ -361,11 +361,35 @@ def main(args):
                 cis_coeff = np.load(cis_coeff_file)
             print(f"# Loaded cis coefficients with shape {cis_coeff.shape}")
         else:
-            if not os.path.exists(cis_coeff_file):
-                raise FileNotFoundError(f"{os.path.basename(cis_coeff_file)} not found at {cis_coeff_file}")
-            with open(cis_coeff_file, 'rb') as f:
-                cis_coeff_dic = pickle.load(f)
-            print(f"# Loaded {os.path.basename(cis_coeff_file)} with {len(cis_coeff_dic)} bins")
+            cis_prefix = 'cis_corr_dic_' if FLAG_CORR else 'cis_coeff_dic_'
+            cis_coeff_chunks = [
+                f for f in os.listdir(RESULTS_PATH)
+                if f.startswith(cis_prefix) and f.endswith('.pkl')
+            ]
+            if cis_coeff_chunks:
+                print(f"# Found {len(cis_coeff_chunks)} cis coefficient dict chunks — consolidating...")
+                cis_coeff_dic = ctar.data_loader.consolidate_null_dic(
+                    path=RESULTS_PATH, startswith=cis_prefix, remove_empty=True, print_missing=False
+                )
+                cis_idx_dic = {}
+                for chunk_fname in sorted(f for f in os.listdir(RESULTS_PATH) if f.startswith('cis_idx_dic_') and f.endswith('.pkl')):
+                    with open(os.path.join(RESULTS_PATH, chunk_fname), 'rb') as f:
+                        cis_idx_dic.update(pickle.load(f))
+                single_fname = 'cis_corr_dic.pkl' if FLAG_CORR else 'cis_coeff_dic.pkl'
+                with open(os.path.join(RESULTS_PATH, single_fname), 'wb') as f:
+                    pickle.dump(cis_coeff_dic, f)
+                with open(os.path.join(RESULTS_PATH, 'cis_idx_dic.pkl'), 'wb') as f:
+                    pickle.dump(cis_idx_dic, f)
+                for chunk_fname in os.listdir(RESULTS_PATH):
+                    if (chunk_fname.startswith(cis_prefix) or chunk_fname.startswith('cis_idx_dic_') or chunk_fname.startswith('cis_links_dic_')) and chunk_fname.endswith('.pkl'):
+                        os.remove(os.path.join(RESULTS_PATH, chunk_fname))
+                print(f"# Saved {single_fname}, cis_idx_dic.pkl and deleted chunks")
+            else:
+                if not os.path.exists(cis_coeff_file):
+                    raise FileNotFoundError(f"{os.path.basename(cis_coeff_file)} not found at {cis_coeff_file}")
+                with open(cis_coeff_file, 'rb') as f:
+                    cis_coeff_dic = pickle.load(f)
+            print(f"# Loaded cis coefficients with {len(cis_coeff_dic)} bins")
 
             cis_idx_file = os.path.join(RESULTS_PATH, 'cis_idx_dic.pkl')
             if not os.path.exists(cis_idx_file):
@@ -932,6 +956,8 @@ def main(args):
             print(f'# Saving files to {results_folder}')
             os.makedirs(results_folder, exist_ok=True)
 
+            with open(f'{results_folder}/cis_links_dic.pkl', 'wb') as f:
+                pickle.dump(cis_links_dic, f)
             with open(f'{results_folder}/cis_idx_dic.pkl', 'wb') as f:
                 pickle.dump(cis_idx_dic, f)
             with open(f'{results_folder}/ctrl_links_dic.pkl', 'wb') as f:
@@ -1210,7 +1236,8 @@ def main(args):
                 pickle.dump(cis_idx_dic, f)
             with open(f'{results_folder}/cis_links_dic{file_suffix}.pkl', 'wb') as f:
                 pickle.dump(cis_links_dic, f)
-            cis_links_df.to_csv(f'{results_folder}/cis_links_df.csv')
+            if ARRAY_IDX is None:
+                cis_links_df.to_csv(f'{results_folder}/cis_links_df.csv')
 
         if not RESULTS_PATH:
             cis_links_df.to_csv(f'{results_folder}/cis_links_df.csv')
