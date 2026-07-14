@@ -9,7 +9,7 @@ TARGET_PATH=/ocean/projects/bio240051p/aprieto/multiome/results/ctar/final_eval/
 GENOME_FILE=/ocean/projects/bio240051p/aprieto/bedfiles/ref/GRCh38.p14.genome.fixed.fa
 BIN_TYPE='mean_var'
 PYBEDTOOLS_PATH=/opt/packages/bedtools/2.30.0
-BATCH_SIZE=100
+BATCH_SIZE=10
 RESULTS_PATH=/ocean/projects/bio240051p/aprieto/multiome/results/ctar/final_eval/${MULTIOME_DATASET}/${MULTIOME_DATASET}_unfiltered_len_donor_${BIN_CONFIG}
 PARTITION="RM-shared"
 MAX_CONCURRENT=200
@@ -22,7 +22,7 @@ DONOR_COL='DonorID'
 N_LENGTH_BINS=4
 FDR_BIN_TYPE='dist_mean_var'
 N_DIST_BINS=4
-USE_CIS_ARRAY=false
+USE_CIS_ARRAY=true
 
 IFS='.' read -r b1 b2 b3 b4 rest <<< "$BIN_CONFIG"
 if [[ "$b3" == "inf" && "$b4" == "inf" ]]; then
@@ -37,23 +37,23 @@ else
 fi
 
 
-###########################################################################################
-######                                  Generate Links                               ######
-###########################################################################################
+# ###########################################################################################
+# ######                                  Generate Links                               ######
+# ###########################################################################################
 
-if [ "$USE_CIS_ARRAY" = true ]; then
-    echo "Submitting $BIN_CONFIG generate_links job..."
-    GEN_LINKS_JOB=$(sbatch --parsable -p $PARTITION -t 1-00:00:00 \
-      -A bio240051p \
-      --ntasks-per-node=32 \
-      -o /ocean/projects/bio240051p/aprieto/logs/links_%j.err -J "links_$BIN_CONFIG" \
-      --wrap "source ~/.bashrc && conda activate ctar && python /ocean/projects/bio240051p/aprieto/cts_peak_gene/CLI_ctar.py \
-              --job generate_links --multiome_file $MULTIOME_FILE --batch_size $BATCH_SIZE \
-              --binning_config $BIN_CONFIG --binning_type $BIN_TYPE --genome_file $GENOME_FILE --target_path $TARGET_PATH \
-              --pybedtools_path $PYBEDTOOLS_PATH --results_path $RESULTS_PATH --random_seed $RANDOM_SEED \
-              --n_length_bins $N_LENGTH_BINS")
-    echo "Generate links job ID: $GEN_LINKS_JOB"
-fi
+# if [ "$USE_CIS_ARRAY" = true ]; then
+#     echo "Submitting $BIN_CONFIG generate_links job..."
+#     GEN_LINKS_JOB=$(sbatch --parsable -p $PARTITION -t 1-00:00:00 \
+#       -A bio240051p \
+#       --ntasks-per-node=32 \
+#       -o /ocean/projects/bio240051p/aprieto/logs/links_%j.err -J "links_$BIN_CONFIG" \
+#       --wrap "source ~/.bashrc && conda activate ctar && python /ocean/projects/bio240051p/aprieto/cts_peak_gene/CLI_ctar.py \
+#               --job generate_links --multiome_file $MULTIOME_FILE --batch_size $BATCH_SIZE \
+#               --binning_config $BIN_CONFIG --binning_type $BIN_TYPE --genome_file $GENOME_FILE --target_path $TARGET_PATH \
+#               --pybedtools_path $PYBEDTOOLS_PATH --results_path $RESULTS_PATH --random_seed $RANDOM_SEED \
+#               --n_length_bins $N_LENGTH_BINS")
+#     echo "Generate links job ID: $GEN_LINKS_JOB"
+# fi
 
 ###########################################################################################
 ######                            Compute cis coefficients                           ######
@@ -62,7 +62,6 @@ fi
 if [ "$USE_CIS_ARRAY" = true ]; then
     echo "Submitting $BIN_CONFIG compute_cis_only array job with $TOTAL_NUM_BATCHES tasks..."
     CIS_JOB=$(sbatch --parsable -p $PARTITION -t 3-00:00:00 \
-        --dependency=afterok:${GEN_LINKS_JOB} \
         -A bio240051p \
         $ARRAY_OPT \
         --ntasks-per-node=$N_CORES \
@@ -188,7 +187,7 @@ if [ "$USE_INF_MODE" = true ]; then
     
 else
     echo "Submitting $BIN_CONFIG compute_ctrl_only job with $TOTAL_NUM_BATCHES batches..."
-    CTRL_JOB=$(sbatch --parsable -p $PARTITION -t 3-00:00:00 --array=0 \
+    CTRL_JOB=$(sbatch --parsable -p $PARTITION -t 3-00:00:00 $ARRAY_OPT \
       -A bio240051p \
       --ntasks-per-node=$N_CORES \
       -o /ocean/projects/bio240051p/aprieto/logs/ctrl_%A_%a.err -J "ctrl_$BIN_CONFIG" \
