@@ -13,6 +13,24 @@ from sklearn import metrics
 ############# Core stat functions ############
 ##############################################
 
+
+def lambda_gc(p):
+    """Genomic inflation factor from p-values on the chi-square scale.
+    Assumes p~U(0,1).
+    """
+    CHI2_MEDIAN_NULL = sp.stats.chi2.ppf(0.5, df=1)
+    p = np.asarray(p, dtype=float)
+    p = p[np.isfinite(p)]
+    p = p[(p >= 0) & (p <= 1)]
+    if p.size == 0:
+        return np.nan, 0
+    # clip (p=0 => chi2=inf)
+    p = np.clip(p, np.finfo(float).tiny, 1.0)
+    chi2_obs = sp.stats.chi2.ppf(1 - p, df=1)
+    lam = np.median(chi2_obs) / CHI2_MEDIAN_NULL
+    return lam, p.size
+
+
 def odds_ratio(y_bool: np.ndarray,
                label_arr: np.ndarray,
                return_table: bool = False,
