@@ -3,7 +3,7 @@ file_path,score_col,fdr_col,method_name
 /projects/zhanglab/users/ana/multiome/results/signac/unfiltered/signac_bmmc_links.csv,pvalue,,signac
 /projects/zhanglab/users/ana/multiome/results/signac/unfiltered/signac_bmmc_links.csv,pvalue_os,,signac_os
 /projects/zhanglab/users/ana/multiome/results/scmultimap/unfiltered/scmultimap_bmmc_cis.csv,pval,padj,scmm
-/projects/zhanglab/users/ana/multiome/results/ctar/final_eval/bmmc/bmmc_unfiltered_len_donor_4.4.4.4.10000/cis_links_df_with_fixed_dist.csv,4.4.4.4.10000_mcpval,q_value_fixed_dist_rmean_rvar,ctar
+/projects/zhanglab/users/ana/multiome/results/ctar/corr_eval/bmmc/bmmc_unfiltered_len_donor_4.4.4.4.10000/cis_links_df_with_fixed_dist.csv,4.4.4.4.10000_mcpval,q_value_fixed_dist_rmean_rvar,ctar
 /projects/zhanglab/users/ana/multiome/results/ctar/final_eval/bmmc/bmmc_unfiltered_len_donor_4.4.4.4.10000/cis_links_df_with_fixed_dist.csv,4.4.4.4.10000_mcpval,q_value_fixed_dist_rmean_rvar,ctar_pr
 /projects/zhanglab/users/ana/multiome/results/ctar/final_eval/bmmc/bmmc_unfiltered_len_4.4.4.4.10000/cis_links_df_metacell.csv,4.4.4.4.10000_meta_mcpval,q_value_fixed_dist_rmean_rvar,ctar_meta
 /projects/zhanglab/users/ana/multiome/results/scmultimap/scmm_ctrl/unfiltered_len/res_df/scmultimap_bmmc.csv,scmm_mcpval,scmm_fixed_dist_rmean_rvar_q_value,ctar_scmm

@@ -3,7 +3,7 @@ file_path,dataset_name,method_name,pval_col,fdr_col,stat_col
 /projects/zhanglab/users/ana/multiome/results/signac/unfiltered/signac_pbmc_links.csv,pbmc,signac,pvalue,,score
 /projects/zhanglab/users/ana/multiome/results/signac/unfiltered/signac_pbmc_links.csv,pbmc,signac_os,pvalue_os,,score
 /projects/zhanglab/users/ana/multiome/results/scmultimap/unfiltered/scmultimap_pbmc_cis.csv,pbmc,scmm,pval,padj,test_stat
-/projects/zhanglab/users/ana/multiome/results/ctar/final_eval/pbmc/pbmc_unfiltered_len_4.4.4.4.10000/cis_links_df_with_fixed_dist.csv,pbmc,ctar,4.4.4.4.10000_mcpval,q_value_fixed_dist_rmean_rvar,corr
+/projects/zhanglab/users/ana/multiome/results/ctar/corr_eval/pbmc/pbmc_unfiltered_len_4.4.4.4.10000/cis_links_df_with_fixed_dist.csv,pbmc,ctar,4.4.4.4.10000_mcpval,q_value_fixed_dist_rmean_rvar,corr
 /projects/zhanglab/users/ana/multiome/results/ctar/final_eval/pbmc/pbmc_unfiltered_len_4.4.4.4.10000/cis_links_df_with_fixed_dist.csv,pbmc,ctar_pr,4.4.4.4.10000_mcpval,q_value_fixed_dist_rmean_rvar,poissonb
 /projects/zhanglab/users/ana/multiome/results/ctar/corr_eval/pbmc/pbmc_unfiltered_len_4.4.4.4.10000/cis_links_df_with_fixed_dist.csv,pbmc,ctar_bh,4.4.4.4.10000_mcpval,,corr
 /projects/zhanglab/users/ana/multiome/results/scmultimap/scmm_ctrl/unfiltered_len/res_df/scmultimap_pbmc.csv,pbmc,ctar_scmm,scmm_mcpval,scmm_fixed_dist_rmean_rvar_q_value,test_stat
@@ -13,7 +13,7 @@ file_path,dataset_name,method_name,pval_col,fdr_col,stat_col
 /projects/zhanglab/users/ana/multiome/results/signac/unfiltered/signac_bmmc_links.csv,bmmc,signac,pvalue,,score
 /projects/zhanglab/users/ana/multiome/results/signac/unfiltered/signac_bmmc_links.csv,bmmc,signac_os,pvalue_os,,score
 /projects/zhanglab/users/ana/multiome/results/scmultimap/unfiltered/scmultimap_bmmc_cis.csv,bmmc,scmm,pval,padj,test_stat
-/projects/zhanglab/users/ana/multiome/results/ctar/final_eval/bmmc/bmmc_unfiltered_len_donor_4.4.4.4.10000/cis_links_df_with_fixed_dist.csv,bmmc,ctar,4.4.4.4.10000_mcpval,q_value_fixed_dist_rmean_rvar,corr
+/projects/zhanglab/users/ana/multiome/results/ctar/corr_eval/bmmc/bmmc_unfiltered_len_donor_4.4.4.4.10000/cis_links_df_with_fixed_dist.csv,bmmc,ctar,4.4.4.4.10000_mcpval,q_value_fixed_dist_rmean_rvar,corr
 /projects/zhanglab/users/ana/multiome/results/ctar/final_eval/bmmc/bmmc_unfiltered_len_donor_4.4.4.4.10000/cis_links_df_with_fixed_dist.csv,bmmc,ctar_pr,4.4.4.4.10000_mcpval,q_value_fixed_dist_rmean_rvar,poissonb
 /projects/zhanglab/users/ana/multiome/results/ctar/corr_eval/bmmc/bmmc_unfiltered_len_donor_4.4.4.4.10000/cis_links_df_with_fixed_dist.csv,bmmc,ctar_bh,4.4.4.4.10000_mcpval,,corr
 /projects/zhanglab/users/ana/multiome/results/scmultimap/scmm_ctrl/unfiltered_len/res_df/scmultimap_bmmc.csv,bmmc,ctar_scmm,scmm_mcpval,scmm_fixed_dist_rmean_rvar_q_value,test_stat
@@ -23,7 +23,7 @@ file_path,dataset_name,method_name,pval_col,fdr_col,stat_col
 /projects/zhanglab/users/ana/multiome/results/signac/unfiltered/signac_shareseq_links.csv,shareseq,signac,pvalue,,score
 /projects/zhanglab/users/ana/multiome/results/signac/unfiltered/signac_shareseq_links.csv,shareseq,signac_os,pvalue_os,,score
 /projects/zhanglab/users/ana/multiome/results/scmultimap/unfiltered/scmultimap_shareseq_cis.csv,shareseq,scmm,pval,padj,test_stat
-/projects/zhanglab/users/ana/multiome/results/ctar/final_eval/shareseq/shareseq_unfiltered_len_4.4.4.4.10000/cis_links_df_with_fixed_dist.csv,shareseq,ctar,4.4.4.4.10000_mcpval,q_value_fixed_dist_rmean_rvar,corr
+/projects/zhanglab/users/ana/multiome/results/ctar/corr_eval/shareseq/shareseq_unfiltered_len_4.4.4.4.10000/cis_links_df_with_fixed_dist.csv,shareseq,ctar,4.4.4.4.10000_mcpval,q_value_fixed_dist_rmean_rvar,corr
 /projects/zhanglab/users/ana/multiome/results/ctar/final_eval/shareseq/shareseq_unfiltered_len_4.4.4.4.10000/cis_links_df_with_fixed_dist.csv,shareseq,ctar_pr,4.4.4.4.10000_mcpval,q_value_fixed_dist_rmean_rvar,poissonb
 /projects/zhanglab/users/ana/multiome/results/ctar/corr_eval/shareseq/shareseq_unfiltered_len_4.4.4.4.10000/cis_links_df_with_fixed_dist.csv,shareseq,ctar_bh,4.4.4.4.10000_mcpval,,corr
 /projects/zhanglab/users/ana/multiome/results/scmultimap/scmm_ctrl/unfiltered_len/res_df/scmultimap_shareseq.csv,shareseq,ctar_scmm,scmm_mcpval,scmm_fixed_dist_rmean_rvar_q_value,test_stat
@@ -33,7 +33,7 @@ file_path,dataset_name,method_name,pval_col,fdr_col,stat_col
 /projects/zhanglab/users/ana/multiome/results/signac/unfiltered/signac_neat_links.csv,neat,signac,pvalue,,score
 /projects/zhanglab/users/ana/multiome/results/signac/unfiltered/signac_neat_links.csv,neat,signac_os,pvalue_os,,score
 /projects/zhanglab/users/ana/multiome/results/scmultimap/unfiltered/scmultimap_neat_cis.csv,neat,scmm,pval,padj,test_stat
-/projects/zhanglab/users/ana/multiome/results/ctar/final_eval/neat/neat_unfiltered_len_4.4.4.4.10000/cis_links_df_with_fixed_dist.csv,neat,ctar,4.4.4.4.10000_mcpval,q_value_fixed_dist_rmean_rvar,corr
+/projects/zhanglab/users/ana/multiome/results/ctar/corr_eval/neat/neat_unfiltered_len_4.4.4.4.10000/cis_links_df_with_fixed_dist.csv,neat,ctar,4.4.4.4.10000_mcpval,q_value_fixed_dist_rmean_rvar,corr
 /projects/zhanglab/users/ana/multiome/results/ctar/final_eval/neat/neat_unfiltered_len_4.4.4.4.10000/cis_links_df_with_fixed_dist.csv,neat,ctar_pr,4.4.4.4.10000_mcpval,q_value_fixed_dist_rmean_rvar,poissonb
 /projects/zhanglab/users/ana/multiome/results/ctar/corr_eval/neat/neat_unfiltered_len_4.4.4.4.10000/cis_links_df_with_fixed_dist.csv,neat,ctar_bh,4.4.4.4.10000_mcpval,,corr
 /projects/zhanglab/users/ana/multiome/results/scmultimap/scmm_ctrl/unfiltered_len/res_df/scmultimap_neat.csv,neat,ctar_scmm,scmm_mcpval,scmm_fixed_dist_rmean_rvar_q_value,test_stat
@@ -43,7 +43,7 @@ file_path,dataset_name,method_name,pval_col,fdr_col,stat_col
 /projects/zhanglab/users/ana/multiome/results/signac/unfiltered/signac_brain_links.csv,brain,signac,pvalue,,score
 /projects/zhanglab/users/ana/multiome/results/signac/unfiltered/signac_brain_links.csv,brain,signac_os,pvalue_os,,score
 /projects/zhanglab/users/ana/multiome/results/scmultimap/unfiltered/scmultimap_brain_cis.csv,brain,scmm,pval,padj,test_stat
-/projects/zhanglab/users/ana/multiome/results/ctar/final_eval/brain/brain_unfiltered_len_4.4.4.4.10000/cis_links_df_with_fixed_dist.csv,brain,ctar,4.4.4.4.10000_mcpval,q_value_fixed_dist_rmean_rvar,corr
+/projects/zhanglab/users/ana/multiome/results/ctar/corr_eval/brain/brain_unfiltered_len_4.4.4.4.10000/cis_links_df_with_fixed_dist.csv,brain,ctar,4.4.4.4.10000_mcpval,q_value_fixed_dist_rmean_rvar,corr
 /projects/zhanglab/users/ana/multiome/results/ctar/final_eval/brain/brain_unfiltered_len_4.4.4.4.10000/cis_links_df_with_fixed_dist.csv,brain,ctar_pr,4.4.4.4.10000_mcpval,q_value_fixed_dist_rmean_rvar,poissonb
 /projects/zhanglab/users/ana/multiome/results/ctar/corr_eval/brain/brain_unfiltered_len_4.4.4.4.10000/cis_links_df_with_fixed_dist.csv,brain,ctar_bh,4.4.4.4.10000_mcpval,,corr
 /projects/zhanglab/users/ana/multiome/results/scmultimap/scmm_ctrl/unfiltered_len/res_df/scmultimap_brain.csv,brain,ctar_scmm,scmm_mcpval,scmm_fixed_dist_rmean_rvar_q_value,test_stat
