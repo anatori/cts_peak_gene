@@ -15,6 +15,10 @@ from matplotlib.container import BarContainer
 import math
 from matplotlib.ticker import ScalarFormatter
 import seaborn as sns
+import re
+import matplotlib.patches as mpatches
+from scipy.ndimage import gaussian_filter1d
+
 
 
 # custom func from https://stackoverflow.com/questions/7404116/defining-the-midpoint-of-a-colormap-in-matplotlib
@@ -1450,3 +1454,678 @@ def plot_residual_distributions(ctrl_df, cov, xlabel='Residual null correlation'
     plt.suptitle(title, fontsize=12)
     plt.tight_layout()
     plt.show()
+
+
+def _parse_peak_coords(var, chrom_col=None, start_col=None, end_col=None):
+    """Return chrom, start, end arrays for peaks in an AnnData .var table.
+
+    If chrom_col/start_col/end_col are given, reads those columns directly.
+    Otherwise tries to parse coordinates from the var index, e.g.
+    'chr1:1000-2000' or 'chr1-1000-2000'.
+    """
+    if chrom_col and start_col and end_col:
+        return (
+            var[chrom_col].values,
+            var[start_col].values.astype(int),
+            var[end_col].values.astype(int),
+        )
+    pattern = re.compile(r'(chr[\w]+)[:\-](\d+)[:\-](\d+)')
+    chroms, starts, ends = [], [], []
+    for name in var.index:
+        m = pattern.match(str(name))
+        if not m:
+            raise ValueError(
+                f"Could not parse peak coordinates from '{name}'; "
+                "pass chrom_col/start_col/end_col explicitly."
+            )
+        chroms.append(m.group(1))
+        starts.append(int(m.group(2)))
+        ends.append(int(m.group(3)))
+    return np.array(chroms), np.array(starts), np.array(ends)
+
+
+def _rna_pseudobulk(mdata, celltype_col, celltype_order, gene_name, rna_mod='rna', agg='mean'):
+    """Pseudobulk a gene's RNA expression per celltype from mdata[rna_mod]."""
+    rna_adata = mdata[rna_mod]
+    if gene_name not in rna_adata.var_names:
+        raise KeyError(f"'{gene_name}' not found in mdata['{rna_mod}'].var_names")
+    gene_idx = rna_adata.var_names.get_loc(gene_name)
+    X = rna_adata.X
+    values = {}
+    for ct in celltype_order:
+        mask = (mdata[rna_mod].obs[celltype_col] == ct).values
+        sub = X[mask][:, gene_idx]
+        sub = np.asarray(sub.todense()).ravel() if hasattr(sub, 'todense') else np.asarray(sub).ravel()
+        if len(sub) == 0:
+            values[ct] = 0.0
+        elif agg == 'mean':
+            values[ct] = float(sub.mean())
+        else:
+            values[ct] = float(sub.sum())
+    return values
+
+
+def _smooth_track(win_starts, win_ends, vals, win_start, win_end, n_points=2000, smooth_sigma_frac=0.004):
+    """Rasterize discrete peak heights onto a fine grid and Gaussian-smooth them
+    into a continuous coverage-style curve (genome-browser look), rather than
+    plotting each peak as a flat-topped bar.
+    """
+    grid = np.linspace(win_start, win_end, n_points)
+    y = np.zeros(n_points)
+    for s, e, v in zip(win_starts, win_ends, vals):
+        mask = (grid >= s) & (grid <= e)
+        if mask.any():
+            y[mask] = np.maximum(y[mask], v)
+    sigma_points = max(smooth_sigma_frac * n_points, 1)
+    y_smooth = gaussian_filter1d(y, sigma=sigma_points)
+    return grid, y_smooth
+
+
+
+def plot_ctar_locus(
+    mdata,
+    celltype_col,
+    gene_name,
+    gene_chrom, gene_start, gene_end, gene_strand,
+    peak_chrom, peak_start, peak_end,
+    snp_chrom, snp_pos, snp_id,
+    qvals,
+    atac_mod='atac',
+    chrom_col=None, start_col=None, end_col=None,
+    celltype_order=None,
+    celltype_colors=None,
+    agg='sum',
+    window_pad=5000,
+    smooth=True,
+    smooth_sigma_frac=0.004,
+    rna_mod=None,
+    rna_agg=None,
+    pip_values=None,
+    sig_style='lollipop',
+    sig_threshold=0.05,
+    method_colors=None,
+    figsize=(12, 5.5),
+    highlight_color='#D1495B',
+    savepath=None,
+):
+    adata = mdata[atac_mod]
+    chroms, starts, ends = _parse_peak_coords(adata.var, chrom_col, start_col, end_col)
+ 
+    win_start = min(peak_start, gene_start, snp_pos) - window_pad
+    win_end = max(peak_end, gene_end, snp_pos) + window_pad
+    chrom = peak_chrom
+ 
+    in_window = (chroms == chrom) & (ends >= win_start) & (starts <= win_end)
+    win_starts, win_ends = starts[in_window], ends[in_window]
+    peak_idx = np.where(in_window)[0]
+    if len(peak_idx) == 0:
+        raise ValueError("No peaks found in the requested window — check chrom naming/coords.")
+ 
+    if celltype_order is None:
+        celltype_order = sorted(mdata.obs[celltype_col].dropna().unique())
+    n_ct = len(celltype_order)
+ 
+    if celltype_colors is None:
+        light = plt.get_cmap('tab20').colors[1::2]
+        celltype_colors = {ct: light[i % len(light)] for i, ct in enumerate(celltype_order)}
+ 
+    X = adata.X
+    pseudobulk = {}
+    for ct in celltype_order:
+        mask = (mdata[atac_mod].obs[celltype_col] == ct).values
+        sub = X[mask][:, peak_idx]
+        vals = np.asarray(sub.sum(axis=0)).ravel()
+        if agg == 'mean':
+            n_cells = max(mask.sum(), 1)
+            vals = vals / n_cells
+        pseudobulk[ct] = vals
+ 
+    global_max = max((v.max() if len(v) else 0) for v in pseudobulk.values())
+    global_max = global_max if global_max > 0 else 1
+ 
+    rna_values = None
+    if rna_mod is not None and rna_mod in mdata.mod:
+        rna_adata = mdata[rna_mod]
+        if gene_name in rna_adata.var_names:
+            rna_values = _rna_pseudobulk(
+                mdata, celltype_col, celltype_order, gene_name,
+                rna_mod=rna_mod, agg=rna_agg or agg,
+            )
+        else:
+            print(f"Note: '{gene_name}' not found in mdata['{rna_mod}'].var_names — RNA panel skipped.")
+ 
+    show_rna = rna_values is not None
+ 
+    fig = plt.figure(figsize=figsize)
+ 
+    # significance column made narrower (was 1.1 -> 0.7)
+    if show_rna:
+        outer_width_ratios = [3.7, 0.7]
+    else:
+        outer_width_ratios = [3, 0.7]
+ 
+    HSPACE = 0.05
+    outer_gs = fig.add_gridspec(
+        n_ct + 2, 2,
+        width_ratios=outer_width_ratios,
+        height_ratios=[1] * n_ct + [0.55, 0.9],
+        hspace=HSPACE, wspace=0.12,
+    )
+    sig_col = 1
+ 
+    if show_rna:
+        # IMPORTANT: pass the same hspace as outer_gs, otherwise this nested
+        # subgridspec uses matplotlib's default hspace and its rows drift out
+        # of vertical sync with outer_gs -> ax_sig's bottom no longer lines up
+        # with the last track's bottom.
+        main_gs = outer_gs[:n_ct + 2, 0].subgridspec(
+            n_ct + 2, 2, width_ratios=[3, 0.7],
+            height_ratios=[1] * n_ct + [0.55, 0.9],  # must match outer_gs's row heights
+            wspace=0.03, hspace=HSPACE,
+        )
+        track_col, rna_col = 0, 1
+    else:
+        main_gs = outer_gs
+        track_col, rna_col = 0, None
+ 
+    track_axes = []
+    for i, ct in enumerate(celltype_order):
+        ax = fig.add_subplot(main_gs[i, track_col])
+        track_axes.append(ax)
+        ax.axhline(0, color='black', lw=0.8, zorder=1)
+        vals = pseudobulk[ct] / global_max
+        color = celltype_colors[ct]
+ 
+        if smooth:
+            grid, y_smooth = _smooth_track(win_starts, win_ends, vals, win_start, win_end,
+                                            smooth_sigma_frac=smooth_sigma_frac)
+            ax.fill_between(grid, 0, y_smooth, color=color, alpha=0.9, lw=0, zorder=2)
+            ax.plot(grid, y_smooth, color=color, lw=1.2, zorder=3)
+        else:
+            min_w = (win_end - win_start) * 0.004
+            for s, e, hh in zip(win_starts, win_ends, vals):
+                width = max(e - s, min_w)
+                center = (s + e) / 2
+                ax.bar(center, hh, width=width, bottom=0, color=color, edgecolor='none', zorder=2)
+ 
+        ax.set_xlim(win_start, win_end)
+        ax.set_ylim(0, 1.08)
+        ax.set_yticks([])
+        ax.set_xticks([])
+        for spine in ax.spines.values():
+            spine.set_visible(False)
+        if pip_values is not None and ct in pip_values:
+            ax.text(-0.012, 0.66, ct, transform=ax.transAxes, ha='right', va='center', fontsize=9)
+            ax.text(-0.012, 0.32, f'PIP: {pip_values[ct]:.2f}', transform=ax.transAxes,
+                    ha='right', va='center', fontsize=7, color='#666666')
+        else:
+            ax.text(-0.012, 0.5, ct, transform=ax.transAxes, ha='right', va='center', fontsize=9)
+ 
+    track_axes[0].set_title('Cell type ATAC tracks', fontsize=10, loc='left')
+ 
+    ax_ann = fig.add_subplot(main_gs[n_ct:n_ct + 2, track_col])
+    ax_ann.set_xlim(win_start, win_end)
+    ax_ann.set_ylim(0, 1)
+    ax_ann.axis('off')
+ 
+    gene_rect = mpatches.Rectangle(
+        (gene_start, 0.35), gene_end - gene_start, 0.3,
+        facecolor='grey', alpha=0.6,
+    )
+    ax_ann.add_patch(gene_rect)
+    strand_arrow = '\u2192' if gene_strand == '+' else '\u2190'
+    ax_ann.text((gene_start + gene_end) / 2, 0.85, f'{gene_name} {strand_arrow}',
+                ha='center', fontsize=9)
+ 
+    ax_ann.plot([snp_pos, snp_pos], [0.35, 0.65], color=highlight_color, lw=2.5)
+    ax_ann.text(snp_pos, 0.85, snp_id, ha='center', fontsize=8, color=highlight_color)
+ 
+    ax_ann.text(
+        -0.012, 0.12, chrom, transform=ax_ann.transAxes,
+        ha='right', va='center', fontsize=9,
+    )
+    ax_ann.plot([win_start, win_end], [0.12, 0.12], color='black', lw=1.5, solid_capstyle='butt')
+    tick_h = 0.04
+    ax_ann.plot([win_start, win_start], [0.12 - tick_h, 0.12 + tick_h], color='black', lw=1.2)
+    ax_ann.plot([win_end, win_end], [0.12 - tick_h, 0.12 + tick_h], color='black', lw=1.2)
+    ax_ann.text(win_start, 0.0, f'{win_start:,}', ha='left', va='center', fontsize=7, color='#666666')
+    ax_ann.text(win_end, 0.0, f'{win_end:,}', ha='right', va='center', fontsize=7, color='#666666')
+ 
+    if show_rna:
+        ax_rna = fig.add_subplot(main_gs[:n_ct, rna_col])
+        y_positions = np.arange(n_ct)[::-1]
+        rna_max = max(rna_values.get(ct, 0) for ct in celltype_order) or 1
+        for y, ct in zip(y_positions, celltype_order):
+            val = rna_values.get(ct, 0) / rna_max
+            ax_rna.barh(y, val, height=0.6, color=celltype_colors[ct], edgecolor='none')
+        ax_rna.set_xlim(0, 1.08)
+        ax_rna.set_ylim(-0.5, n_ct - 0.5)
+        ax_rna.set_yticks([])
+        ax_rna.set_xticks([])
+        for spine in ax_rna.spines.values():
+            spine.set_visible(False)
+        ax_rna.set_title(f'{gene_name}\nRNA', fontsize=9, loc='center')
+ 
+    method_colors = method_colors or {}
+    ax_sig = fig.add_subplot(outer_gs[:n_ct, sig_col])
+    methods = list(qvals.keys())
+    neglog_q = [-np.log10(q) if q and q > 0 else 0 for q in qvals.values()]
+    x_pos = np.arange(len(methods))
+    colors = [method_colors.get(m, '#888888') for m in methods]
+ 
+    if sig_style == 'lollipop':
+        ax_sig.vlines(x_pos, 0, neglog_q, color='#999999', lw=1.5, zorder=1)
+        ax_sig.scatter(x_pos, neglog_q, color=colors, s=70, zorder=2,
+                        edgecolor='black', linewidth=0.6)
+        ax_sig.axhline(-np.log10(sig_threshold), color=highlight_color, ls='--', lw=1, zorder=0)
+        ax_sig.set_xticks(x_pos)
+        ax_sig.set_xticklabels(methods, rotation=45, ha='right')
+        ax_sig.set_ylabel('$-log_{10}$(q-value)')
+        for spine in ['top', 'right']:
+            ax_sig.spines[spine].set_visible(False)
+ 
+    elif sig_style == 'bar':
+        ax_sig.bar(x_pos, neglog_q, color=colors, width=1.0)
+        ax_sig.axhline(-np.log10(sig_threshold), color=highlight_color, ls='--', lw=1)
+        ax_sig.set_xticks(x_pos)
+        ax_sig.set_xticklabels(methods, rotation=90)
+        ax_sig.set_ylabel('$-log_{10}$(q-value)')
+        for spine in ['top', 'right']:
+            ax_sig.spines[spine].set_visible(False)
+ 
+    elif sig_style == 'dotmatrix':
+        sizes = np.clip(np.array(neglog_q) * 40, 20, 400)
+        alphas = [1.0 if q < sig_threshold else 0.35 for q in qvals.values()]
+        for x, c, s, a in zip(x_pos, colors, sizes, alphas):
+            ax_sig.scatter(x, 0, s=s, color=c, alpha=a, edgecolor='black', linewidth=0.6)
+        ax_sig.set_xticks(x_pos)
+        ax_sig.set_xticklabels(methods, rotation=45, ha='right')
+        ax_sig.set_yticks([])
+        ax_sig.set_ylim(-0.5, 0.5)
+        for spine in ax_sig.spines.values():
+            spine.set_visible(False)
+ 
+    fig.suptitle(f'{gene_name} \u2014 {snp_id}', fontsize=11, x=0.06, ha='left')
+ 
+    if savepath:
+        fig.savefig(savepath, dpi=300, bbox_inches='tight')
+    return fig
+
+ 
+def _parse_peak_midpoint(peak_str):
+    """Parse 'chr1:1000000-1002000' (or 'chr1-1000000-1002000') -> midpoint bp."""
+    m = re.match(r"[^:\-]+[:\-](\d+)[\-](\d+)", str(peak_str))
+    if m:
+        start, end = int(m.group(1)), int(m.group(2))
+        return (start + end) / 2
+    nums = re.findall(r"\d+", str(peak_str))
+    if len(nums) >= 2:
+        return (int(nums[0]) + int(nums[1])) / 2
+    raise ValueError(f"Could not parse peak position from: {peak_str!r}")
+
+
+def _as_gene_series(gene_df):
+    """Coerce gene_df (Series or 1-col DataFrame) into a clean Series: gene_id -> tss.
+    Drops duplicate index entries (keeps first) since duplicated gene ids with
+    different TSS values silently break exact-match lookups downstream."""
+    if isinstance(gene_df, pd.DataFrame):
+        s = gene_df.iloc[:, 0]
+    else:
+        s = gene_df
+    s = s.copy()
+    s.index.name = "gene"
+    if s.index.duplicated().any():
+        warnings.warn(
+            "gene_df has duplicate gene ids; keeping the first occurrence of each."
+        )
+        s = s[~s.index.duplicated(keep="first")]
+    return s
+
+
+def _format_q(q):
+    if pd.isna(q):
+        return "n.s."
+    if q == 0:
+        return "0"
+    if q < 1e-3 or q >= 1e4:
+        return f"{q:.1e}"
+    return f"{q:.3g}"
+
+
+def _bezier_arc(x0, x1, y0, height):
+    """Quadratic bezier arc from (x0,y0) to (x1,y0) peaking at y0+height."""
+    xm = (x0 + x1) / 2
+    verts = [(x0, y0), (xm, y0 + height), (x1, y0)]
+    codes = [Path.MOVETO, Path.CURVE3, Path.CURVE3]
+    return Path(verts, codes)
+
+
+def _label_for(gene_id, gene_symbols):
+    """Map a gene id to a display symbol if a mapping is provided and has a hit."""
+    if gene_symbols is None:
+        return gene_id
+    if gene_id in gene_symbols.index:
+        val = gene_symbols.loc[gene_id]
+        if isinstance(val, pd.Series):  # duplicate index entries
+            val = val.iloc[0]
+        if pd.notna(val) and str(val).strip():
+            return val
+    return gene_id
+
+
+def _span_ellipse_w(win_lo, win_hi, frac=0.02):
+    return max((win_hi - win_lo) * frac, 1)
+
+
+def _fade(hex_color, alpha):
+    """Blend a hex color toward white by `alpha` (0=white, 1=full color) so
+    non-winning arcs read as a muted version of the method's own color rather
+    than a flat generic gray."""
+    hex_color = hex_color.lstrip("#")
+    r, g, b = (int(hex_color[i:i + 2], 16) for i in (0, 2, 4))
+    r = int(r * alpha + 255 * (1 - alpha))
+    g = int(g * alpha + 255 * (1 - alpha))
+    b = int(b * alpha + 255 * (1 - alpha))
+    return f"#{r:02x}{g:02x}{b:02x}"
+
+
+def plot_locus_arcs(
+    locus_res_df,
+    gene_df,
+    snp_id=None,
+    methods=None,
+    method_labels=None,
+    method_colors=None,
+    gene_symbols=None,
+    flank=15000,
+    max_arc_height=1.0,
+    default_color="#9e9e9e",
+    fade_alpha=0.35,
+    figsize=None,
+    label_every=None,
+    row_height=1.3,
+    hspace=0.15,
+    hide_unmapped_genes=False,
+):
+    """
+    Parameters
+    ----------
+    locus_res_df : DataFrame filtered (or filterable) to one locus/SNP.
+    gene_df : Series/DataFrame gene_id -> TSS bp position.
+    snp_id : if locus_res_df has multiple loci, subsets to this snp_id first.
+    methods : optional explicit ordering of methods (rows), using the RAW
+              method names as they appear in locus_res_df['method'].
+              Defaults to sorted unique values.
+    method_labels : dict, raw method name -> display name for the row label.
+    method_colors : dict, raw method name -> color (hex/name) for that
+                     method's arcs. Methods not in the dict fall back to
+                     `default_color`.
+    gene_symbols : optional Series, gene_id -> gene symbol, used only for
+                    display text (gene track labels + title). All position
+                    lookups and gold-gene matching still use the original
+                    gene_df/locus_res_df ids, so this is purely cosmetic.
+    flank : bp padding added on each side of the plotted window.
+    max_arc_height : cap on arc height (axis units, 0-1 per method panel).
+    fade_alpha : how strongly non-winning arcs are faded toward white,
+                 relative to that method's own color (0=white, 1=full color).
+    label_every : if set, label every Nth gene in the top track (by position)
+                  instead of the automatic overlap-avoiding spacing.
+    row_height : inches of vertical space allotted per track when `figsize`
+                 isn't given explicitly. Lower = more compressed. Default 1.3;
+                 try 0.8-0.9 for a tight stack.
+    hspace : gridspec vertical gap between panels, as a fraction of average
+             panel height. Lower = tracks sit closer together. Default 0.15;
+             try 0.02-0.05 for minimal gaps (panels still won't overlap since
+             sharex keeps baselines aligned).
+    hide_unmapped_genes : if True, drop genes from the top gene track whose
+             display name still starts with "ENSG" after applying
+             `gene_symbols` (i.e. the symbol lookup had no hit for that gene).
+             Only meaningful when `gene_symbols` is also passed. The gold
+             gene is always kept regardless of this flag, even if unmapped,
+             so it can't silently disappear the way it used to.
+ 
+    Returns
+    -------
+    matplotlib.figure.Figure
+    """
+    df = locus_res_df.copy()
+    if snp_id is not None:
+        df = df[df["snp_id"] == snp_id]
+    if df.empty:
+        raise ValueError("No rows for this locus after filtering.")
+ 
+    genes = _as_gene_series(gene_df)
+    method_labels = method_labels or {}
+    method_colors = method_colors or {}
+ 
+    if methods is None:
+        methods = sorted(df["method"].unique())
+ 
+    peak_pos = _parse_peak_midpoint(df["peak"].mode().iat[0])
+ 
+    # min q-value per (method, nominated_gene) across datasets
+    grp = (
+        df.groupby(["method", "nominated_gene"], as_index=False)
+        .agg(
+            min_qval=("nominated_qval", "min"),
+            is_gold=("is_gold", "max"),
+        )
+    )
+ 
+    # --- gold/target gene -------------------------------------------------
+    gold_candidates = df.loc[df["is_gold"] == True, "nominated_gene"].unique()  # noqa: E712
+    gold_gene = df["snp_gene"].iloc[0]
+ 
+    # Resolve the gold gene's TSS directly from gene_df, independent of
+    # whether it happens to be a "nominated_gene" for any method. This is
+    # the fix for the gold gene sometimes not appearing/highlighting: the
+    # old version only ever considered genes that were nominated by some
+    # method when building the plotting window, so a gold gene that no
+    # method actually nominated as a candidate (or that fell outside that
+    # induced window) silently never made it onto the canvas.
+    gold_pos = genes.get(gold_gene, np.nan)
+    if pd.isna(gold_pos):
+        warnings.warn(
+            f"Gold gene {gold_gene!r} was not found in gene_df (id mismatch?) "
+            "so it cannot be drawn or highlighted. Check gene id conventions "
+            "match between locus_res_df and gene_df."
+        )
+ 
+    # --- plotting window ----------------------------------------------------
+    genes_in_play = grp["nominated_gene"].unique()
+    tss_positions = genes.reindex(genes_in_play).dropna()
+    if tss_positions.empty and pd.isna(gold_pos):
+        raise ValueError("None of the nominated genes (or the gold gene) were found in gene_df.")
+ 
+    relevant_positions = list(tss_positions.values) + [peak_pos]
+    if not pd.isna(gold_pos):
+        relevant_positions.append(gold_pos)
+ 
+    win_lo = min(relevant_positions) - flank
+    win_hi = max(relevant_positions) + flank
+ 
+    window_genes = genes[(genes >= win_lo) & (genes <= win_hi)].sort_values()
+ 
+    # Guarantee the gold gene is present in the window even if some
+    # upstream filtering/rounding would otherwise have excluded it.
+    if not pd.isna(gold_pos) and gold_gene not in window_genes.index:
+        window_genes = pd.concat(
+            [window_genes, pd.Series([gold_pos], index=[gold_gene])]
+        ).sort_values()
+ 
+    if hide_unmapped_genes:
+        if gene_symbols is None:
+            warnings.warn(
+                "hide_unmapped_genes=True has no effect without gene_symbols."
+            )
+        else:
+            mapped_mask = pd.Series(
+                [
+                    (name == gold_gene) or not str(_label_for(name, gene_symbols)).startswith("ENSG")
+                    for name in window_genes.index
+                ],
+                index=window_genes.index,
+            )
+            window_genes = window_genes[mapped_mask]
+ 
+    # ---------------------------------------------------------------
+    # figure / axes layout
+    # ---------------------------------------------------------------
+    n_methods = len(methods)
+    height_ratios = [1.1] + [1.0] * n_methods
+    if figsize is None:
+        figsize = (10, row_height * (n_methods + 1) + 1.4)
+ 
+    fig, axes = plt.subplots(
+        n_methods + 1,
+        1,
+        figsize=figsize,
+        sharex=True,
+        gridspec_kw={"height_ratios": height_ratios, "hspace": hspace},
+    )
+    gene_ax = axes[0]
+    method_axes = axes[1:]
+ 
+    # ---------------------------------------------------------------
+    # top panel: gene track
+    # ---------------------------------------------------------------
+    gene_ax.axhline(0, color="black", lw=1.2, zorder=1)
+    gene_ax.set_ylim(-1, 2.1)
+    gene_ax.set_yticks([])
+    for spine in ("top", "right", "left"):
+        gene_ax.spines[spine].set_visible(False)
+    gene_ax.spines["bottom"].set_visible(False)
+ 
+    positions = window_genes.values
+    names = window_genes.index.values
+    highlight_color = method_colors.get("_gold", "#d62728")
+ 
+    if label_every is not None:
+        label_mask = np.arange(len(positions)) % label_every == 0
+    else:
+        span = max(win_hi - win_lo, 1)
+        min_gap = span * 0.06
+        label_mask = np.zeros(len(positions), dtype=bool)
+        last_labeled = -np.inf
+        for i, p in enumerate(positions):
+            if p - last_labeled >= min_gap:
+                label_mask[i] = True
+                last_labeled = p
+    gold_hits = np.where(names == gold_gene)[0]
+    label_mask[gold_hits] = True  # always label the gold gene
+ 
+    for i, (name, pos) in enumerate(zip(names, positions)):
+        is_gold = name == gold_gene
+        display_name = _label_for(name, gene_symbols)
+        gene_ax.plot(
+            [pos, pos], [-0.15, 0.15],
+            color=highlight_color if is_gold else "black",
+            lw=2.2 if is_gold else 1.2,
+            zorder=3,
+        )
+        if is_gold:
+            gene_ax.scatter(
+                [pos], [0.55], marker="*", s=260,
+                color=highlight_color, edgecolor="black", linewidth=0.6,
+                zorder=5,
+            )
+            gene_ax.add_patch(
+                mpatches.Ellipse(
+                    (pos, 0.0), width=_span_ellipse_w(win_lo, win_hi), height=0.9,
+                    fill=False, edgecolor=highlight_color, lw=1.6, zorder=4,
+                )
+            )
+        if label_mask[i]:
+            gene_ax.text(
+                pos, 0.85 if not is_gold else 1.15, display_name,
+                rotation=45, ha="left", va="bottom",
+                fontsize=7.5,
+                color=highlight_color if is_gold else "#333333",
+                fontweight="bold" if is_gold else "normal",
+            )
+ 
+    gene_ax.annotate(
+        "peak", xy=(peak_pos, -0.15), xytext=(peak_pos, -0.9),
+        ha="center", va="top", fontsize=8, color="#1f77b4",
+        arrowprops=dict(arrowstyle="-", color="#1f77b4", lw=1.2),
+    )
+ 
+    # ---------------------------------------------------------------
+    # per-method arc panels
+    # ---------------------------------------------------------------
+    for ax, method in zip(method_axes, methods):
+        sub = grp[grp["method"] == method].copy()
+        sub = sub[sub["nominated_gene"].isin(genes.index)]
+        sub["tss"] = genes.reindex(sub["nominated_gene"]).values
+ 
+        method_color = method_colors.get(method, default_color)
+        faded_color = _fade(method_color, fade_alpha) if method_color.startswith("#") else method_color
+        display_method = method_labels.get(method, method)
+ 
+        ax.axhline(0, color="black", lw=1.0, zorder=1)
+        ax.set_yticks([])
+        ax.set_ylim(-0.9, max_arc_height + 0.55)
+        for spine in ("top", "right", "left"):
+            ax.spines[spine].set_visible(False)
+        ax.spines["bottom"].set_visible(False)
+        ax.set_ylabel(display_method, rotation=0, ha="right", va="center", fontsize=10,
+                       fontweight="bold", labelpad=25, color=method_color)
+ 
+        if sub.empty:
+            continue
+ 
+        best_idx = sub["min_qval"].idxmin()
+        span = max(win_hi - win_lo, 1)
+ 
+        for idx, row in sub.iterrows():
+            dist = abs(row["tss"] - peak_pos)
+            height = 0.15 + max_arc_height * min(dist / span, 1.0)
+            is_best = idx == best_idx
+            color = method_color if is_best else faded_color
+            lw = 2.6 if is_best else 1.4
+            zorder = 5 if is_best else 2
+ 
+            path = _bezier_arc(peak_pos, row["tss"], 0.0, height)
+            patch = mpatches.PathPatch(
+                path, facecolor="none", edgecolor=color, lw=lw, zorder=zorder
+            )
+            ax.add_patch(patch)
+ 
+            ax.plot(
+                row["tss"], 0.0, marker="v", color=color,
+                markersize=6 if is_best else 4.5, zorder=zorder + 1,
+            )
+ 
+            # extra marker if this method's top pick is also the true gold gene
+            if is_best and row["nominated_gene"] == gold_gene:
+                ax.scatter(
+                    [row["tss"]], [height + 0.12], marker="*", s=90,
+                    color=method_color, edgecolor="black", linewidth=0.4,
+                    zorder=zorder + 2,
+                )
+ 
+            ax.text(
+                row["tss"], -0.35, _format_q(row["min_qval"]),
+                ha="center", va="top", fontsize=8,
+                color=color, fontweight="bold" if is_best else "normal",
+            )
+ 
+        ax.plot(peak_pos, 0.0, marker="o", color="#1f77b4", markersize=5, zorder=6)
+ 
+    method_axes[-1].set_xlabel("genomic position (bp)", fontsize=9)
+    for ax in list(method_axes) + [gene_ax]:
+        ax.ticklabel_format(style="plain", axis="x")
+ 
+    # Title as a figure-level suptitle (not an axes title) so it never
+    # collides with the rotated gene-name labels sitting just below it,
+    # and reserve headroom for it via subplots_adjust rather than tight_layout.
+    target_display = _label_for(gold_gene, gene_symbols)
+    title_snp = snp_id if snp_id is not None else df["snp_id"].iloc[0]
+    fig.suptitle(
+        f"Locus: {title_snp}  |  target gene: {target_display}",
+        x=0.01, ha="left", fontsize=11, fontweight="bold", y=0.995,
+    )
+    fig.subplots_adjust(top=1 - (0.55 / figsize[1]))
+ 
+    fig.align_ylabels(method_axes)
+    return fig

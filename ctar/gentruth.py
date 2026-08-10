@@ -527,6 +527,23 @@ def add_tss_distances(query_df, gene_df, gene_col="gene"):
     return out
 
 
+def load_gene_table(gtf_path, feature='gene', chunksize=500_000):
+    ''' Read full gtf. Strips version and returns gene body coordinates + name.
+    '''
+    cols = ['chrom','source','feature','start','end','score','strand','frame','attribute']
+    chunks = []
+    reader = pd.read_csv(gtf_path, sep='\t', comment='#', names=cols,
+                          chunksize=chunksize, compression='infer', dtype={'chrom': str})
+    for chunk in reader:
+        genes = chunk[chunk['feature'] == feature]
+        if len(genes):
+            chunks.append(genes)
+    gene_df = pd.concat(chunks, ignore_index=True)
+    gene_df['gene_name'] = gene_df['attribute'].str.extract(r'gene_name "([^"]+)"')
+    gene_df['gene_id'] = gene_df['attribute'].str.extract(r'gene_id "([^"]+)"').iloc[:, 0].str.split('.').str[0]
+    return gene_df[['chrom','start','end','strand','gene_name','gene_id']].set_index('gene_id')
+
+
 def find_nearest_gene(query_df, gene_df):
     """
     For each region in query_df, find the nearest gene TSS in gene_df.
