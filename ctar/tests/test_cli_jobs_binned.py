@@ -75,6 +75,8 @@ def make_args(job, target_path, results_path=None, flag_se=False, job_id="smoke"
         donor_col=None,
         n_length_bins="1",
         n_cores="1",
+        fdr_bin_type=None,
+        n_dist_bins="5",
     )
 
 

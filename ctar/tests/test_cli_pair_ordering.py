@@ -34,6 +34,8 @@ def make_args(results_path):
         donor_col=None,
         n_length_bins="1",
         n_cores=None,
+        fdr_bin_type=None,
+        n_dist_bins="5",
     )
 
 
@@ -87,13 +89,14 @@ def test_compute_pval_preserves_pair_order_for_binned_dicts(tmp_path, monkeypatc
         return (
             {key: np.asarray(value) + 100.0 for key, value in cis_pairs_dic.items()},
             {key: np.asarray(value) + 200.0 for key, value in cis_pairs_dic.items()},
+            {key: np.asarray(value) + 300.0 for key, value in cis_pairs_dic.items()},
         )
 
     monkeypatch.setattr(ctar.method, "binned_mcpval", fake_binned_mcpval)
 
     CLI_ctar.main(make_args(results_path))
 
-    output_df = pd.read_csv(results_path / "cis_links_df.csv", index_col=0)
+    output_df = pd.read_csv(results_path / "cis_links_df.csv", index_col=0).reindex(cis_links_df.index)
 
     expected_mcpval = np.array([100.11, 100.44, 100.22, 100.55, 100.33])
     expected_ppval = np.array([200.11, 200.44, 200.22, 200.55, 200.33])
@@ -141,13 +144,14 @@ def test_compute_pval_preserves_pair_order_for_se_binned_dicts(tmp_path, monkeyp
         return (
             {key: np.asarray(value) + 1000.0 for key, value in cis_pairs_dic.items()},
             {key: np.asarray(value) + 2000.0 for key, value in cis_pairs_dic.items()},
+            {key: np.asarray(value) + 3000.0 for key, value in cis_pairs_dic.items()},
         )
 
     monkeypatch.setattr(ctar.method, "binned_mcpval", fake_binned_mcpval)
 
     CLI_ctar.main(make_args(results_path))
 
-    output_df = pd.read_csv(results_path / "cis_links_df.csv", index_col=0)
+    output_df = pd.read_csv(results_path / "cis_links_df.csv", index_col=0).reindex(cis_links_df.index)
 
     expected_regular = np.array([1011.0, 1015.0, 1012.0, 1020.0, 1016.0])
     expected_pooled = np.array([2011.0, 2015.0, 2012.0, 2020.0, 2016.0])

@@ -60,7 +60,7 @@ def test_binned_mcpval():
         "bin_a": np.array([0.0, 0.5, 1.0]),
     }
 
-    observed_mcpval_dic, observed_ppval_dic = ctar.method.binned_mcpval(
+    observed_mcpval_dic, observed_ppval_dic, _ = ctar.method.binned_mcpval(
         cis_pairs_dic,
         ctrl_pairs_dic,
         b=3,
