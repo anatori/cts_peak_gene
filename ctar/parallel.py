@@ -61,15 +61,9 @@ def preprocess_batch(subatch_links, atac_sparse, rna_sparse):
     atac_sub = atac_sparse[:, needed_cols_x].copy()
     rna_sub = rna_sparse[:, needed_cols_y].copy()
 
-    # Map old indices to new submatrix-local indices
-    x_map_array = np.full(needed_cols_x.max() + 1, -1, dtype=int)
-    x_map_array[needed_cols_x] = np.arange(len(needed_cols_x))
-    y_map_array = np.full(needed_cols_y.max() + 1, -1, dtype=int)
-    y_map_array[needed_cols_y] = np.arange(len(needed_cols_y))
-
     links_reindexed = np.column_stack((
-        x_map_array[subatch_links[:, 0]],
-        y_map_array[subatch_links[:, 1]],
+        np.searchsorted(needed_cols_x, subatch_links[:, 0]),
+        np.searchsorted(needed_cols_y, subatch_links[:, 1]),
     ))
 
     return links_reindexed, atac_sub, rna_sub
@@ -215,9 +209,7 @@ def multiprocess_poisson_irls_client(
                 )
                 futures.append(fut)
 
-                # Clean up immediately
                 del atac_sub, rna_sub, links_reindexed, atac_sub_future, rna_sub_future, links_future
-                gc.collect()
 
             if save_files:
                 wait(futures)
@@ -226,9 +218,7 @@ def multiprocess_poisson_irls_client(
                 results = client.gather(futures)
                 total_results.extend(results)
 
-            # After batch, delete futures and gather state
             client.cancel(futures)
-            client.run(gc.collect)
             gc.collect()
 
     finally:
@@ -342,9 +332,7 @@ def multiprocess_poisson_irls(
                 keys_for_batch.append(bin_key)
 
                 del atac_sub, rna_sub, links_reindexed
-                gc.collect()
 
-            # compute in parallel
             results = compute(*tasks, num_workers=n_workers, **compute_kwargs)
 
             if not save_files:
@@ -541,9 +529,7 @@ def multiprocess_poisson_irls_multivar(
                 keys_for_batch.append(bin_key)
 
                 del atac_sub, rna_sub, links_reindexed
-                gc.collect()
 
-            # compute in parallel
             results = compute(*tasks, num_workers=n_workers, **compute_kwargs)
 
             if not save_files:

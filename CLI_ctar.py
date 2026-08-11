@@ -526,28 +526,18 @@ def main(args):
                 i: cis_links_array[i * dic_batch_size: (i + 1) * dic_batch_size]
                 for i in range((len(cis_links_array) + dic_batch_size - 1) // dic_batch_size)
             }
-            cis_idx_map = {
-                i: list(range(i * dic_batch_size, min((i + 1) * dic_batch_size, len(cis_links_array))))
-                for i in cis_links_dic.keys()
-            }
-            
-            ctrl_links_array = []
-            for _, row in cis_links_df.iterrows():
-                atac_idx = row['atac_idx']
-                rna_idx = row['rna_idx']
-                ctrl_peak_indices = ctrl_peaks[atac_idx, :n_ctrl]
-                ctrl_links_array.extend([[peak_idx, rna_idx] for peak_idx in ctrl_peak_indices])
-            ctrl_links_array = np.array(ctrl_links_array)
+            atac_idx_arr = cis_links_df['atac_idx'].to_numpy()
+            rna_idx_arr = cis_links_df['rna_idx'].to_numpy()
+            ctrl_peak_sub = ctrl_peaks[atac_idx_arr, :n_ctrl]
+            ctrl_links_array = np.column_stack([
+                ctrl_peak_sub.ravel(),
+                np.repeat(rna_idx_arr, n_ctrl),
+            ])
 
             ctrl_links_dic = {
                 i: ctrl_links_array[i * dic_batch_size: (i + 1) * dic_batch_size]
                 for i in range((len(ctrl_links_array) + dic_batch_size - 1) // dic_batch_size)
             }
-            ctrl_idx_map = {
-                i: list(range(i * dic_batch_size, min((i + 1) * dic_batch_size, len(ctrl_links_array))))
-                for i in ctrl_links_dic.keys()
-            }
-
             rna_sparse = rna_norm if FLAG_CORR else adata_rna.layers['counts']
             atac_sparse = atac_norm if FLAG_CORR else adata_atac.layers['counts']
 
@@ -565,10 +555,7 @@ def main(args):
                     donor_labels=donor_labels,
                 )
                 print('# Cis Pearson time = %0.2fs' % (time.time() - start_time))
-                cis_coeff = np.empty(n_links, dtype=np.float32)
-                for batch_key, corrs in cis_corr_dic.items():
-                    for i, idx in enumerate(cis_idx_map[batch_key]):
-                        cis_coeff[idx] = corrs[i]
+                cis_coeff = np.concatenate([np.asarray(cis_corr_dic[k]) for k in sorted(cis_corr_dic)]).astype(np.float32)
 
                 print('# Starting control links Pearson correlation...')
                 start_time = time.time()
@@ -581,12 +568,9 @@ def main(args):
                     donor_labels=donor_labels,
                 )
                 print('# Control Pearson time = %0.2fs' % (time.time() - start_time))
-                n_rows = len(cis_links_df) * n_ctrl
-                ctrl_coeff_flat = np.empty(n_rows, dtype=np.float32)
-                for batch_key, corrs in ctrl_corr_dic.items():
-                    for i, idx in enumerate(ctrl_idx_map[batch_key]):
-                        ctrl_coeff_flat[idx] = corrs[i]
-                ctrl_coeff = ctrl_coeff_flat.reshape(len(cis_links_df), n_ctrl)
+                ctrl_coeff = np.concatenate(
+                    [np.asarray(ctrl_corr_dic[k]) for k in sorted(ctrl_corr_dic)]
+                ).astype(np.float32).reshape(len(cis_links_df), n_ctrl)
 
                 cis_links_df['corr'] = cis_coeff
                 cis_links_df[f'{BIN_CONFIG}_mcpval'] = ctar.method.initial_mcpval(ctrl_coeff, cis_coeff)
@@ -630,18 +614,9 @@ def main(args):
                     )
                 print('# Cis-links IRLS time = %0.2fs' % (time.time() - start_time))
 
-                first_cis_key = list(cis_coeff_dic.keys())[0]
-                first_cis_val = np.asarray(cis_coeff_dic[first_cis_key])
-                if first_cis_val.ndim == 2:
-                    cis_coeff = np.empty((n_links, first_cis_val.shape[1]), dtype=np.float32)
-                    for batch_key, coeffs in cis_coeff_dic.items():
-                        for i, idx in enumerate(cis_idx_map[batch_key]):
-                            cis_coeff[idx, :] = coeffs[i]
-                else:
-                    cis_coeff = np.empty((n_links,), dtype=np.float32)
-                    for batch_key, coeffs in cis_coeff_dic.items():
-                        for i, idx in enumerate(cis_idx_map[batch_key]):
-                            cis_coeff[idx] = coeffs[i]
+                cis_coeff = np.concatenate(
+                    [np.asarray(cis_coeff_dic[k]) for k in sorted(cis_coeff_dic)]
+                ).astype(np.float32)
 
                 print('# Starting control links IRLS...')
                 start_time = time.time()
@@ -671,20 +646,14 @@ def main(args):
 
                 first_ctrl_key = list(ctrl_coeff_dic.keys())[0]
                 first_ctrl_val = np.asarray(ctrl_coeff_dic[first_ctrl_key])
-                n_rows = len(cis_links_df) * n_ctrl
 
+                ctrl_coeff = np.concatenate(
+                    [np.asarray(ctrl_coeff_dic[k]) for k in sorted(ctrl_coeff_dic)]
+                ).astype(np.float32)
                 if first_ctrl_val.ndim == 2:
-                    ctrl_coeff_flat = np.empty((n_rows, first_ctrl_val.shape[1]), dtype=np.float32)
-                    for batch_key, coeffs in ctrl_coeff_dic.items():
-                        for i, idx in enumerate(ctrl_idx_map[batch_key]):
-                            ctrl_coeff_flat[idx, :] = coeffs[i]
-                    ctrl_coeff = ctrl_coeff_flat.reshape(len(cis_links_df), n_ctrl, first_ctrl_val.shape[1])
+                    ctrl_coeff = ctrl_coeff.reshape(len(cis_links_df), n_ctrl, first_ctrl_val.shape[1])
                 else:
-                    ctrl_coeff_flat = np.empty((n_rows,), dtype=np.float32)
-                    for batch_key, coeffs in ctrl_coeff_dic.items():
-                        for i, idx in enumerate(ctrl_idx_map[batch_key]):
-                            ctrl_coeff_flat[idx] = coeffs[i]
-                    ctrl_coeff = ctrl_coeff_flat.reshape(len(cis_links_df), n_ctrl)
+                    ctrl_coeff = ctrl_coeff.reshape(len(cis_links_df), n_ctrl)
 
                 MAX_VAL = 100
                 if ctrl_coeff.ndim == 3 and ctrl_coeff.shape[2] == 2:
@@ -1056,11 +1025,6 @@ def main(args):
                 i: cis_links_array[i * dic_batch_size: (i + 1) * dic_batch_size]
                 for i in range((len(cis_links_array) + dic_batch_size - 1) // dic_batch_size)
             }
-            cis_idx_map = {
-                i: list(range(i * dic_batch_size, min((i + 1) * dic_batch_size, len(cis_links_array))))
-                for i in cis_links_dic.keys()
-            }
-
             rna_sparse = rna_norm if FLAG_CORR else adata_rna.layers['counts']
             atac_sparse = atac_norm if FLAG_CORR else adata_atac.layers['counts']
 
@@ -1078,10 +1042,7 @@ def main(args):
                     donor_labels=donor_labels,
                 )
                 print('# Cis Pearson time = %0.2fs' % (time.time() - start_time))
-                cis_coeff = np.empty(n_links, dtype=np.float32)
-                for batch_key, corrs in cis_corr_dic.items():
-                    for i, idx in enumerate(cis_idx_map[batch_key]):
-                        cis_coeff[idx] = corrs[i]
+                cis_coeff = np.concatenate([np.asarray(cis_corr_dic[k]) for k in sorted(cis_corr_dic)]).astype(np.float32)
                 cis_links_df['corr'] = cis_coeff
             else:
                 print('# Starting cis-links IRLS...')
@@ -1111,11 +1072,9 @@ def main(args):
                     )
                 print('# Cis-links IRLS time = %0.2fs' % (time.time() - start_time))
 
-                cis_coeff = np.empty((n_links, 2), dtype=np.float32)
-                for batch_key, coeffs in cis_coeff_dic.items():
-                    for i, idx in enumerate(cis_idx_map[batch_key]):
-                        cis_coeff[idx, 0] = coeffs[i][0]
-                        cis_coeff[idx, 1] = coeffs[i][1]
+                cis_coeff = np.concatenate(
+                    [np.asarray(cis_coeff_dic[k]) for k in sorted(cis_coeff_dic)]
+                ).astype(np.float32)
                 cis_links_df['poissonb'] = cis_coeff[:, 1]
                 cis_links_df['poissonb_se'] = cis_coeff[:, 0]
 
@@ -1284,13 +1243,13 @@ def main(args):
             print(f'# Computing controls for {len(cis_links_subset)} links...')
             
             # Create control links dictionary
-            ctrl_links_array = []
-            for idx, row in cis_links_subset.iterrows():
-                atac_idx = row['atac_idx']
-                rna_idx = row['rna_idx']
-                ctrl_peak_indices = ctrl_peaks[atac_idx, :n_ctrl]
-                ctrl_links_array.extend([[peak_idx, rna_idx] for peak_idx in ctrl_peak_indices])
-            ctrl_links_array = np.array(ctrl_links_array)
+            atac_idx_arr = cis_links_subset['atac_idx'].to_numpy()
+            rna_idx_arr = cis_links_subset['rna_idx'].to_numpy()
+            ctrl_peak_sub = ctrl_peaks[atac_idx_arr, :n_ctrl]
+            ctrl_links_array = np.column_stack([
+                ctrl_peak_sub.ravel(),
+                np.repeat(rna_idx_arr, n_ctrl),
+            ])
             print(f'# ctrl_links_array.shape: {ctrl_links_array.shape}')
 
             # Chunk the control links array into batches
@@ -1299,11 +1258,6 @@ def main(args):
                 i: ctrl_links_array[i * dic_batch_size: (i + 1) * dic_batch_size]
                 for i in range((len(ctrl_links_array) + dic_batch_size - 1) // dic_batch_size)
             }
-            ctrl_idx_map = {
-                i: list(range(i * dic_batch_size, min((i + 1) * dic_batch_size, len(ctrl_links_array))))
-                for i in ctrl_links_dic.keys()
-            }
-
             rna_sparse = rna_norm if FLAG_CORR else adata_rna.layers['counts']
             atac_sparse = atac_norm if FLAG_CORR else adata_atac.layers['counts']
 
@@ -1325,11 +1279,9 @@ def main(args):
                     donor_labels=donor_labels,
                 )
                 print('# Control Pearson time = %0.2fs' % (time.time() - start_time))
-                ctrl_coeff_flat = np.empty(n_rows, dtype=np.float32)
-                for batch_key, corrs in ctrl_corr_dic.items():
-                    for i, idx in enumerate(ctrl_idx_map[batch_key]):
-                        ctrl_coeff_flat[idx] = corrs[i]
-                ctrl_coeff = ctrl_coeff_flat.reshape(n_links, n_ctrl)
+                ctrl_coeff = np.concatenate(
+                    [np.asarray(ctrl_corr_dic[k]) for k in sorted(ctrl_corr_dic)]
+                ).astype(np.float32).reshape(n_links, n_ctrl)
             else:
                 print('# Starting control links IRLS...')
                 start_time = time.time()
@@ -1357,12 +1309,9 @@ def main(args):
                     )
                 print('# Control links IRLS time = %0.2fs' % (time.time() - start_time))
 
-                ctrl_coeff = np.empty((n_rows, 2), dtype=np.float32)
-                for batch_key, coeffs in ctrl_coeff_dic.items():
-                    for i, idx in enumerate(ctrl_idx_map[batch_key]):
-                        ctrl_coeff[idx, 0] = coeffs[i][0]
-                        ctrl_coeff[idx, 1] = coeffs[i][1]
-                ctrl_coeff = ctrl_coeff.reshape(n_links, n_ctrl, 2)
+                ctrl_coeff = np.concatenate(
+                    [np.asarray(ctrl_coeff_dic[k]) for k in sorted(ctrl_coeff_dic)]
+                ).astype(np.float32).reshape(n_links, n_ctrl, 2)
 
         else:
             
