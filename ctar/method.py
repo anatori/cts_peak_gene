@@ -16,6 +16,7 @@ import muon as mu
 import os
 import re
 from skmisc.loess import loess as _loess
+from .gentruth import add_tss_distances
 
 ######################### regression methods #########################
 
@@ -1005,6 +1006,9 @@ def log_dist_bins(abs_distance, custom_bins=None, n_bins=15, min_count=500):
     
     counts = bins.value_counts().sort_index()
     while (counts < min_count).any():
+        if len(counts) <= 1:
+            # nothing left to merge into; the single remaining bin stays under min_count
+            break
         small = counts[counts < min_count].index[0]
         # merge with next bin, fall back to previous if at the top
         target = small + 1 if small < counts.index.max() else small - 1
@@ -2196,39 +2200,73 @@ def dist_rmean_rvar_sfdr(
     tail='default',
 ):
     """
-    Compute empirical FDR stratified by distance, RNA mean, RNA variance.
-    Uses sub-binning in sequential order.
-    
+    Compute empirical FDR stratified by TSS distance, RNA mean, then RNA variance.
+    Bins are nested (sub-binned) in that order.
+    The resulting composite bin is passed to `binned_empirical_fdr` as `fdr_bin_col`.
+
     Parameters
     ----------
     cis_links_df : pd.DataFrame
-    pval_col : str, p-values
-    lambda_storey : float
-    min_n : int, minimum pairs per bin
+        Cis peak-gene pairs. Must contain 'peak', `gene_col`, `stat_col`, `ctrl_bin_col`
+        and `pval_col` if pi0 is None. 'abs_distance' and 'rna_mean'/'rna_var' are
+        computed if absent.
+    ctrl_coeff_dic : dict
+        Null statistics keyed by `ctrl_bin_col` value. Passed to `binned_empirical_fdr`.
+    gene_df : pd.DataFrame, optional
+        TSS table (see `ctar.gentruth.add_tss_distances`). Required if 'abs_distance'
+        is not already a column.
+    gene_col : str
+        Gene column in `cis_links_df`.
+    rna_adata : ad.AnnData, optional
+        RNA AnnData. Required if 'rna_mean'/'rna_var' are not already columns.
+    rna_layer : str or None
+        Layer to compute moments from. If None, uses `rna_adata.X`.
+    rna_gene_col : str
+        Column in `rna_adata.var` holding gene IDs matching `cis_links_df[gene_col]`.
+    dist_bins, min_bin_count : list, int
+        Passed to `log_dist_bins` as `custom_bins` and `min_count`.
+    n_bins : int
+        Number of quantile sub-bins for rna_mean and for rna_var.
+    stat_col, ctrl_bin_col, pi0, pval_col, qval_col, tail
+        Passed through to `binned_empirical_fdr`.
 
     Returns
     -------
-    pi0 : estimate pi0
+    cis_links_df : pd.DataFrame
+        Copy of input with 'fixed_distance_bin', 'rna_mean_bin', 'rna_var_bin',
+        'combined_fixed_dist_rmean_rvar', `qval_col` and 'pi0' added.
     """
 
-    if all(coord not in cis_links_df.columns for coord in ['chr','start','end']):
+    cis_links_df = cis_links_df.copy()
+
+    if not all(coord in cis_links_df.columns for coord in ['chr', 'start', 'end']):
         cis_links_df[['chr','start','end']] = cis_links_df.peak.str.split(':|-',expand=True)
     cis_links_df[['start','end']] = cis_links_df[['start','end']].astype(int)
     if 'abs_distance' not in cis_links_df.columns:
         assert gene_df is not None and gene_col is not None
-        cis_links_df = ctar.gentruth.add_tss_distances(cis_links_df, gene_df, gene_col=gene_col)
-    
+        cis_links_df = add_tss_distances(cis_links_df, gene_df, gene_col=gene_col)
+
+    n_nodist = cis_links_df['abs_distance'].isna().sum()
+    if n_nodist:
+        print(f'Warning: dropping {n_nodist} pairs with no TSS distance (gene missing from gene_df).')
+        cis_links_df = cis_links_df[cis_links_df['abs_distance'].notna()].copy()
+
     cis_links_df['fixed_distance_bin'] = log_dist_bins(cis_links_df['abs_distance'], custom_bins=dist_bins, min_count=min_bin_count)
 
-    if all(moment not in cis_links_df.columns for moment in ['rna_mean','rna_var']):
+    if not all(moment in cis_links_df.columns for moment in ['rna_mean','rna_var']):
         assert rna_adata is not None and rna_gene_col in rna_adata.var.columns
         if rna_layer is not None:
             rna_mat = rna_adata.layers[rna_layer]
         else:
             rna_mat = rna_adata.X
-        rna_df = rna_adata.var[rna_gene_col].copy()
+        rna_df = pd.DataFrame(index=pd.Index(rna_adata.var[rna_gene_col].values, name=rna_gene_col))
         rna_df['rna_mean'], rna_df['rna_var'] = compute_mean_var(rna_mat)
         cis_links_df = cis_links_df.merge(rna_df[['rna_mean', 'rna_var']], right_index=True, left_on=gene_col, how='left')
+
+    n_nomoment = cis_links_df[['rna_mean','rna_var']].isna().any(axis=1).sum()
+    if n_nomoment:
+        print(f'Warning: dropping {n_nomoment} pairs with no RNA moments (gene missing from rna_adata).')
+        cis_links_df = cis_links_df[cis_links_df[['rna_mean','rna_var']].notna().all(axis=1)].copy()
 
     cis_links_df['rna_mean_bin'] = (
             cis_links_df.groupby('fixed_distance_bin')['rna_mean']
@@ -2254,7 +2292,7 @@ def dist_rmean_rvar_sfdr(
         tail=tail,
     )
 
-    cis_links_df = cis_links_df.drop(columns=['chr', 'start', 'end', 'same_chr'])
+    cis_links_df = cis_links_df.drop(columns=['chr', 'start', 'end', 'same_chr'], errors='ignore')
 
     return cis_links_df
 
