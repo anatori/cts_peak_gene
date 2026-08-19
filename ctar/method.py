@@ -2177,6 +2177,88 @@ def estimate_pi0(
     return min(np.mean(pvals > lambda_storey) / (1 - lambda_storey), 1.0)
 
 
+def dist_rmean_rvar_sfdr(
+    cis_links_df,
+    ctrl_coeff_dic,
+    gene_df=None,
+    gene_col='gene',
+    rna_adata=None,
+    rna_layer=None,
+    rna_gene_col='gene',
+    dist_bins=[-np.inf, 1_000, 5_000, 10_000, 20_000, 50_000, 100_000, np.inf],
+    min_bin_count=25_000,
+    n_bins=4,
+    stat_col='corr',
+    ctrl_bin_col='combined_bin_5.5.5.5',
+    pi0=None,
+    pval_col='5.5.5.5.10000_mcpval',
+    qval_col='q_value_fixed_dist_rmean_rvar',
+    tail='default',
+):
+    """
+    Compute empirical FDR stratified by distance, RNA mean, RNA variance.
+    Uses sub-binning in sequential order.
+    
+    Parameters
+    ----------
+    cis_links_df : pd.DataFrame
+    pval_col : str, p-values
+    lambda_storey : float
+    min_n : int, minimum pairs per bin
+
+    Returns
+    -------
+    pi0 : estimate pi0
+    """
+
+    if all(coord not in cis_links_df.columns for coord in ['chr','start','end']):
+        cis_links_df[['chr','start','end']] = cis_links_df.peak.str.split(':|-',expand=True)
+    cis_links_df[['start','end']] = cis_links_df[['start','end']].astype(int)
+    if 'abs_distance' not in cis_links_df.columns:
+        assert gene_df is not None and gene_col is not None
+        cis_links_df = ctar.gentruth.add_tss_distances(cis_links_df, gene_df, gene_col=gene_col)
+    
+    cis_links_df['fixed_distance_bin'] = log_dist_bins(cis_links_df['abs_distance'], custom_bins=dist_bins, min_count=min_bin_count)
+
+    if all(moment not in cis_links_df.columns for moment in ['rna_mean','rna_var']):
+        assert rna_adata is not None and rna_gene_col in rna_adata.var.columns
+        if rna_layer is not None:
+            rna_mat = rna_adata.layers[rna_layer]
+        else:
+            rna_mat = rna_adata.X
+        rna_df = rna_adata.var[rna_gene_col].copy()
+        rna_df['rna_mean'], rna_df['rna_var'] = compute_mean_var(rna_mat)
+        cis_links_df = cis_links_df.merge(rna_df[['rna_mean', 'rna_var']], right_index=True, left_on=gene_col, how='left')
+
+    cis_links_df['rna_mean_bin'] = (
+            cis_links_df.groupby('fixed_distance_bin')['rna_mean']
+            .transform(lambda x: pd.qcut(x.rank(method='first'), n_bins, labels=False, duplicates='drop'))
+            .astype(int)
+        )
+    cis_links_df['rna_var_bin'] = (
+            cis_links_df.groupby(['fixed_distance_bin', 'rna_mean_bin'])['rna_var']
+            .transform(lambda x: pd.qcut(x.rank(method='first'), n_bins, labels=False, duplicates='drop'))
+            .astype(int)
+        )
+
+    cis_links_df['combined_fixed_dist_rmean_rvar'] = cis_links_df.fixed_distance_bin.astype(str) + '_' + cis_links_df.rna_mean_bin.astype(str) + '_' + cis_links_df.rna_var_bin.astype(str)
+
+    cis_links_df = binned_empirical_fdr(
+        cis_links_df, ctrl_coeff_dic,
+        stat_col=stat_col,
+        ctrl_bin_col=ctrl_bin_col,
+        pi0=pi0,
+        fdr_bin_col='combined_fixed_dist_rmean_rvar',
+        pval_col=pval_col,
+        qval_col=qval_col,
+        tail=tail,
+    )
+
+    cis_links_df = cis_links_df.drop(columns=['chr', 'start', 'end', 'same_chr'])
+
+    return cis_links_df
+
+
 ######################### clustering #########################
 
 
