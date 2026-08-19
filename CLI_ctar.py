@@ -77,7 +77,14 @@ def main(args):
     DONOR_COL = args.donor_col or None
     N_LENGTH_BINS = int(args.n_length_bins or '1')
     FDR_BIN_TYPE = getattr(args, 'fdr_bin_type', None) or None
-    N_DIST_BINS = int(args.n_dist_bins or '5')
+    TSS_FILE = getattr(args, 'tss_file', None) or None
+    RNA_LAYER = getattr(args, 'rna_layer', None) or None
+    N_FDR_RNA_BINS = int(getattr(args, 'n_fdr_rna_bins', None) or '4')
+    FDR_MIN_BIN_COUNT = int(getattr(args, 'fdr_min_bin_count', None) or '25000')
+    FDR_DIST_BINS = (
+        [float(edge) for edge in args.fdr_dist_bins.split(',')]
+        if getattr(args, 'fdr_dist_bins', None) else None
+    )
 
     # Parse and check arguments
     LEGAL_JOB_LIST = [
@@ -134,7 +141,11 @@ def main(args):
     header += "--donor_col %s\\\n" % DONOR_COL
     header += "--n_length_bins %s\\\n" % N_LENGTH_BINS
     header += "--fdr_bin_type %s\\\n" % FDR_BIN_TYPE
-    header += "--n_dist_bins %s\\\n" % N_DIST_BINS
+    header += "--tss_file %s\\\n" % TSS_FILE
+    header += "--rna_layer %s\\\n" % RNA_LAYER
+    header += "--n_fdr_rna_bins %s\\\n" % N_FDR_RNA_BINS
+    header += "--fdr_min_bin_count %s\\\n" % FDR_MIN_BIN_COUNT
+    header += "--fdr_dist_bins %s\\\n" % FDR_DIST_BINS
     print(header)
 
     if RANDOM_SEED is not None:
@@ -167,13 +178,14 @@ def main(args):
             n_rna_mean, n_rna_var = map(int, [n_rna_mean, n_rna_var])
         print(f'# Setting n_atac_mean={n_atac_mean}, n_atac_gc={n_atac_gc}, n_rna_mean={n_rna_mean}, n_rna_var={n_rna_var}, n_length_bins={N_LENGTH_BINS}, n_ctrl={n_ctrl}')
 
+    # compute_pval needs the multiome when it has to recompute RNA moments
     if JOB in [
         "compute_ctar",
         "compute_cis_only",
         "compute_ctrl_only",
         "generate_links",
         "generate_controls",
-    ]: 
+    ] or (JOB == "compute_pval" and MULTIOME_FILE is not None): 
 
         print("# Loading --multiome_file")
         if MULTIOME_FILE.endswith('.h5mu'):
@@ -237,8 +249,9 @@ def main(args):
         rna_type = 'mean_cv_bio' if BIN_TYPE in ('mean_cv_bio', 'mean_fano_cvbio') else 'mean_var'
         print(f'# Setting rna bin type to {rna_type}...')
 
-        print("# Setting --pybedtools_path")
-        pybedtools.helpers.set_bedtools_path(PYBEDTOOLS_PATH)
+        if PYBEDTOOLS_PATH:
+            print("# Setting --pybedtools_path")
+            pybedtools.helpers.set_bedtools_path(PYBEDTOOLS_PATH)
 
         if COVAR_FILE:
             print("# Loading --covar_file")
@@ -411,8 +424,9 @@ def main(args):
         print(f"# Found {len(ctrl_coeff_files)} ctrl coefficient files")
 
         if FDR_BIN_TYPE is not None:
-            assert FDR_BIN_TYPE == 'dist_mean_var', (
-                f"--fdr_bin_type '{FDR_BIN_TYPE}' is not implemented; only 'dist_mean_var' is currently supported."
+            assert FDR_BIN_TYPE in ('dist_rmean_rvar'), (
+                f"--fdr_bin_type '{FDR_BIN_TYPE}' is not implemented; "
+                "supported: 'dist_rmean_rvar'."
             )
 
         if USE_INF_MODE:
@@ -1582,31 +1596,44 @@ def main(args):
                 qval_col='q_value',
             )
 
-            if FDR_BIN_TYPE == 'dist_mean_var':
-                rna_bin_col = f'rna_mean_var_bin_{n_rna_mean}.{n_rna_var}'
-                if 'abs_distance' in cis_links_df.columns and rna_bin_col in cis_links_df.columns:
-                    cis_links_df['dist_bin'] = pd.qcut(
-                        cis_links_df['abs_distance'].rank(method='first'),
-                        N_DIST_BINS, labels=False, duplicates='drop'
-                    ).astype('Int64')
-                    cis_links_df['fdr_bin_dist_rmean_rvar'] = (
-                        cis_links_df['dist_bin'].astype(str)
-                        + '_'
-                        + cis_links_df[rna_bin_col].astype(str)
+            if FDR_BIN_TYPE == 'dist_rmean_rvar':
+                # Fixed TSS-distance bins, then nested rna_mean / rna_var quantile bins.
+                gene_df = None
+                if 'abs_distance' not in cis_links_df.columns:
+                    assert TSS_FILE is not None, (
+                        "--fdr_bin_type dist_rmean_rvar needs 'abs_distance' in cis_links_df "
+                        "or --tss_file (GENCODE GTF) to compute it."
                     )
-                    cis_links_df = ctar.method.binned_empirical_fdr(
-                        cis_links_df, ctrl_fdr_dic,
-                        stat_col=stat_col_bin,
-                        ctrl_bin_col=combined_bin_col,
-                        pi0=None,
-                        pval_col=f'{BIN_CONFIG}_mcpval',
-                        fdr_bin_col='fdr_bin_dist_rmean_rvar',
-                        qval_col='q_value_dist_rmean_rvar',
+                    print(f"# Loading TSS annotations from {TSS_FILE}...")
+                    gene_df = ctar.gentruth.load_gene_tss_from_gencode(TSS_FILE)
+
+                rna_adata = None
+                if not {'rna_mean', 'rna_var'}.issubset(cis_links_df.columns):
+                    assert MULTIOME_FILE is not None, (
+                        "--fdr_bin_type dist_rmean_rvar needs 'rna_mean'/'rna_var' in cis_links_df "
+                        "or --multiome_file to compute them."
                     )
-                    print('# Added q_value_dist_rmean_rvar.')
-                else:
-                    print(f'# WARNING: --fdr_bin_type dist_mean_var skipped — '
-                          f'abs_distance or {rna_bin_col} missing from cis_links_df.')
+                    print(f"# Computing RNA moments from --multiome_file (layer={RNA_LAYER}).")
+                    rna_adata = adata_rna
+
+                dist_bin_kwargs = {} if FDR_DIST_BINS is None else {'dist_bins': FDR_DIST_BINS}
+                cis_links_df = ctar.method.dist_rmean_rvar_sfdr(
+                    cis_links_df, ctrl_fdr_dic,
+                    gene_df=gene_df,
+                    gene_col='gene',
+                    rna_adata=rna_adata,
+                    rna_layer=RNA_LAYER,
+                    rna_gene_col='gene',
+                    min_bin_count=FDR_MIN_BIN_COUNT,
+                    n_bins=N_FDR_RNA_BINS,
+                    stat_col=stat_col_bin,
+                    ctrl_bin_col=combined_bin_col,
+                    pi0=None,
+                    pval_col=f'{BIN_CONFIG}_mcpval',
+                    qval_col='q_value_fixed_dist_rmean_rvar',
+                    **dist_bin_kwargs,
+                )
+                print('# Added q_value_fixed_dist_rmean_rvar.')
 
         # Save updated dataframe
         output_file = os.path.join(RESULTS_PATH, 'cis_links_df.csv')
@@ -1661,8 +1688,12 @@ if __name__ == "__main__":
     parser.add_argument("--random_seed", type=str, required=False, default=None, help="Random seed for reproducible control link generation")
     parser.add_argument("--donor_col", type=str, required=False, default=None, help="obs column for donor centering before Pearson correlation (requires --flag_corr True)")
     parser.add_argument("--n_length_bins", type=str, required=False, default='1', help="Number of peak-length quantile bins added to ATAC binning (1 = off, 5 = recommended)")
-    parser.add_argument("--fdr_bin_type", type=str, required=False, default=None, help="FDR stratification type for compute_pval. Only 'dist_mean_var' is currently supported.")
-    parser.add_argument("--n_dist_bins", type=str, required=False, default='5', help="Number of quantile bins for abs_distance when --fdr_bin_type dist_mean_var is used.")
+    parser.add_argument("--fdr_bin_type", type=str, required=False, default=None, help="FDR stratification type for compute_pval: 'dist_rmean_rvar' (fixed distance bins x nested rna_mean/rna_var bins).")
+    parser.add_argument("--tss_file", type=str, required=False, default=None, help="GENCODE GTF(.gz) used to compute TSS distances when --fdr_bin_type dist_rmean_rvar is used and abs_distance is missing.")
+    parser.add_argument("--rna_layer", type=str, required=False, default='counts', help="AnnData layer used to recompute rna_mean/rna_var for FDR binning. Empty string uses .X.")
+    parser.add_argument("--n_fdr_rna_bins", type=str, required=False, default='4', help="Number of nested quantile bins for rna_mean and rna_var when --fdr_bin_type dist_rmean_rvar is used.")
+    parser.add_argument("--fdr_min_bin_count", type=str, required=False, default='25000', help="Minimum pairs per fixed distance bin when --fdr_bin_type dist_rmean_rvar is used.")
+    parser.add_argument("--fdr_dist_bins", type=str, required=False, default=None, help="Comma-separated fixed distance bin edges (e.g. '-inf,1000,5000,inf') for --fdr_bin_type dist_rmean_rvar. Defaults to the function's built-in edges.")
 
     args = parser.parse_args()
     main(args)

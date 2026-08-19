@@ -282,6 +282,21 @@ def map_bin_col(links_df, bin_df, links_ref_col='peak', bin_col='mean_gc_bin', p
     return links_df
 
 
+def map_moment_cols(
+    links_df,
+    bin_df,
+    links_ref_col='gene',
+    moment_cols=(('mean', 'rna_mean'), ('var', 'rna_var')),
+):
+    ''' Add the raw moments used for binning (e.g. gene mean/variance) to links_df.
+    bin_df must already be indexed by links_ref_col values. Missing moments are skipped.
+    '''
+    for bin_col, out_col in moment_cols:
+        if bin_col in bin_df.columns:
+            links_df[out_col] = links_df[links_ref_col].map(bin_df[bin_col])
+    return links_df
+
+
 def combine_peak_gene_bins(
     links_df, 
     atac_bins_df, 
@@ -352,6 +367,8 @@ def combine_peak_gene_bins(
         suffix=f'_{rna_suffix}'
     )
 
+    links_df = map_moment_cols(links_df, rna_bins_df, links_ref_col=gene_col)
+
     combined = (
         links_df[f'atac_{atac_type}_bin_{atac_suffix}'].astype(str)
         + '_'
@@ -415,8 +432,22 @@ def ensure_combined_bin_column(
 ):
     """Add combined_bin column if missing using current ATAC/RNA bins."""
     combined_bin_col = f'combined_bin_{bin_config.rsplit(".", 1)[0]}'
-    if combined_bin_col in links_df.columns:
+    has_bins = combined_bin_col in links_df.columns
+    has_moments = {'rna_mean', 'rna_var'}.issubset(links_df.columns)
+    if has_bins and has_moments:
         return links_df
+
+    if has_bins:
+        # Bins already present; backfill the raw RNA moments.
+        rna_bins_df = get_bins(
+            adata_rna,
+            num_bins=[n_rna_mean, n_rna_var],
+            type=rna_type,
+            col='gene',
+            layer='counts',
+        )
+        rna_bins_df.index = rna_bins_df['gene']
+        return map_moment_cols(links_df, rna_bins_df, links_ref_col='gene')
 
     atac_bins_df = get_bins(
         adata_atac,

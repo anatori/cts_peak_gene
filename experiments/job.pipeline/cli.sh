@@ -20,8 +20,12 @@ N_CORES=64
 RANDOM_SEED=777
 DONOR_COL='DonorID'
 N_LENGTH_BINS=4
-FDR_BIN_TYPE='dist_mean_var'
+FDR_BIN_TYPE='dist_rmean_rvar'
 N_DIST_BINS=4
+TSS_FILE=/ocean/projects/bio240051p/aprieto/bedfiles/ref/gencode.v47.annotation.gtf.gz
+RNA_LAYER='counts'
+N_FDR_RNA_BINS=4
+FDR_MIN_BIN_COUNT=25000
 USE_CIS_ARRAY=true
 
 IFS='.' read -r b1 b2 b3 b4 rest <<< "$BIN_CONFIG"
@@ -207,7 +211,9 @@ fi
 ###########################################################################################
 
 echo "Submitting $BIN_CONFIG compute_pval job..."
-PVAL_JOB=$(sbatch --parsable -p $PARTITION -t 00:30:00 \
+# --multiome_file/--tss_file are only used when cis_links_df.csv lacks rna_mean/rna_var
+# or abs_distance; they are passed so compute_pval can also be run on its own.
+PVAL_JOB=$(sbatch --parsable -p $PARTITION -t 04:00:00 \
   -A bio240051p \
   --dependency=afterok:${CTRL_JOB}:${CIS_JOB} \
   --ntasks-per-node=32 \
@@ -215,7 +221,9 @@ PVAL_JOB=$(sbatch --parsable -p $PARTITION -t 00:30:00 \
   -o /ocean/projects/bio240051p/aprieto/logs/pval_%j.err -J "pval_$BIN_CONFIG" \
   --wrap "source ~/.bashrc && conda activate ctar && python /ocean/projects/bio240051p/aprieto/cts_peak_gene/CLI_ctar.py \
           --job compute_pval --binning_config $BIN_CONFIG --binning_type $BIN_TYPE --results_path $RESULTS_PATH --flag_corr $FLAG_CORR \
-          ${FDR_BIN_TYPE:+--fdr_bin_type $FDR_BIN_TYPE --n_dist_bins $N_DIST_BINS}")
+          --multiome_file $MULTIOME_FILE --genome_file $GENOME_FILE --pybedtools_path $PYBEDTOOLS_PATH \
+          --fdr_bin_type $FDR_BIN_TYPE --tss_file $TSS_FILE --rna_layer $RNA_LAYER \
+          --n_fdr_rna_bins $N_FDR_RNA_BINS --fdr_min_bin_count $FDR_MIN_BIN_COUNT")
 echo "P-value job ID: $PVAL_JOB"
 
 

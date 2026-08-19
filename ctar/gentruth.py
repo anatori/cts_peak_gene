@@ -499,7 +499,10 @@ def add_tss_distances(query_df, gene_df, gene_col="gene"):
     if "end" not in out.columns:
         out["end"] = out["start"]
 
+    orig_index = out.index
     out = out.merge(gene_df[["gene", "gene_chr", "tss"]], how="left", left_on=gene_col, right_on="gene")
+    if len(out) == len(orig_index):
+        out.index = orig_index  # merge drops the original (peak;gene) index
 
     # same chromosome?
     out["same_chr"] = out["gene_chr"] == out["chr"]
