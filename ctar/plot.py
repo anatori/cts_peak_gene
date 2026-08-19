@@ -1125,7 +1125,10 @@ def barplot_grouped_with_sig(
 
     Bracket spacing:
       - On log scale: base = group_max * (1 + bracket_base_pad), each level y = base * (1 + level * bracket_step), height = bracket_step * bracket_height
-      - On linear scale: base = group_max + bracket_base_pad * group_max, each level y = base + level * (bracket_step * group_max), height = (bracket_step * group_max) * bracket_height
+        (step is a fixed ratio, so bracket spacing looks the same across groups regardless of their magnitude)
+      - On linear scale: base = group_max + bracket_base_pad * global_max, each level y = base + level * (bracket_step * global_max), height = (bracket_step * global_max) * bracket_height
+        (step/height are sized off the plot-wide max across all groups, not each group's own max, so stacked
+        brackets don't end up more spread out for tall-bar groups than for short-bar groups)
     Increase bracket_step or bracket_base_pad to add space; reduce bracket_height to shrink bracket size.
     """
 
@@ -1338,6 +1341,10 @@ def barplot_grouped_with_sig(
 
     # Draw brackets vs reference using column-based p-values (OPTIONAL)
     if show_brackets and pval_vs_ref_col is not None and per_label_vs_ref:
+        # Global reference scale so bracket step/height look the same across
+        # groups regardless of each group's own bar magnitude (linear scale only;
+        # log scale is already ratio-based and scale-invariant).
+        global_max = max(max_y_for_limits) if max_y_for_limits else 1.0
         for i, lbl in enumerate(labels):
             pmap = per_label_vs_ref.get(lbl, {})
             if not pmap:
@@ -1359,7 +1366,7 @@ def barplot_grouped_with_sig(
                 step_val = bracket_step
                 height_val = step_val * bracket_height
             else:
-                scale = max(group_max, 1.0)
+                scale = max(global_max, 1.0)
                 base = group_max + bracket_base_pad * scale
                 step_val = bracket_step * scale
                 height_val = step_val * bracket_height
