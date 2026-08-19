@@ -13,3 +13,4 @@ file_path,score_col,fdr_col,method_name
 /projects/zhanglab/users/ana/multiome/results/ctar/corr_eval/brain/brain_unfiltered_len_4.4.4.4.10000/cis_links_df_with_fixed_dist.csv,4.4.4.4.10000_mcpval,,ctar_bh
 /projects/zhanglab/users/ana/multiome/results/ctar/corr_eval/brain/brain_unfiltered_len_4.4.4.4.10000/cis_links_df.csv,4.4.4.4.10000_mcpval,bh_q_value_fixed_dist_rmean_rvar,ctar_bh_strat
 /projects/zhanglab/users/ana/multiome/results/ctar/corr_eval/brain/brain_unfiltered_len_4.4.4.4.10000/cis_links_df.csv,4.4.4.4.10000_mcpval,q_value_sfdr_only,ctar_sfdr
+/projects/zhanglab/users/ana/multiome/results/ctar/corr_eval/brain/brain_unfiltered_len_4.4.4.4.10000/cis_links_df_with_fixed_dist.csv,abs_distance,abs_distance,distance
