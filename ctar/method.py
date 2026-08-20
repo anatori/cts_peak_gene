@@ -2021,6 +2021,11 @@ def binned_empirical_fdr(
     use_fdr_bins = fdr_bin_col is not None
     group_cols = fdr_bin_col if use_fdr_bins else ctrl_bin_col
 
+    # track order
+    order_col = '_idx'
+    cis_links_df = cis_links_df.copy()
+    cis_links_df[order_col] = np.arange(len(cis_links_df))
+
     cis_pairs_ls = []
 
     for bin_b, bin_df in cis_links_df.groupby(group_cols):
@@ -2076,7 +2081,7 @@ def binned_empirical_fdr(
         bin_df[qval_col] = q_values
         cis_pairs_ls.append(bin_df)
 
-    return pd.concat(cis_pairs_ls) 
+    return pd.concat(cis_pairs_ls).sort_values(order_col).drop(columns=order_col)
 
 
 def binned_bh_fdr(
@@ -2125,6 +2130,12 @@ def binned_bh_fdr(
         print(f'Estimating pi0 per bin using Storey procedure (lambda={lambda_storey})...')
 
     group_col = fdr_bin_col if fdr_bin_col is not None else ctrl_bin_col
+
+    # track order
+    order_col = '_idx'
+    cis_links_df = cis_links_df.copy()
+    cis_links_df[order_col] = np.arange(len(cis_links_df))
+
     cis_pairs_ls = []
 
     for _, bin_df in cis_links_df.groupby(group_col):
@@ -2150,7 +2161,7 @@ def binned_bh_fdr(
         bin_df[qval_col] = q_values
         cis_pairs_ls.append(bin_df)
 
-    return pd.concat(cis_pairs_ls)
+    return pd.concat(cis_pairs_ls).sort_values(order_col).drop(columns=order_col)
 
 
 def estimate_pi0(
@@ -2239,6 +2250,10 @@ def dist_rmean_rvar_sfdr(
 
     cis_links_df = cis_links_df.copy()
 
+    # track order
+    entry_col = '_entry_idx'
+    cis_links_df[entry_col] = np.arange(len(cis_links_df))
+
     if not all(coord in cis_links_df.columns for coord in ['chr', 'start', 'end']):
         cis_links_df[['chr','start','end']] = cis_links_df.peak.str.split(':|-',expand=True)
     cis_links_df[['start','end']] = cis_links_df[['start','end']].astype(int)
@@ -2292,7 +2307,7 @@ def dist_rmean_rvar_sfdr(
         tail=tail,
     )
 
-    cis_links_df = cis_links_df.drop(columns=['chr', 'start', 'end', 'same_chr'], errors='ignore')
+    cis_links_df = cis_links_df.sort_values(entry_col).drop(columns=[entry_col, 'chr', 'start', 'end', 'same_chr'], errors='ignore')
 
     return cis_links_df
 
