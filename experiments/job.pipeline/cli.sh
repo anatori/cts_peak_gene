@@ -3,30 +3,31 @@
 # FILE: /ocean/projects/bio240051p/aprieto/cts_peak_gene/experiments/job.pipeline/cli.sh
 
 MULTIOME_DATASET=bmmc
-MULTIOME_FILE=/ocean/projects/bio240051p/aprieto/multiome/processed/neurips_bmmc/bmmc.h5mu
+MULTIOME_FILE=/projects/zhanglab/users/ana/multiome/processed/neurips_bmmc/bmmc.h5mu
 BIN_CONFIG=4.4.4.4.10000
-TARGET_PATH=/ocean/projects/bio240051p/aprieto/multiome/results/ctar/final_eval/${MULTIOME_DATASET}/${MULTIOME_DATASET}_unfiltered_len_donor_${BIN_CONFIG}
+TARGET_PATH=/projects/zhanglab/users/ana/multiome/results/ctar/norm_eval/${MULTIOME_DATASET}/${MULTIOME_DATASET}_unfiltered_len_donor_${BIN_CONFIG}
 GENOME_FILE=/ocean/projects/bio240051p/aprieto/bedfiles/ref/GRCh38.p14.genome.fixed.fa
 BIN_TYPE='mean_var'
-PYBEDTOOLS_PATH=/opt/packages/bedtools/2.30.0
-BATCH_SIZE=10
-RESULTS_PATH=/ocean/projects/bio240051p/aprieto/multiome/results/ctar/final_eval/${MULTIOME_DATASET}/${MULTIOME_DATASET}_unfiltered_len_donor_${BIN_CONFIG}
-PARTITION="RM-shared"
-MAX_CONCURRENT=200
+PYBEDTOOLS_PATH=/projects/zhanglab/users/ana/bedtools2/bin
+BATCH_SIZE=5000
+RESULTS_PATH=/projects/zhanglab/users/ana/multiome/results/ctar/norm_eval/${MULTIOME_DATASET}/${MULTIOME_DATASET}_unfiltered_len_donor_${BIN_CONFIG}
+PARTITION="mzhang,statgen,pool1"
+MAX_CONCURRENT=10
 FLAG_LL='False'
 FLAG_SE='True'
-FLAG_CORR='False'
+FLAG_CORR='True'
 N_CORES=64
 RANDOM_SEED=777
 DONOR_COL='DonorID'
 N_LENGTH_BINS=4
 FDR_BIN_TYPE='dist_rmean_rvar'
 N_DIST_BINS=4
-TSS_FILE=/ocean/projects/bio240051p/aprieto/bedfiles/ref/gencode.v47.annotation.gtf.gz
+TSS_FILE=/projects/zhanglab/users/ana/bedtools2/ana_bedfiles/ref/gencode.v47.annotation.gtf.gz
 RNA_LAYER='counts'
 N_FDR_RNA_BINS=4
 FDR_MIN_BIN_COUNT=25000
 USE_CIS_ARRAY=true
+FLAG_TFIDF='False'
 
 IFS='.' read -r b1 b2 b3 b4 rest <<< "$BIN_CONFIG"
 if [[ "$b3" == "inf" && "$b4" == "inf" ]]; then
@@ -75,7 +76,7 @@ if [ "$USE_CIS_ARRAY" = true ]; then
                 --job compute_cis_only --multiome_file $MULTIOME_FILE --batch_size $BATCH_SIZE \
                 --binning_config $BIN_CONFIG --binning_type $BIN_TYPE --genome_file $GENOME_FILE --target_path $TARGET_PATH \
                 --results_path $RESULTS_PATH --pybedtools_path $PYBEDTOOLS_PATH --n_cores $N_CORES \
-                --flag_ll $FLAG_LL --flag_se $FLAG_SE --flag_corr $FLAG_CORR --random_seed $RANDOM_SEED \
+                --flag_ll $FLAG_LL --flag_se $FLAG_SE --flag_corr $FLAG_CORR --flag_tfidf $FLAG_TFIDF --random_seed $RANDOM_SEED \
                 --n_length_bins $N_LENGTH_BINS \
                 --array_idx \$SLURM_ARRAY_TASK_ID \
                 ${DONOR_COL:+--donor_col $DONOR_COL}")
@@ -90,7 +91,7 @@ else
               --job compute_cis_only --multiome_file $MULTIOME_FILE --batch_size $BATCH_SIZE \
               --binning_config $BIN_CONFIG --binning_type $BIN_TYPE --genome_file $GENOME_FILE --target_path $TARGET_PATH \
               --results_path $RESULTS_PATH --pybedtools_path $PYBEDTOOLS_PATH --n_cores $N_CORES \
-              --flag_ll $FLAG_LL --flag_se $FLAG_SE --flag_corr $FLAG_CORR --random_seed $RANDOM_SEED \
+              --flag_ll $FLAG_LL --flag_se $FLAG_SE --flag_corr $FLAG_CORR --flag_tfidf $FLAG_TFIDF --random_seed $RANDOM_SEED \
               --n_length_bins $N_LENGTH_BINS \
               ${DONOR_COL:+--donor_col $DONOR_COL}")
     echo "Cis job ID: $CIS_JOB"
@@ -177,7 +178,7 @@ if [ "$USE_INF_MODE" = true ]; then
                     --job compute_ctrl_only --multiome_file $MULTIOME_FILE --array_idx \$SLURM_ARRAY_TASK_ID \
                     --batch_size $BATCH_SIZE --target_path $TARGET_PATH --results_path $RESULTS_PATH \
                     --binning_config $BIN_CONFIG --binning_type $BIN_TYPE --genome_file $GENOME_FILE --pybedtools_path $PYBEDTOOLS_PATH \
-                    --n_cores $N_CORES --flag_ll $FLAG_LL --flag_se $FLAG_SE --flag_corr $FLAG_CORR --random_seed $RANDOM_SEED \
+                    --n_cores $N_CORES --flag_ll $FLAG_LL --flag_se $FLAG_SE --flag_corr $FLAG_CORR --flag_tfidf $FLAG_TFIDF --random_seed $RANDOM_SEED \
                     --n_length_bins $N_LENGTH_BINS \
                     ${DONOR_COL:+--donor_col $DONOR_COL}")
         echo "Ctrl job ID: $CTRL_JOB"
@@ -199,7 +200,7 @@ else
               --job compute_ctrl_only --multiome_file $MULTIOME_FILE --array_idx \$SLURM_ARRAY_TASK_ID \
               --batch_size $BATCH_SIZE --target_path $TARGET_PATH --results_path $RESULTS_PATH \
               --binning_config $BIN_CONFIG --binning_type $BIN_TYPE --genome_file $GENOME_FILE --pybedtools_path $PYBEDTOOLS_PATH \
-              --n_cores $N_CORES --flag_ll $FLAG_LL --flag_se $FLAG_SE --flag_corr $FLAG_CORR --random_seed $RANDOM_SEED \
+              --n_cores $N_CORES --flag_ll $FLAG_LL --flag_se $FLAG_SE --flag_corr $FLAG_CORR --flag_tfidf $FLAG_TFIDF --random_seed $RANDOM_SEED \
               --n_length_bins $N_LENGTH_BINS \
               ${DONOR_COL:+--donor_col $DONOR_COL}")
     echo "Ctrl job ID: $CTRL_JOB"

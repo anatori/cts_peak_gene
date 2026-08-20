@@ -85,6 +85,9 @@ def main(args):
         [float(edge) for edge in args.fdr_dist_bins.split(',')]
         if getattr(args, 'fdr_dist_bins', None) else None
     )
+    FLAG_TFIDF = (args.flag_tfidf == 'True')
+    FLAG_BIN = (args.flag_bin == 'True')
+    assert not (FLAG_TFIDF and FLAG_BIN), "--flag_tfidf and --flag_bin are mutually exclusive ATAC transforms"
 
     # Parse and check arguments
     LEGAL_JOB_LIST = [
@@ -137,6 +140,8 @@ def main(args):
     header += "--flag_se %s\\\n" % FLAG_SE
     header += "--flag_ll %s\\\n" % FLAG_LL
     header += "--flag_corr %s\\\n" % FLAG_CORR
+    header += "--flag_tfidf %s\\\n" % FLAG_TFIDF
+    header += "--flag_bin %s\\\n" % FLAG_BIN
     header += "--random_seed %s\\\n" % RANDOM_SEED
     header += "--donor_col %s\\\n" % DONOR_COL
     header += "--n_length_bins %s\\\n" % N_LENGTH_BINS
@@ -279,10 +284,21 @@ def main(args):
         print("# Normalizing for Pearson correlation (normalize_total + log1p)...")
         adata_rna_tmp = adata_rna.copy()
         adata_atac_tmp = adata_atac.copy()
-        sc.pp.normalize_total(adata_rna_tmp, layer='counts')
+        # Normalize from the raw counts layer into .X, which is what rna_norm/atac_norm read.
+        # (sc.pp.normalize_total(..., layer='counts') writes only to the layer, never to .X.)
+        adata_rna_tmp.X = adata_rna_tmp.layers['counts'].copy()
+        sc.pp.normalize_total(adata_rna_tmp)
         sc.pp.log1p(adata_rna_tmp)
-        sc.pp.normalize_total(adata_atac_tmp, layer='counts')
-        sc.pp.log1p(adata_atac_tmp)
+        if FLAG_TFIDF:
+            print('# Using TFIDF for ATAC...')
+            mu.atac.pp.tfidf(adata_atac_tmp, from_layer='counts')
+        elif FLAG_BIN:
+            print('# Using binarized ATAC...')
+            adata_atac_tmp.X = (adata_atac_tmp.layers['counts'] > 0).astype(np.float32)
+        else:
+            adata_atac_tmp.X = adata_atac_tmp.layers['counts'].copy()
+            sc.pp.normalize_total(adata_atac_tmp)
+            sc.pp.log1p(adata_atac_tmp)
         if DONOR_COL is not None:
             assert DONOR_COL in adata_rna.obs.columns, f"--donor_col '{DONOR_COL}' not found in obs"
             print(f"# Donor column '{DONOR_COL}' set — using within-donor Pearson correlation (sparse, no centering).")
@@ -1670,6 +1686,8 @@ if __name__ == "__main__":
     parser.add_argument("--flag_ll", type=str, required=False, default='False')
     parser.add_argument("--flag_se", type=str, required=False, default='False')
     parser.add_argument("--flag_corr", type=str, required=False, default='False')
+    parser.add_argument("--flag_tfidf", type=str, required=False, default='False')
+    parser.add_argument("--flag_bin", type=str, required=False, default='False', help="Binarize ATAC counts (0/1) instead of log1p or TFIDF. Mutually exclusive with --flag_tfidf.")
     parser.add_argument(
         "--genome_file", type=str, required=False, default=None, help="GRCh38.p14.genome.fa.bgz reference"
     )
