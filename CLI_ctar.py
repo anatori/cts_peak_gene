@@ -982,7 +982,13 @@ def main(args):
             np.save(f'{results_folder}/ctrl_peaks.npy', ctrl_peaks)
             
         else:
-            adata_rna.var = ctar.data_loader.get_gene_coords(adata_rna.var, add_tss=False)
+            if TSS_FILE is not None:
+                print(f"# Loading gene chromosomes from {TSS_FILE} (skipping BioMart)...")
+                gene_tss_df = ctar.gentruth.load_gene_tss_from_gencode(TSS_FILE)
+                chr_map = gene_tss_df.set_index('gene')['gene_chr']
+                adata_rna.var['chr'] = adata_rna.var['gene'].map(chr_map)
+            else:
+                adata_rna.var = ctar.data_loader.get_gene_coords(adata_rna.var, add_tss=False)
             ctrl_links_dic, atac_bins_df, rna_bins_df = ctar.method.create_ctrl_pairs(
                 adata_atac, adata_rna, atac_bins=[n_atac_mean,n_atac_gc], rna_bins=[n_rna_mean,n_rna_var],
                 atac_type=atac_type, rna_type=rna_type, b=n_ctrl,
