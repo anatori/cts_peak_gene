@@ -1,9 +1,9 @@
 import numpy as np
 import pandas as pd
-import scipy.sparse as sp
+import scipy as sp
 
 
-def mean_by_group(adata, group_key="celltype", layer=None, use_raw=False):
+def mean_by_group(adata, group_key="celltype", layer=None, use_raw=False, groups=None):
     # pick matrix
     if use_raw:
         X = adata.raw.X
@@ -17,49 +17,74 @@ def mean_by_group(adata, group_key="celltype", layer=None, use_raw=False):
         else:
             X = adata.layers[layer]
 
-    groups = obs[group_key].astype("category")
+    if groups is None:
+        groups = obs[group_key].astype("category")
+    else:
+        groups = pd.Series(np.asarray(groups), index=obs.index).astype("category")
+
     codes = groups.cat.codes.to_numpy()
     n_groups = len(groups.cat.categories)
-    n_genes = X.shape[1]
 
     # one-hot (cells x groups)
-    G = sp.csr_matrix(
+    G = sp.sparse.csr_matrix(
         (np.ones(X.shape[0]), (np.arange(X.shape[0]), codes)),
         shape=(X.shape[0], n_groups),
     )
 
     # sums: (groups x genes)
-    sums = (G.T @ X) if sp.issparse(X) else (G.T @ sp.csr_matrix(X))
+    sums = (G.T @ X) if sp.sparse.issparse(X) else (G.T @ sp.sparse.csr_matrix(X))
 
     counts = np.asarray(G.sum(axis=0)).ravel()  # cells per group
-    means = sums.multiply(1.0 / counts[:, None]) if sp.issparse(sums) else (sums / counts[:, None])
+    means = sums.multiply(1.0 / counts[:, None]) if sp.sparse.issparse(sums) else (sums / counts[:, None])
 
     # to DataFrame (dense)
-    means = means.toarray() if sp.issparse(means) else np.asarray(means)
+    means = means.toarray() if sp.sparse.issparse(means) else np.asarray(means)
     means_df = pd.DataFrame(means, index=groups.cat.categories, columns=var_names).T
     means_df = means_df.reset_index(names='feature')
     return means_df
 
 
-def entropy_specificity(x, eps=1e-6, min_total=0.0):
+def entropy_specificity(x, min_total=0.0, eps=1e-6):
     """
-    x: 1D array-like of subtype-level means for one feature
-    returns specificity in [0,1], or np.nan if total signal is too low
+    Entropy-based specificity:
+
+        p_i = x_i / sum_j x_j
+        H(p) = - sum_i p_i * log(p_i)
+        specificity = 1 - H(p) / log(K)
+
+    Parameters
+    ----------
+    x
+        1D signal array of shape (k,) or 2D of shape (n, k) for one feature.
+    eps
+        Additive smoothing constant. Acts as filter with eps proportional to x_i (constant depends on normalization).
+    Returns
+    -------
+    Specificity in [0,1], or np.nan if total signal is too low.
+    Returns float if 1D and (n,) array if 2D.
     """
     x = np.asarray(x, dtype=float)
+    if x.ndim not in (1, 2):
+        raise ValueError("x must be 1D (one feature) or 2D (n_features, k).")
 
-    if np.nansum(x) < min_total:
-        return np.nan
-
-    x = np.clip(x, 0, None)
-    x = x + eps
-    p = x / x.sum()
-
-    k = len(p)
-    h = -(p * np.log(p)).sum()
-    h_norm = h / np.log(k)
-
-    return 1.0 - h_norm
+    flag_scalar = x.ndim == 1
+    if flag_scalar:
+        x = x[None, :]
+ 
+    row_totals = np.nansum(x, axis=1)
+    k = x.shape[1]
+ 
+    xc = np.clip(x, 0, None) + eps
+    with np.errstate(invalid='ignore', divide='ignore'):
+        p = xc / xc.sum(axis=1, keepdims=True)
+        log_p = np.zeros_like(p)
+        np.log(p, where=p > 0, out=log_p)
+        h = -(p * log_p).sum(axis=1)
+        spec = 1.0 - h / np.log(k)
+ 
+    spec[row_totals < min_total] = np.nan
+ 
+    return float(spec[0]) if flag_scalar else spec
 
 
 def dominant_subtype(x):
@@ -69,11 +94,10 @@ def dominant_subtype(x):
     return int(np.nanargmax(x))
 
 
-def compute_feature_specificity(mean_df, feature_col='feature', subtype_cols=None,
-                                eps=1e-6, min_total=0.0):
+def compute_feature_specificity(mean_df, feature_col='feature', subtype_cols=None, min_total=0.0, eps=1e-6):
     """
     mean_df: dataframe with one row per feature and subtype mean columns
-    returns dataframe with specificity and dominant subtype
+    returns dataframe with specificity and dominant subtype and mean columns per subtype
     """
     if subtype_cols is None:
         subtype_cols = [c for c in mean_df.columns if c != feature_col]
@@ -82,10 +106,7 @@ def compute_feature_specificity(mean_df, feature_col='feature', subtype_cols=Non
 
     vals = mean_df[subtype_cols].to_numpy(dtype=float)
 
-    out['specificity'] = [
-        entropy_specificity(row, eps=eps, min_total=min_total)
-        for row in vals
-    ]
+    out['specificity'] = entropy_specificity(vals, min_total=min_total, eps=eps)
     out['dominant_subtype_idx'] = [
         dominant_subtype(row) for row in vals
     ]
@@ -97,24 +118,21 @@ def compute_feature_specificity(mean_df, feature_col='feature', subtype_cols=Non
     return out
 
 
-def joint_entropy_specificity(rna_x, atac_x, eps=1e-6, min_total=0.0):
+def joint_entropy_specificity(rna_x, atac_x, min_total=0.0, eps=1e-6):
     """
-    Compute link specificity from the entropy of the subtype-wise joint signal.
+    Compute link specificity from the elementwise product.
+        joint_i = rna_i * atac_i
+        entropy_specificity(joint)
 
     Parameters
     ----------
     rna_x
-        1D array-like RNA subtype vector for one gene.
+       1D RNA array of shape (k,) or 2D of shape (n, k) for one gene.
     atac_x
-        1D array-like ATAC subtype vector for one peak.
-
-    Notes
-    -----
-    This uses the aligned subtype-wise product of the two vectors as the
-    link-level signal and then computes entropy specificity on that joint
-    subtype profile. Although this is sometimes described informally as a
-    "dot product", the entropy is computed on the per-subtype product vector,
-    not on a collapsed scalar.
+       1D ATAC array of shape (k,) or 2D of shape (n, k) for one peak.
+    Returns
+    -------
+    Returns float if 1D and (n,) array if 2D.
     """
     rna_x = np.asarray(rna_x, dtype=float)
     atac_x = np.asarray(atac_x, dtype=float)
@@ -123,23 +141,173 @@ def joint_entropy_specificity(rna_x, atac_x, eps=1e-6, min_total=0.0):
         raise ValueError(
             "rna_x and atac_x must have the same shape to compute joint entropy specificity."
         )
+    if rna_x.ndim not in (1, 2):
+        raise ValueError("rna_x and atac_x must be 1D (one link) or 2D (n_links, k).")
 
     joint_x = np.clip(rna_x, 0, None) * np.clip(atac_x, 0, None)
-    return entropy_specificity(joint_x, eps=eps, min_total=min_total)
+    spec = entropy_specificity(joint_x, min_total=min_total, eps=eps)
+
+    if joint_x.ndim == 1:
+        return 0.0 if joint_x.sum() == 0 else spec
+    else:
+        spec = np.array(spec, copy=True)
+        spec[joint_x.sum(axis=1) == 0] = 0.0
+        return spec
 
 
-def attach_link_specificity(link_df,
-                            gene_spec_df, peak_spec_df,
-                            subtypes_dict=None,
-                            gene_col='gene', peak_col='peak',
-                            gene_spec_col='specificity',
-                            peak_spec_col='specificity',
-                            out_col='link_specificity',
-                            weight_concordance=False):
+def wilcoxon_z_by_group(adata, group_key="celltype", layer=None, use_raw=False, groups=None):
     """
-    link_df: one row per peak-gene link
-    gene_spec_df: feature specificity table for genes
-    peak_spec_df: feature specificity table for peaks
+    One-vs-rest Wilcoxon rank-sum z-score per feature per cell type. Same as
+    sc.tl.rank_genes_groups(method='wilcoxon', tie_correct=False) 'scores' but sparse-aware.
+ 
+        R_i = sum of ranks of the feature's values among cells of type i
+        z_i = ( R_i - n_i(N+1)/2 ) / sqrt( n_i * (N - n_i) * (N+1) / 12 )
+ 
+    Parameters
+    ----------
+    groups
+        Optional array-like of group labels replacing adata.obs[group_key].
+ 
+    Returns
+    -------
+    Dataframe with one row per feature and one column per cell type, in the
+    same shape and column order as mean_by_group().
+    """ 
+    if use_raw:
+        X = adata.raw.X; var_names = adata.raw.var_names; obs = adata.obs
+    else:
+        obs = adata.obs; var_names = adata.var_names
+        X = adata.X if layer is None else adata.layers[layer]
+ 
+    if groups is None:
+        groups = obs[group_key].astype("category")
+    else:
+        groups = pd.Series(np.asarray(groups), index=obs.index).astype("category")
+    codes = groups.cat.codes.to_numpy()
+    cats = groups.cat.categories
+    K = len(cats)
+ 
+    Xs = sp.sparse.csc_matrix(X) if sp.sparse.issparse(X) else sp.sparse.csc_matrix(np.asarray(X))
+    n_cells, n_feat = Xs.shape
+ 
+    # Rank nonzeros only using lexsort
+    indptr, data = Xs.indptr, Xs.data
+    nnz = len(data)
+    col = np.repeat(np.arange(n_feat), np.diff(indptr))
+    n_zero = (n_cells - np.diff(indptr)).astype(float)
+ 
+    if nnz:
+        order = np.lexsort((data, col))
+        sc_, sd_ = col[order], data[order]
+        rank_nz = (np.arange(nnz) - indptr[sc_]) + 1.0 # 1-based within column
+        # average tied ranks consistent with scanpy
+        newgrp = np.empty(nnz, dtype=bool); newgrp[0] = True
+        newgrp[1:] = (sc_[1:] != sc_[:-1]) | (sd_[1:] != sd_[:-1])
+        starts = np.flatnonzero(newgrp)
+        sums = np.add.reduceat(rank_nz, starts)
+        cnts = np.diff(np.append(starts, nnz))
+        rank_nz = np.repeat(sums / cnts, cnts) + n_zero[sc_] # shift past the zero block
+        Rnz = np.empty(nnz); Rnz[order] = rank_nz
+    else:
+        Rnz = np.empty(0)
+ 
+    Rmat = sp.sparse.csc_matrix((Rnz, Xs.indices, Xs.indptr), shape=Xs.shape)
+    NZmat = sp.sparse.csc_matrix((np.ones(nnz), Xs.indices, Xs.indptr), shape=Xs.shape)
+ 
+    G = sp.sparse.csr_matrix(
+        (np.ones(n_cells), (np.arange(n_cells), codes)), shape=(n_cells, K)
+    )
+    Rsum_nz = np.asarray((G.T @ Rmat).todense())
+    cnt_nz = np.asarray((G.T @ NZmat).todense())
+    n1 = np.asarray(G.sum(axis=0)).ravel()[:, None]
+    Rsum = Rsum_nz + (n1 - cnt_nz) * (n_zero[None, :] + 1.0) / 2.0
+ 
+    n2 = n_cells - n1
+    with np.errstate(invalid='ignore', divide='ignore'):
+        Z = (Rsum - n1 * (n_cells + 1) / 2.0) / np.sqrt(n1 * n2 * (n_cells + 1) / 12.0)
+    Z = np.where((n1 == 0) | (n2 == 0), 0.0, Z).T
+ 
+    out = pd.DataFrame(Z, index=var_names, columns=cats)
+    return out.reset_index(names='feature')
+ 
+ 
+def marker_concordance(rna_z, atac_z):
+    """
+    Link specificity from standard marker statistics:
+        T = max_i min( z_rna_i , z_atac_i )
+ 
+    Parameters
+    ----------
+    rna_z
+       1D RNA z array of shape (k,) or 2D of shape (n, k).
+    atac_z
+       1D ATAC z array of shape (k,) or 2D of shape (n, k).
+    Returns
+    -------
+    Returns float if 1D and (n,) array if 2D.
+    """
+    rna_z = np.asarray(rna_z, dtype=float)
+    atac_z = np.asarray(atac_z, dtype=float)
+    if rna_z.shape != atac_z.shape:
+        raise ValueError("rna_z and atac_z must have the same shape.")
+    if rna_z.ndim not in (1, 2):
+        raise ValueError("rna_z and atac_z must be 1D (one link) or 2D (n_links, k).")
+ 
+    scalar = rna_z.ndim == 1
+    if scalar:
+        rna_z = rna_z[None, :]; atac_z = atac_z[None, :]
+ 
+    T = np.minimum(rna_z, atac_z).max(axis=1)
+    return float(T[0]) if scalar else T
+
+
+def attach_link_specificity(
+    link_df,
+    gene_spec_df,
+    peak_spec_df,
+    rna_means=None,
+    atac_means=None,
+    rna_z=None,
+    atac_z=None,
+    subtypes_dict=None,
+    gene_col='gene',
+    peak_col='peak',
+    gene_spec_col='specificity',
+    peak_spec_col='specificity',
+    out_col='link_specificity',
+    weight_concordance=False,
+    min_total=0.0,
+):
+    """
+    Attach link-level cell-type specificity statistics.
+
+    Parameters
+    ----------
+    link_df
+        One row per peak-gene link.
+
+    gene_spec_df, peak_spec_df
+        Feature-level specificity tables returned by
+        compute_feature_specificity(). These should contain:
+            feature, specificity, dominant_subtype
+
+    rna_means, atac_means
+        Feature x cell-type mean tables returned by mean_by_group().
+        Required for joint entropy specificity.
+
+    rna_z, atac_z
+        Feature x cell-type Wilcoxon rank-sum z tables from
+        wilcoxon_z_by_group().
+
+    subtypes_dict
+        Optional mapping from subtype -> broader cell type.
+
+    Returns
+    -------
+    out
+        link_df with gene/peak specificity, dominant subtype,
+        joint entropy specificity, geometric specificity,
+        minimum specificity, and concordance.
     """
     g = gene_spec_df.rename(columns={
         'feature': gene_col,
@@ -159,54 +327,34 @@ def attach_link_specificity(link_df,
 
     out = link_df.merge(g, on=gene_col, how='left').merge(p, on=peak_col, how='left')
 
-    subtype_cols = [
-        c for c in gene_spec_df.columns
-        if c in peak_spec_df.columns and c not in {gene_col, peak_col, 'feature'}
-    ]
-    subtype_cols = [
-        c for c in subtype_cols
-        if pd.api.types.is_numeric_dtype(gene_spec_df[c])
-        and pd.api.types.is_numeric_dtype(peak_spec_df[c])
-        and c not in {
-            gene_spec_col,
-            peak_spec_col,
-            'dominant_subtype_idx',
-        }
-    ]
-
     out[f'{out_col}_joint'] = np.nan
-
-    if subtype_cols:
-        g_joint = gene_spec_df[[gene_col, *subtype_cols]].copy() if gene_col in gene_spec_df.columns else (
-            gene_spec_df.rename(columns={'feature': gene_col})[[gene_col, *subtype_cols]].copy()
-        )
-        p_joint = peak_spec_df[[peak_col, *subtype_cols]].copy() if peak_col in peak_spec_df.columns else (
-            peak_spec_df.rename(columns={'feature': peak_col})[[peak_col, *subtype_cols]].copy()
-        )
-
-        g_joint = g_joint.rename(columns={c: f'{c}_rna' for c in subtype_cols})
-        p_joint = p_joint.rename(columns={c: f'{c}_atac' for c in subtype_cols})
-
-        out = out.merge(g_joint, on=gene_col, how='left').merge(p_joint, on=peak_col, how='left')
-
-        out[f'{out_col}_joint'] = [
-            joint_entropy_specificity(
-                row[[f'{c}_rna' for c in subtype_cols]].to_numpy(dtype=float),
-                row[[f'{c}_atac' for c in subtype_cols]].to_numpy(dtype=float),
-            )
-            for _, row in out.iterrows()
+    out[f'{out_col}_overlap'] = np.nan
+    if rna_means is not None and atac_means is not None:
+        subtype_cols = [
+            c for c in rna_means.columns
+            if c in atac_means.columns
+            and c not in {'feature', gene_col, peak_col}
         ]
+        if not subtype_cols:
+            raise ValueError(
+                "No shared cell-type columns found in rna_means and atac_means."
+            )
 
-    out[f'{out_col}_min'] = np.minimum(
-        out['gene_specificity'], out['peak_specificity']
-    )
-    out[f'{out_col}_geom'] = np.sqrt(
-        out['gene_specificity'] * out['peak_specificity']
-    )
+        rna_idx = pd.Index(rna_means['feature']).get_indexer(out[gene_col])
+        atac_idx = pd.Index(atac_means['feature']).get_indexer(out[peak_col])
+        valid = (rna_idx >= 0) & (atac_idx >= 0)
 
-    out['dominant_subtype_concordant'] = (
-        out['gene_dominant_subtype'] == out['peak_dominant_subtype']
-    ).astype(float)
+        if np.any(valid):
+
+            rx = rna_means[subtype_cols].to_numpy(dtype=np.float64, copy=False)[rna_idx[valid]]
+            ax = atac_means[subtype_cols].to_numpy(dtype=np.float64, copy=False)[atac_idx[valid]]
+            out.loc[valid, f'{out_col}_joint'] = joint_entropy_specificity(rx, ax, min_total=min_total)
+
+    out[f'{out_col}_min'] = np.minimum(out['gene_specificity'].to_numpy(), out['peak_specificity'].to_numpy())
+    out[f'{out_col}_geom'] = np.sqrt(out['gene_specificity'].to_numpy() * out['peak_specificity'].to_numpy())
+
+    dom_nan_mask = out['gene_dominant_subtype'].notna() & out['peak_dominant_subtype'].notna()
+    out.loc[dom_nan_mask, 'dominant_subtype_concordant'] = (out.loc[dom_nan_mask, 'gene_dominant_subtype'] == out.loc[dom_nan_mask, 'peak_dominant_subtype']).astype(float)
 
     if subtypes_dict is not None:
         mapped_celltypes = (
@@ -218,6 +366,20 @@ def attach_link_specificity(link_df,
             out.loc[mapped_celltypes, 'gene_dominant_celltype'] ==
             out.loc[mapped_celltypes, 'peak_dominant_celltype']
         ).astype(float)
+
+    out[f'{out_col}_marker'] = np.nan
+    if rna_z is not None and atac_z is not None:
+        z_cols = [c for c in rna_z.columns if c in atac_z.columns and c not in {'feature', gene_col, peak_col}]
+        if not z_cols:
+            raise ValueError("No shared celltype columns found in rna_z and atac_z.")
+ 
+        rna_zidx = pd.Index(rna_z['feature']).get_indexer(out[gene_col])
+        atac_zidx = pd.Index(atac_z['feature']).get_indexer(out[peak_col])
+        zvalid = (rna_zidx >= 0) & (atac_zidx >= 0)
+        if np.any(zvalid):
+            rz = rna_z[z_cols].to_numpy(dtype=np.float64, copy=False)[rna_zidx[zvalid]]
+            az = atac_z[z_cols].to_numpy(dtype=np.float64, copy=False)[atac_zidx[zvalid]]
+            out.loc[zvalid, f'{out_col}_marker'] = marker_concordance(rz, az)
 
     if weight_concordance:
         if subtypes_dict is not None:
