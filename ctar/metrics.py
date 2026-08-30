@@ -277,7 +277,7 @@ def auerc(
     min_recall: float = 0.0,
     max_recall: float = 1.0,
     weighted: bool = True,
-    average: bool = False
+    average: bool = True,
 ) -> float:
     """
     Area-under enrichment-recall curve (AUERC).
