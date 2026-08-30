@@ -74,7 +74,6 @@ print(','.join(names))
 
   local AGG_JOB_ID
   AGG_JOB_ID=$(submit \
-    --dependency=afterok:${INTERSECT_JOB_ID} \
     -t 0-06:00:00 --mem 128Gb -J "aggregate_${DATASET}_${EVAL}" \
     -o "${LOG_DIR}/aggregate_${DATASET}_${EVAL}-%j.out" \
     -e "${LOG_DIR}/aggregate_${DATASET}_${EVAL}-%j.err" \

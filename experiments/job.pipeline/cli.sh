@@ -1,16 +1,16 @@
 #!/bin/sh
 
-# FILE: /ocean/projects/bio240051p/aprieto/cts_peak_gene/experiments/job.pipeline/cli.sh
+# FILE: /projects/zhanglab/users/ana/cts_peak_gene/experiments/job.pipeline/cli.sh
 
-MULTIOME_DATASET=bmmc
-MULTIOME_FILE=/projects/zhanglab/users/ana/multiome/processed/neurips_bmmc/bmmc.h5mu
-BIN_CONFIG=4.4.4.4.10000
-TARGET_PATH=/projects/zhanglab/users/ana/multiome/results/ctar/norm_eval/${MULTIOME_DATASET}/${MULTIOME_DATASET}_unfiltered_len_donor_${BIN_CONFIG}
-GENOME_FILE=/ocean/projects/bio240051p/aprieto/bedfiles/ref/GRCh38.p14.genome.fixed.fa
+MULTIOME_DATASET=pbmc
+MULTIOME_FILE=/projects/zhanglab/users/ana/multiome/processed/pbmc_sorted_10k/pbmc.h5mu
+BIN_CONFIG=4.4.4.4.1000
+TARGET_PATH=/projects/zhanglab/users/ana/multiome/results/ctar/tfidf_eval/${MULTIOME_DATASET}/${MULTIOME_DATASET}_unfiltered_len_${BIN_CONFIG}
+GENOME_FILE=/projects/zhanglab/users/ana/bedtools2/ana_bedfiles/ref/GRCh38.p14.genome.fa.bgz
 BIN_TYPE='mean_var'
 PYBEDTOOLS_PATH=/projects/zhanglab/users/ana/bedtools2/bin
 BATCH_SIZE=5000
-RESULTS_PATH=/projects/zhanglab/users/ana/multiome/results/ctar/norm_eval/${MULTIOME_DATASET}/${MULTIOME_DATASET}_unfiltered_len_donor_${BIN_CONFIG}
+RESULTS_PATH=/projects/zhanglab/users/ana/multiome/results/ctar/tfidf_eval/${MULTIOME_DATASET}/${MULTIOME_DATASET}_unfiltered_len_${BIN_CONFIG}
 PARTITION="mzhang,statgen,pool1"
 MAX_CONCURRENT=10
 FLAG_LL='False'
@@ -18,7 +18,7 @@ FLAG_SE='True'
 FLAG_CORR='True'
 N_CORES=64
 RANDOM_SEED=777
-DONOR_COL='DonorID'
+DONOR_COL=''
 N_LENGTH_BINS=4
 FDR_BIN_TYPE='dist_rmean_rvar'
 N_DIST_BINS=4
@@ -27,7 +27,7 @@ RNA_LAYER='counts'
 N_FDR_RNA_BINS=4
 FDR_MIN_BIN_COUNT=25000
 USE_CIS_ARRAY=true
-FLAG_TFIDF='False'
+FLAG_TFIDF='True'
 
 IFS='.' read -r b1 b2 b3 b4 rest <<< "$BIN_CONFIG"
 if [[ "$b3" == "inf" && "$b4" == "inf" ]]; then
@@ -51,8 +51,8 @@ fi
 #     GEN_LINKS_JOB=$(sbatch --parsable -p $PARTITION -t 1-00:00:00 \
 #       -A bio240051p \
 #       --ntasks-per-node=32 \
-#       -o /ocean/projects/bio240051p/aprieto/logs/links_%j.err -J "links_$BIN_CONFIG" \
-#       --wrap "source ~/.bashrc && conda activate ctar && python /ocean/projects/bio240051p/aprieto/cts_peak_gene/CLI_ctar.py \
+#       -o /projects/zhanglab/users/ana/logs/links_%j.err -J "links_$BIN_CONFIG" \
+#       --wrap "source ~/.bashrc && conda activate ctar && python /projects/zhanglab/users/ana/cts_peak_gene/CLI_ctar.py \
 #               --job generate_links --multiome_file $MULTIOME_FILE --batch_size $BATCH_SIZE \
 #               --binning_config $BIN_CONFIG --binning_type $BIN_TYPE --genome_file $GENOME_FILE --target_path $TARGET_PATH \
 #               --pybedtools_path $PYBEDTOOLS_PATH --results_path $RESULTS_PATH --random_seed $RANDOM_SEED \
@@ -67,12 +67,11 @@ fi
 if [ "$USE_CIS_ARRAY" = true ]; then
     echo "Submitting $BIN_CONFIG compute_cis_only array job with $TOTAL_NUM_BATCHES tasks..."
     CIS_JOB=$(sbatch --parsable -p $PARTITION -t 3-00:00:00 \
-        -A bio240051p \
         $ARRAY_OPT \
         --ntasks-per-node=$N_CORES \
-        -o /ocean/projects/bio240051p/aprieto/logs/cis_%A_%a.err \
+        -o /projects/zhanglab/users/ana/logs/cis_%A_%a.err \
         -J "cis_$BIN_CONFIG" \
-        --wrap "source ~/.bashrc && conda activate ctar && python /ocean/projects/bio240051p/aprieto/cts_peak_gene/CLI_ctar.py \
+        --wrap "source ~/.bashrc && conda activate ctar && python /projects/zhanglab/users/ana/cts_peak_gene/CLI_ctar.py \
                 --job compute_cis_only --multiome_file $MULTIOME_FILE --batch_size $BATCH_SIZE \
                 --binning_config $BIN_CONFIG --binning_type $BIN_TYPE --genome_file $GENOME_FILE --target_path $TARGET_PATH \
                 --results_path $RESULTS_PATH --pybedtools_path $PYBEDTOOLS_PATH --n_cores $N_CORES \
@@ -84,10 +83,9 @@ if [ "$USE_CIS_ARRAY" = true ]; then
 else
     echo "Submitting $BIN_CONFIG compute_cis_only job..."
     CIS_JOB=$(sbatch --parsable -p $PARTITION -t 3-00:00:00 \
-      -A bio240051p \
       --ntasks-per-node=$N_CORES \
-      -o /ocean/projects/bio240051p/aprieto/logs/cis_%j.err -J "cis_$BIN_CONFIG" \
-      --wrap "source ~/.bashrc && conda activate ctar && python /ocean/projects/bio240051p/aprieto/cts_peak_gene/CLI_ctar.py \
+      -o /projects/zhanglab/users/ana/logs/cis_%j.err -J "cis_$BIN_CONFIG" \
+      --wrap "source ~/.bashrc && conda activate ctar && python /projects/zhanglab/users/ana/cts_peak_gene/CLI_ctar.py \
               --job compute_cis_only --multiome_file $MULTIOME_FILE --batch_size $BATCH_SIZE \
               --binning_config $BIN_CONFIG --binning_type $BIN_TYPE --genome_file $GENOME_FILE --target_path $TARGET_PATH \
               --results_path $RESULTS_PATH --pybedtools_path $PYBEDTOOLS_PATH --n_cores $N_CORES \
@@ -97,21 +95,20 @@ else
     echo "Cis job ID: $CIS_JOB"
 fi
 
-# ###########################################################################################
-# ######                              Generate Controls                              ######
-# ###########################################################################################
+###########################################################################################
+######                              Generate Controls                              ######
+###########################################################################################
 
-# echo "Submitting $BIN_CONFIG generate_controls job..."
-# GEN_CTRL_JOB=$(sbatch --parsable -p $PARTITION -t 1-00:00:00 \
-#   -A bio240051p \
-#   --ntasks-per-node=32 \
-#   -o /ocean/projects/bio240051p/aprieto/logs/gen_ctrl_%j.err -J "gen_ctrl_$BIN_CONFIG" \
-#   --wrap "source ~/.bashrc && conda activate ctar && python /ocean/projects/bio240051p/aprieto/cts_peak_gene/CLI_ctar.py \
-#           --job generate_controls --multiome_file $MULTIOME_FILE --batch_size $BATCH_SIZE \
-#           --binning_config $BIN_CONFIG --binning_type $BIN_TYPE --genome_file $GENOME_FILE --target_path $TARGET_PATH \
-#           --pybedtools_path $PYBEDTOOLS_PATH --results_path $RESULTS_PATH --random_seed $RANDOM_SEED \
-#           --n_length_bins $N_LENGTH_BINS")
-# echo "Generate controls job ID: $GEN_CTRL_JOB"
+echo "Submitting $BIN_CONFIG generate_controls job..."
+GEN_CTRL_JOB=$(sbatch --parsable -p $PARTITION -t 1-00:00:00 \
+  --ntasks-per-node=32 \
+  -o /projects/zhanglab/users/ana/logs/gen_ctrl_%j.err -J "gen_ctrl_$BIN_CONFIG" \
+  --wrap "source ~/.bashrc && conda activate ctar && python /projects/zhanglab/users/ana/cts_peak_gene/CLI_ctar.py \
+          --job generate_controls --multiome_file $MULTIOME_FILE --batch_size $BATCH_SIZE \
+          --binning_config $BIN_CONFIG --binning_type $BIN_TYPE --genome_file $GENOME_FILE --target_path $TARGET_PATH \
+          --pybedtools_path $PYBEDTOOLS_PATH --results_path $RESULTS_PATH --random_seed $RANDOM_SEED \
+          --n_length_bins $N_LENGTH_BINS")
+echo "Generate controls job ID: $GEN_CTRL_JOB"
 
 ###########################################################################################
 ######                    Wait for Links Job and Count Cis-Links                     ######
@@ -169,12 +166,11 @@ if [ "$USE_INF_MODE" = true ]; then
         echo "Submitting single array job with $TOTAL_NUM_BATCHES tasks..."
         
         CTRL_JOB=$(sbatch --parsable -p $PARTITION -t 2-00:00:00 \
-            -A bio240051p \
             --ntasks-per-node=$N_CORES \
             --array=0-$((TOTAL_NUM_BATCHES - 1))%${MAX_CONCURRENT} \
-            -o /ocean/projects/bio240051p/aprieto/logs/ctrl_%A_%a.err \
+            -o /projects/zhanglab/users/ana/logs/ctrl_%A_%a.err \
             -J "ctrl_$BIN_CONFIG" \
-            --wrap "source ~/.bashrc && conda activate ctar && python /ocean/projects/bio240051p/aprieto/cts_peak_gene/CLI_ctar.py \
+            --wrap "source ~/.bashrc && conda activate ctar && python /projects/zhanglab/users/ana/cts_peak_gene/CLI_ctar.py \
                     --job compute_ctrl_only --multiome_file $MULTIOME_FILE --array_idx \$SLURM_ARRAY_TASK_ID \
                     --batch_size $BATCH_SIZE --target_path $TARGET_PATH --results_path $RESULTS_PATH \
                     --binning_config $BIN_CONFIG --binning_type $BIN_TYPE --genome_file $GENOME_FILE --pybedtools_path $PYBEDTOOLS_PATH \
@@ -193,10 +189,9 @@ if [ "$USE_INF_MODE" = true ]; then
 else
     echo "Submitting $BIN_CONFIG compute_ctrl_only job with $TOTAL_NUM_BATCHES batches..."
     CTRL_JOB=$(sbatch --parsable -p $PARTITION -t 3-00:00:00 $ARRAY_OPT \
-      -A bio240051p \
       --ntasks-per-node=$N_CORES \
-      -o /ocean/projects/bio240051p/aprieto/logs/ctrl_%A_%a.err -J "ctrl_$BIN_CONFIG" \
-      --wrap "source ~/.bashrc && conda activate ctar && python /ocean/projects/bio240051p/aprieto/cts_peak_gene/CLI_ctar.py \
+      -o /projects/zhanglab/users/ana/logs/ctrl_%A_%a.err -J "ctrl_$BIN_CONFIG" \
+      --wrap "source ~/.bashrc && conda activate ctar && python /projects/zhanglab/users/ana/cts_peak_gene/CLI_ctar.py \
               --job compute_ctrl_only --multiome_file $MULTIOME_FILE --array_idx \$SLURM_ARRAY_TASK_ID \
               --batch_size $BATCH_SIZE --target_path $TARGET_PATH --results_path $RESULTS_PATH \
               --binning_config $BIN_CONFIG --binning_type $BIN_TYPE --genome_file $GENOME_FILE --pybedtools_path $PYBEDTOOLS_PATH \
@@ -215,12 +210,11 @@ echo "Submitting $BIN_CONFIG compute_pval job..."
 # --multiome_file/--tss_file are only used when cis_links_df.csv lacks rna_mean/rna_var
 # or abs_distance; they are passed so compute_pval can also be run on its own.
 PVAL_JOB=$(sbatch --parsable -p $PARTITION -t 04:00:00 \
-  -A bio240051p \
   --dependency=afterok:${CTRL_JOB}:${CIS_JOB} \
   --ntasks-per-node=32 \
   --mail-type=END --mail-user=asprieto@andrew.cmu.edu \
-  -o /ocean/projects/bio240051p/aprieto/logs/pval_%j.err -J "pval_$BIN_CONFIG" \
-  --wrap "source ~/.bashrc && conda activate ctar && python /ocean/projects/bio240051p/aprieto/cts_peak_gene/CLI_ctar.py \
+  -o /projects/zhanglab/users/ana/logs/pval_%j.err -J "pval_$BIN_CONFIG" \
+  --wrap "source ~/.bashrc && conda activate ctar && python /projects/zhanglab/users/ana/cts_peak_gene/CLI_ctar.py \
           --job compute_pval --binning_config $BIN_CONFIG --binning_type $BIN_TYPE --results_path $RESULTS_PATH --flag_corr $FLAG_CORR \
           --multiome_file $MULTIOME_FILE --genome_file $GENOME_FILE --pybedtools_path $PYBEDTOOLS_PATH \
           --fdr_bin_type $FDR_BIN_TYPE --tss_file $TSS_FILE --rna_layer $RNA_LAYER \
