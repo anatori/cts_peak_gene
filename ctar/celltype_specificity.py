@@ -118,7 +118,7 @@ def compute_feature_specificity(mean_df, feature_col='feature', subtype_cols=Non
     return out
 
 
-def joint_entropy_specificity(rna_x, atac_x, min_total=0.0, eps=1e-6):
+def joint_entropy_specificity(rna_x, atac_x, min_total=0.0, eps_rna=1e-6, eps_atac=1e-6, eps_overall=0.0):
     """
     Compute link specificity from the elementwise product.
         joint_i = rna_i * atac_i
@@ -130,6 +130,10 @@ def joint_entropy_specificity(rna_x, atac_x, min_total=0.0, eps=1e-6):
        1D RNA array of shape (k,) or 2D of shape (n, k) for one gene.
     atac_x
        1D ATAC array of shape (k,) or 2D of shape (n, k) for one peak.
+    eps_rna, eps_atac
+        Smoothing value for each modality. Independent so neither dominates.
+    eps_overall
+        Instead, you can try adding smoothing to joint value.
     Returns
     -------
     Returns float if 1D and (n,) array if 2D.
@@ -144,8 +148,8 @@ def joint_entropy_specificity(rna_x, atac_x, min_total=0.0, eps=1e-6):
     if rna_x.ndim not in (1, 2):
         raise ValueError("rna_x and atac_x must be 1D (one link) or 2D (n_links, k).")
 
-    joint_x = np.clip(rna_x, 0, None) * np.clip(atac_x, 0, None)
-    spec = entropy_specificity(joint_x, min_total=min_total, eps=eps)
+    joint_x = (np.clip(rna_x, 0, None) + eps_rna) * (np.clip(atac_x, 0, None) + eps_atac)
+    spec = entropy_specificity(joint_x, min_total=min_total, eps=eps_overall)
 
     if joint_x.ndim == 1:
         return 0.0 if joint_x.sum() == 0 else spec
@@ -277,6 +281,8 @@ def attach_link_specificity(
     out_col='link_specificity',
     weight_concordance=False,
     min_total=0.0,
+    eps_rna=1e-6,
+    eps_atac=1e-6,
 ):
     """
     Attach link-level cell-type specificity statistics.
@@ -328,7 +334,6 @@ def attach_link_specificity(
     out = link_df.merge(g, on=gene_col, how='left').merge(p, on=peak_col, how='left')
 
     out[f'{out_col}_joint'] = np.nan
-    out[f'{out_col}_overlap'] = np.nan
     if rna_means is not None and atac_means is not None:
         subtype_cols = [
             c for c in rna_means.columns
@@ -348,7 +353,7 @@ def attach_link_specificity(
 
             rx = rna_means[subtype_cols].to_numpy(dtype=np.float64, copy=False)[rna_idx[valid]]
             ax = atac_means[subtype_cols].to_numpy(dtype=np.float64, copy=False)[atac_idx[valid]]
-            out.loc[valid, f'{out_col}_joint'] = joint_entropy_specificity(rx, ax, min_total=min_total)
+            out.loc[valid, f'{out_col}_joint'] = joint_entropy_specificity(rx, ax, min_total=min_total, eps_rna=eps_rna, eps_atac=eps_atac)
 
     out[f'{out_col}_min'] = np.minimum(out['gene_specificity'].to_numpy(), out['peak_specificity'].to_numpy())
     out[f'{out_col}_geom'] = np.sqrt(out['gene_specificity'].to_numpy() * out['peak_specificity'].to_numpy())
