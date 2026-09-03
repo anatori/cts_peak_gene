@@ -159,10 +159,88 @@ def joint_entropy_specificity(rna_x, atac_x, min_total=0.0, eps_rna=1e-6, eps_at
         return spec
 
 
-def wilcoxon_z_by_group(adata, group_key="celltype", layer=None, use_raw=False, groups=None):
+def groupwise_z(W, codes, n_groups=None, n_cells=None, group_sizes=None, var_w=None):
     """
-    One-vs-rest Wilcoxon rank-sum z-score per feature per cell type. Same as
-    sc.tl.rank_genes_groups(method='wilcoxon', tie_correct=False) 'scores' but sparse-aware.
+    One-vs-rest z for an arbitrary per-cell score, shared by wilcoxon_z_by_group()
+    and joint_cell_z().
+
+        S_i      = sum_{c in i} w_c
+        E[S_i]   = n_i * mean(w)
+        Var[S_i] = n_i * (N - n_i) / (N - 1) * var(w)
+        z_i      = ( S_i - E[S_i] ) / sqrt( Var[S_i] )
+
+    These are the exact permutation moments of S_i under random assignment of
+    cells to groups (sampling without replacement), so the statistic is
+    automatically tie-corrected: var(w) is the empirical variance of the column,
+    not the no-ties constant (N^2-1)/12. That matters whenever w is mostly zero,
+    where the no-ties constant is far too large and deflates z.
+
+    z is invariant to adding a per-column constant to w, so a sparse W whose
+    implicit zeros stand for any constant baseline gives the same answer as the
+    dense column it represents.
+
+    Parameters
+    ----------
+    W
+        (n_rows, m) sparse or dense score matrix. Columns are features or links.
+    codes
+        Integer group code for each row of W.
+    n_cells, group_sizes
+        Population N and n_i. Pass these when W holds only a subset of cells,
+        the omitted ones being implicitly zero; they default to W's own rows.
+    var_w
+        Override for var(w), per column or scalar. Pass (N^2-1)/12 to reproduce
+        the uncorrected rank-sum variance.
+
+    Returns
+    -------
+    (K, m) array of z.
+    """
+    codes = np.asarray(codes)
+    K = int(n_groups) if n_groups is not None else int(codes.max()) + 1
+    N = int(n_cells) if n_cells is not None else W.shape[0]
+
+    if group_sizes is None:
+        n_i = np.bincount(codes, minlength=K).astype(float)
+    else:
+        n_i = np.asarray(group_sizes, dtype=float)
+
+    G = sp.sparse.csr_matrix(
+        (np.ones(W.shape[0]), (codes, np.arange(W.shape[0]))), shape=(K, W.shape[0])
+    )
+
+    if sp.sparse.issparse(W):
+        S = np.asarray((G @ W).todense())
+        sum_w = np.asarray(W.sum(axis=0)).ravel()
+        sumsq_w = np.asarray(W.multiply(W).sum(axis=0)).ravel()
+    else:
+        W = np.asarray(W, dtype=float)
+        S = G @ W
+        sum_w = W.sum(axis=0)
+        sumsq_w = (W ** 2).sum(axis=0)
+
+    mean_w = sum_w / N
+    if var_w is None:
+        var_w = np.maximum(sumsq_w / N - mean_w ** 2, 0.0)
+    else:
+        var_w = np.broadcast_to(np.asarray(var_w, dtype=float), mean_w.shape)
+
+    var_factor = n_i * (N - n_i) / (N - 1)
+    with np.errstate(invalid='ignore', divide='ignore'):
+        Z = (S - n_i[:, None] * mean_w[None, :]) / np.sqrt(
+            var_factor[:, None] * var_w[None, :]
+        )
+    Z[:, var_w <= 0] = np.nan
+    Z[var_factor <= 0, :] = 0.0          # empty or all-inclusive group
+    return Z
+
+
+def wilcoxon_z_by_group(adata, group_key="celltype", layer=None, use_raw=False, groups=None,
+                        tie_correct=True):
+    """
+    One-vs-rest Wilcoxon rank-sum z-score per feature per cell type. Sparse-aware;
+    with tie_correct=False this is sc.tl.rank_genes_groups(method='wilcoxon',
+    tie_correct=False) 'scores'.
  
         R_i = sum of ranks of the feature's values among cells of type i
         z_i = ( R_i - n_i(N+1)/2 ) / sqrt( n_i * (N - n_i) * (N+1) / 12 )
@@ -171,12 +249,18 @@ def wilcoxon_z_by_group(adata, group_key="celltype", layer=None, use_raw=False, 
     ----------
     groups
         Optional array-like of group labels replacing adata.obs[group_key].
- 
+    tie_correct
+        Standardize by the empirical rank variance, which accounts for the tied
+        zero block. False reproduces sc.tl.rank_genes_groups(tie_correct=False),
+        whose no-ties variance deflates z on sparse features -- roughly 1.5x at
+        20% detection and 5x at 1%, and by a different factor per feature, so it
+        distorts comparisons between features of unequal sparsity.
+
     Returns
     -------
     Dataframe with one row per feature and one column per cell type, in the
     same shape and column order as mean_by_group().
-    """ 
+    """
     if use_raw:
         X = adata.raw.X; var_names = adata.raw.var_names; obs = adata.obs
     else:
@@ -215,54 +299,182 @@ def wilcoxon_z_by_group(adata, group_key="celltype", layer=None, use_raw=False, 
     else:
         Rnz = np.empty(0)
  
-    Rmat = sp.sparse.csc_matrix((Rnz, Xs.indices, Xs.indptr), shape=Xs.shape)
-    NZmat = sp.sparse.csc_matrix((np.ones(nnz), Xs.indices, Xs.indptr), shape=Xs.shape)
- 
-    G = sp.sparse.csr_matrix(
-        (np.ones(n_cells), (np.arange(n_cells), codes)), shape=(n_cells, K)
+    # centre each column's nonzero ranks on its zero-block rank, so the implicit
+    # zeros of Tmat stand for the tied zero block. groupwise_z is invariant to
+    # that per-column shift, and picks up the tie correction from var(rank).
+    Tnz = Rnz - (n_zero[col] + 1.0) / 2.0 if nnz else Rnz
+    Tmat = sp.sparse.csc_matrix((Tnz, Xs.indices, Xs.indptr), shape=Xs.shape)
+
+    Z = groupwise_z(
+        Tmat, codes, n_groups=K,
+        var_w=None if tie_correct else (n_cells ** 2 - 1) / 12.0,
     )
-    Rsum_nz = np.asarray((G.T @ Rmat).todense())
-    cnt_nz = np.asarray((G.T @ NZmat).todense())
-    n1 = np.asarray(G.sum(axis=0)).ravel()[:, None]
-    Rsum = Rsum_nz + (n1 - cnt_nz) * (n_zero[None, :] + 1.0) / 2.0
- 
-    n2 = n_cells - n1
-    with np.errstate(invalid='ignore', divide='ignore'):
-        Z = (Rsum - n1 * (n_cells + 1) / 2.0) / np.sqrt(n1 * n2 * (n_cells + 1) / 12.0)
-    Z = np.where((n1 == 0) | (n2 == 0), 0.0, Z).T
- 
-    out = pd.DataFrame(Z, index=var_names, columns=cats)
+
+    out = pd.DataFrame(Z.T, index=var_names, columns=cats)
     return out.reset_index(names='feature')
- 
- 
-def marker_concordance(rna_z, atac_z):
+
+
+def link_score_matrix(rna_adata, atac_adata, gene_names, peak_names,
+                      rna_layer=None, atac_layer=None):
     """
-    Link specificity from standard marker statistics:
-        T = max_i min( z_rna_i , z_atac_i )
- 
-    Parameters
-    ----------
-    rna_z
-       1D RNA z array of shape (k,) or 2D of shape (n, k).
-    atac_z
-       1D ATAC z array of shape (k,) or 2D of shape (n, k).
+    Per-cell link scores w_c = rna_c(gene) * atac_c(peak), as a sparse
+    (n_cells, n_kept) matrix.
+
+    Build this once and reuse it with groupwise_z() whenever the same links are
+    scored under many group assignments -- a permutation null, say. Only the
+    group codes change between draws; forming the product is the expensive part.
+
+    Links are grouped by gene internally so each RNA column is gathered once
+    rather than once per link it appears in, which dominates runtime.
+
     Returns
     -------
-    Returns float if 1D and (n,) array if 2D.
+    W
+        (n_cells, n_kept) csc matrix of per-cell link scores.
+    cols
+        Positions in gene_names/peak_names that W's columns correspond to.
+        Links whose gene or peak is missing from the data, or whose gene is
+        never detected, are dropped and so are absent from cols.
     """
-    rna_z = np.asarray(rna_z, dtype=float)
-    atac_z = np.asarray(atac_z, dtype=float)
-    if rna_z.shape != atac_z.shape:
-        raise ValueError("rna_z and atac_z must have the same shape.")
-    if rna_z.ndim not in (1, 2):
-        raise ValueError("rna_z and atac_z must be 1D (one link) or 2D (n_links, k).")
- 
-    scalar = rna_z.ndim == 1
-    if scalar:
-        rna_z = rna_z[None, :]; atac_z = atac_z[None, :]
- 
-    T = np.minimum(rna_z, atac_z).max(axis=1)
-    return float(T[0]) if scalar else T
+    if rna_adata.n_obs != atac_adata.n_obs:
+        raise ValueError("rna_adata and atac_adata must have the same cells.")
+    if not np.array_equal(np.asarray(rna_adata.obs_names), np.asarray(atac_adata.obs_names)):
+        raise ValueError("rna_adata and atac_adata cells must be in the same order.")
+
+    gene_names = np.asarray(gene_names)
+    peak_names = np.asarray(peak_names)
+    if gene_names.shape != peak_names.shape:
+        raise ValueError("gene_names and peak_names must have the same length.")
+
+    A = rna_adata.X if rna_layer is None else rna_adata.layers[rna_layer]
+    B = atac_adata.X if atac_layer is None else atac_adata.layers[atac_layer]
+    A = A.tocsc() if sp.sparse.issparse(A) else sp.sparse.csc_matrix(A)
+    B = B.tocsc() if sp.sparse.issparse(B) else sp.sparse.csc_matrix(B)
+    N = A.shape[0]
+
+    gene_idx = pd.Index(rna_adata.var_names).get_indexer(gene_names)
+    peak_idx = pd.Index(atac_adata.var_names).get_indexer(peak_names)
+    valid = np.flatnonzero((gene_idx >= 0) & (peak_idx >= 0))
+    if len(valid) == 0:
+        return sp.sparse.csc_matrix((N, 0)), np.array([], dtype=int)
+
+    order = valid[np.argsort(gene_idx[valid], kind='stable')]
+    bounds = np.flatnonzero(np.r_[True, np.diff(gene_idx[order]) != 0])
+
+    a_dense = np.zeros(N)
+    cols, rows = [], []
+    for blk in np.split(order, bounds[1:]):
+        g = gene_idx[blk[0]]
+        sl = slice(A.indptr[g], A.indptr[g + 1])
+        nz, vals = A.indices[sl], A.data[sl]
+        if len(nz) == 0:
+            continue                                  # gene never detected
+
+        # scale this gene's peak columns by its per-cell values
+        P = B[:, peak_idx[blk]].tocsc().astype(np.float64)
+        a_dense[nz] = vals
+        P.data *= a_dense[P.indices]
+        a_dense[nz] = 0.0
+        P.eliminate_zeros()
+
+        cols.append(P)
+        rows.append(blk)
+
+    if not cols:
+        return sp.sparse.csc_matrix((N, 0)), np.array([], dtype=int)
+
+    W = sp.sparse.hstack(cols, format='csc') if len(cols) > 1 else cols[0]
+    return W, np.concatenate(rows)
+
+
+def joint_cell_z(
+    rna_adata,
+    atac_adata,
+    gene_names,
+    peak_names,
+    group_key="celltype",
+    groups=None,
+    rna_layer=None,
+    atac_layer=None,
+    gene_col='gene',
+    peak_col='peak',
+    chunk_size=20000,
+    min_nonzero=0,
+):
+    """
+    One-vs-rest z for a per-cell link score: the product is formed per cell and
+    then tested, instead of combining two per-celltype summaries.
+
+        w_c      = rna_c(gene) * atac_c(peak)        # per-cell link score
+        S_i      = sum_{c in i} w_c
+        E[S_i]   = n_i * mean(w)
+        Var[S_i] = n_i * (N - n_i) / (N - 1) * var(w)
+        z_i      = ( S_i - E[S_i] ) / sqrt( Var[S_i] )
+
+    These are the exact permutation moments of S_i under random assignment of
+    cells to groups (sampling without replacement), so the statistic stays
+    calibrated when w is heavily tied at zero. Substituting w = rank(x) for a
+    single feature gives mean(w) = (N+1)/2 and var(w) = (N^2-1)/12, which
+    reduces this to exactly the wilcoxon_z_by_group() statistic.
+
+    Because w multiplies two per-cell values, sequencing depth enters
+    quadratically: pass depth-normalized (or per-modality rank-transformed)
+    matrices, and prefer a control-pair null over the analytic tail.
+
+    Parameters
+    ----------
+    rna_adata, atac_adata
+        Cell x feature AnnData for the two modalities, same cells in the same
+        order.
+    gene_names, peak_names
+        Aligned link endpoints, one entry per link.
+    groups
+        Optional array-like of group labels replacing rna_adata.obs[group_key].
+    chunk_size
+        Number of links scored per block.
+    min_nonzero
+        Links with fewer than this many cells where w != 0 return NaN. Under
+        sparsity the statistic degenerates toward a co-detection test.
+
+    Returns
+    -------
+    Link x cell-type table with one row per input link, in the same shape and
+    column order as wilcoxon_z_by_group() but keyed by gene_col and peak_col.
+    NaN for links whose endpoints are missing from either modality, or that
+    fail min_nonzero. Precompute once and hand to attach_link_specificity() as
+    link_z.
+    """
+    gene_names = np.asarray(gene_names)
+    peak_names = np.asarray(peak_names)
+
+    if groups is None:
+        groups = rna_adata.obs[group_key].astype("category")
+    else:
+        groups = pd.Series(np.asarray(groups), index=rna_adata.obs_names).astype("category")
+    codes = groups.cat.codes.to_numpy()
+    cats = groups.cat.categories
+    K = len(cats)
+
+    N = rna_adata.n_obs
+    n_i = np.bincount(codes, minlength=K).astype(float)
+
+    Z = np.full((len(gene_names), K), np.nan)
+    for start in range(0, len(gene_names), chunk_size):
+        block = slice(start, start + chunk_size)
+        W, cols = link_score_matrix(rna_adata, atac_adata,
+                                    gene_names[block], peak_names[block],
+                                    rna_layer=rna_layer, atac_layer=atac_layer)
+        if W.shape[1] == 0:
+            continue
+        z = groupwise_z(W, codes, n_groups=K, n_cells=N, group_sizes=n_i)
+        if min_nonzero:
+            z[:, np.diff(W.indptr) < min_nonzero] = np.nan
+        Z[start + cols] = z.T
+
+    out = pd.DataFrame(Z, columns=cats)
+    out.insert(0, peak_col, peak_names)
+    out.insert(0, gene_col, gene_names)
+    return out
 
 
 def attach_link_specificity(
@@ -271,8 +483,7 @@ def attach_link_specificity(
     peak_spec_df,
     rna_means=None,
     atac_means=None,
-    rna_z=None,
-    atac_z=None,
+    link_z=None,
     subtypes_dict=None,
     gene_col='gene',
     peak_col='peak',
@@ -301,9 +512,9 @@ def attach_link_specificity(
         Feature x cell-type mean tables returned by mean_by_group().
         Required for joint entropy specificity.
 
-    rna_z, atac_z
-        Feature x cell-type Wilcoxon rank-sum z tables from
-        wilcoxon_z_by_group().
+    link_z
+        Link x cell-type z table from joint_cell_z(), keyed by gene_col and
+        peak_col. Reduced here to max_i z_i and its cell type.
 
     subtypes_dict
         Optional mapping from subtype -> broader cell type.
@@ -372,19 +583,31 @@ def attach_link_specificity(
             out.loc[mapped_celltypes, 'peak_dominant_celltype']
         ).astype(float)
 
-    out[f'{out_col}_marker'] = np.nan
-    if rna_z is not None and atac_z is not None:
-        z_cols = [c for c in rna_z.columns if c in atac_z.columns and c not in {'feature', gene_col, peak_col}]
+    out[f'{out_col}_cellz'] = np.nan
+    out[f'{out_col}_cellz_subtype'] = np.nan
+    if link_z is not None:
+        z_cols = [c for c in link_z.columns if c not in {gene_col, peak_col, 'feature'}]
         if not z_cols:
-            raise ValueError("No shared celltype columns found in rna_z and atac_z.")
- 
-        rna_zidx = pd.Index(rna_z['feature']).get_indexer(out[gene_col])
-        atac_zidx = pd.Index(atac_z['feature']).get_indexer(out[peak_col])
-        zvalid = (rna_zidx >= 0) & (atac_zidx >= 0)
+            raise ValueError("No cell-type columns found in link_z.")
+
+        # a repeated (gene, peak) carries the same z, so keeping the first is safe
+        link_z = link_z.drop_duplicates([gene_col, peak_col])
+        z_keys = pd.MultiIndex.from_frame(link_z[[gene_col, peak_col]])
+        zidx = z_keys.get_indexer(pd.MultiIndex.from_frame(out[[gene_col, peak_col]]))
+        zvalid = zidx >= 0
+
         if np.any(zvalid):
-            rz = rna_z[z_cols].to_numpy(dtype=np.float64, copy=False)[rna_zidx[zvalid]]
-            az = atac_z[z_cols].to_numpy(dtype=np.float64, copy=False)[atac_zidx[zvalid]]
-            out.loc[zvalid, f'{out_col}_marker'] = marker_concordance(rz, az)
+            Z = link_z[z_cols].to_numpy(dtype=np.float64, copy=False)[zidx[zvalid]]
+            scored = ~np.isnan(Z).all(axis=1)
+            with np.errstate(invalid='ignore'):
+                out.loc[zvalid, f'{out_col}_cellz'] = np.where(
+                    scored, np.nanmax(np.where(scored[:, None], Z, 0.0), axis=1), np.nan
+                )
+            idx = np.full(len(Z), np.nan)
+            idx[scored] = np.nanargmax(Z[scored], axis=1)
+            out.loc[zvalid, f'{out_col}_cellz_subtype'] = [
+                z_cols[int(i)] if np.isfinite(i) else np.nan for i in idx
+            ]
 
     if weight_concordance:
         if subtypes_dict is not None:
