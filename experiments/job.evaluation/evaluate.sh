@@ -15,6 +15,7 @@ FILTER_TAG="${FILTER_TAG:-unfiltered}"
 # Paths
 REPO_ROOT="${REPO_ROOT:-/projects/zhanglab/users/ana/cts_peak_gene}"
 SCRIPTS_DIR="${SCRIPTS_DIR:-${REPO_ROOT}/experiments/job.evaluation}"
+BEDTOOLS_BIN="${BEDTOOLS_BIN:-/projects/zhanglab/users/ana/bedtools2/bin/intersectBed}"
 
 # Methods manifest CSV: columns file_path, score_col, method_name (row order = METHOD_COLS order)
 METHODS_CSV="${METHODS_CSV:-${SCRIPTS_DIR}/methods_manifests/${DATASET_NAME}_methods.csv}"
@@ -45,6 +46,10 @@ REFERENCE_METHOD="${REFERENCE_METHOD:-ctar}"
 N_BOOTSTRAP="${N_BOOTSTRAP:-1000}"
 FDR_CORRECTION="${FDR_CORRECTION:-true}"
 USE_QVAL="${USE_QVAL:-true}"
+
+# calculate_auerc_seeds.py: cores per task (joblib bootstrap workers) and
+# one Slurm array task per merge file (= per eval .bed in EVAL_DIR)
+AURC_CPUS="${AURC_CPUS:-16}"
 
 # Pre-compute optional flags so they interpolate cleanly into --wrap strings
 FDR_FLAG=""
@@ -84,7 +89,8 @@ INTERSECT_JOB_ID=$(submit \
            --dataset-name '${DATASET_NAME}' \
            --eval-dir '${EVAL_DIR}' \
            --union-dir '${UNION_DIR}' \
-           --overlap-dir '${OVERLAP_DIR}'")
+           --overlap-dir '${OVERLAP_DIR}' \
+           --bedtools-bin '${BEDTOOLS_BIN}'")
 echo "INTERSECT_JOB_ID=${INTERSECT_JOB_ID}"
 
 echo "Submitting aggregate_overlaps.py (after intersect) ..."
@@ -119,8 +125,14 @@ MERGE_JOB_ID=$(submit \
 echo "MERGE_JOB_ID=${MERGE_JOB_ID}"
 
 echo "Submitting calculate_auerc_seeds.py (after merge) ..."
+# One array task per eval .bed (= per merge file); each task uses AURC_CPUS joblib workers.
+N_EVAL_FILES=$(find "${EVAL_DIR}" -maxdepth 1 -name '*.bed' 2>/dev/null | wc -l | tr -d '[:space:]')
+[[ "${N_EVAL_FILES}" -lt 1 ]] && N_EVAL_FILES=1
+AURC_ARRAY_FLAG=""
+[[ "${N_EVAL_FILES}" -gt 1 ]] && AURC_ARRAY_FLAG="--array=0-$((N_EVAL_FILES - 1))"
 AURC_JOB_ID=$(submit \
-  --dependency=afterok:${MERGE_JOB_ID} \
+  --dependency=afterok:${MERGE_JOB_ID} ${AURC_ARRAY_FLAG} \
+  -c "${AURC_CPUS}" \
   -t 3-00:00:00 --mem 128Gb -J "auerc_${DATASET_NAME}" \
   -o "${LOG_DIR}/auerc_${DATASET_NAME}-%j.out" \
   -e "${LOG_DIR}/auerc_${DATASET_NAME}-%j.err" \
@@ -131,6 +143,9 @@ AURC_JOB_ID=$(submit \
             --res_path '${AURC_DIR}' \
             --dataset_name '${DATASET_NAME}' \
             --n_bootstrap '${N_BOOTSTRAP}' \
+            --n_jobs '${AURC_CPUS}' \
+            --task_id \"\${SLURM_ARRAY_TASK_ID:-0}\" \
+            --n_tasks '${N_EVAL_FILES}' \
             --eqtl_pip_thres_list '0.5' \
             --eqtl_filter_mode 'all_only' \
             --reference_method '${REFERENCE_METHOD}' \

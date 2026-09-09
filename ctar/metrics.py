@@ -6,6 +6,7 @@ import numpy as np
 import pandas as pd
 import scipy as sp
 from sklearn import metrics
+from joblib import Parallel, delayed, cpu_count
 
 
 
@@ -732,6 +733,23 @@ def compute_bootstrap_table(
     return pd.DataFrame(rows)
 
 
+def _seed_avg_boot_chunk(idx_chunk, seed_work, metrics_list, methods):
+    """
+    Worker task: seed-averaged metric values for a chunk of bootstrap resamples.
+    Module-level so it can be shipped to joblib workers.
+    """
+    reps = []
+    for idx in idx_chunk:
+        # resample once per seed, then reuse the sample for every metric/method
+        samples = [df.iloc[idx].reset_index(drop=True) for df in seed_work]
+        reps.append({
+            (ms.name, m): _safe_mean_finite(np.asarray([ms.fn(s, m) for s in samples], dtype=float))
+            for ms in metrics_list
+            for m in methods
+        })
+    return reps
+
+
 def compute_bootstrap_table_seed_avg(
     all_df: pd.DataFrame,
     methods: List[str],
@@ -752,6 +770,7 @@ def compute_bootstrap_table_seed_avg(
     bootstrap_random_state: int = 0,
     ddof: int = 1,
     stratified_bootstrap: bool = True,
+    n_jobs: int = 1,
 ) -> pd.DataFrame:
     """
     Paired bootstrap with seed-averaged evaluation.
@@ -791,6 +810,10 @@ def compute_bootstrap_table_seed_avg(
         for s in seeds
     ]
 
+    # keep only the columns the metrics touch (cheaper resampling + smaller payload to workers)
+    keep_cols = list(dict.fromkeys(list(methods) + [gold_col]))
+    seed_work = [df[keep_cols] for df in seed_work]
+
     N = len(seed_work[0])
     if N == 0:
         return pd.DataFrame()
@@ -820,17 +843,22 @@ def compute_bootstrap_table_seed_avg(
     }
 
     label_arr = seed_work[0][gold_col].to_numpy() if stratified_bootstrap else None
-    for b in range(n_bootstrap):
-        idx = _bootstrap_indices(
-            N=N,
-            rng=rng,
-            labels=label_arr,
-            stratified=stratified_bootstrap,
-        )
-        for ms in metrics_list:
-            for m in methods:
-                vals = [ms.fn(df.iloc[idx].reset_index(drop=True), m) for df in seed_work]
-                boot[ms.name][m][b] = _safe_mean_finite(np.asarray(vals, dtype=float))
+    boot_idx = [
+        _bootstrap_indices(N=N, rng=rng, labels=label_arr, stratified=stratified_bootstrap)
+        for _ in range(n_bootstrap)
+    ]
+
+    # split the replicates into contiguous chunks, one per worker
+    n_chunks = n_jobs if n_jobs and n_jobs > 0 else cpu_count()
+    bounds = np.linspace(0, n_bootstrap, num=n_chunks + 1, dtype=int)
+    slices = [slice(lo, hi) for lo, hi in zip(bounds[:-1], bounds[1:]) if hi > lo]
+    chunk_results = Parallel(n_jobs=n_jobs)(
+        delayed(_seed_avg_boot_chunk)(boot_idx[sl], seed_work, metrics_list, methods) for sl in slices
+    )
+    for sl, reps in zip(slices, chunk_results):
+        for b, rep in zip(range(sl.start, sl.stop), reps):
+            for (name, m), val in rep.items():
+                boot[name][m][b] = val
 
     # Summarize as in compute_bootstrap_table, plus seed_sd
     rows = []

@@ -30,6 +30,9 @@ def main(args):
     DATASET_NAME = args.dataset_name
     HANDLE_DUP = args.handle_dup
     USE_QVAL = args.use_qval
+    N_JOBS = int(args.n_jobs)
+    TASK_ID = int(args.task_id)
+    N_TASKS = int(args.n_tasks)
 
     EQTL_PIP_THRES_LIST = _parse_float_list(args.eqtl_pip_thres_list)
     if len(EQTL_PIP_THRES_LIST) == 0:
@@ -40,8 +43,9 @@ def main(args):
     EQTL_NEG_THRES = float(args.eqtl_neg_thres)
 
     os.makedirs(RES_PATH, exist_ok=True)
-    files = [f for f in os.listdir(MERGE_PATH) if os.path.isfile(f"{MERGE_PATH}/{f}")]
-    print("Using merge files:", files, flush=True)
+    files = sorted(f for f in os.listdir(MERGE_PATH) if os.path.isfile(f"{MERGE_PATH}/{f}"))
+    files = files[TASK_ID::N_TASKS]
+    print(f"Task {TASK_ID}/{N_TASKS} using merge files:", files, flush=True)
     print("With methods:", METHOD_COLS, flush=True)
     print("GTEx/oneK1K pip thresholds:", EQTL_PIP_THRES_LIST, flush=True)
     print("Neg threshold:", EQTL_NEG_THRES, flush=True)
@@ -153,6 +157,7 @@ def main(args):
                 dup_key_cols=["pg_pair"],
                 stratified_bootstrap=True,
                 tie="zero",
+                n_jobs=N_JOBS,
             )
 
             # annotate output
@@ -187,7 +192,13 @@ if __name__ == "__main__":
     parser.add_argument("--reference_method", type=str, default="ctar_filt")
     parser.add_argument("--fillna", type=str, default=True)
     parser.add_argument("--n_bootstrap", type=str, default="1000")
-    
+    parser.add_argument("--n_jobs", type=str, default="1",
+                        help="Parallel workers for the bootstrap (joblib). -1 = all cores.")
+    parser.add_argument("--task_id", type=str, default="0",
+                        help="Slurm array task index; this run handles merge files[task_id::n_tasks].")
+    parser.add_argument("--n_tasks", type=str, default="1",
+                        help="Total number of array tasks. 1 = process every merge file.")
+
     parser.add_argument("--handle_dup",
         type=str,
         default=None,
