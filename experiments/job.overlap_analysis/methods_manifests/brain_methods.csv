@@ -1,0 +1,15 @@
+file_path,dataset_name,method_name,pval_col,fdr_col,stat_col
+/projects/zhanglab/users/ana/multiome/results/scent/benchmark/brain/scent_brain_benchmark.tsv,brain,scent,boot_basic_p,,beta
+/projects/zhanglab/users/ana/multiome/results/signac/benchmark/brain/signac_brain_benchmark_links.csv,brain,signac,pvalue,,score
+/projects/zhanglab/users/ana/multiome/results/scmultimap/benchmark/brain/scmultimap_brain_benchmark.csv,brain,scmm,pval,padj,test_stat
+/projects/zhanglab/users/ana/multiome/results/robustlink/benchmark/brain/robustlink_brain_benchmark.tsv,brain,robustlink,pval_linked,fdr_linked,corr
+/projects/zhanglab/users/ana/multiome/results/ctar/benchmark/brain/4.4.4.4.1000/cis_links_df.csv,brain,ctar,4.4.4.4.10000_mcpval,q_value_fixed_dist_rmean_rvar,corr
+/projects/zhanglab/users/ana/multiome/results/ctar/benchmark/brain/4.4.4.4.1000/cis_links_df.csv,brain,ctar_bh,4.4.4.4.10000_mcpval,,corr
+/projects/zhanglab/users/ana/multiome/results/ctar/benchmark/brain/4.4.4.4.1000/cis_links_df.csv,brain,distance,abs_distance,abs_distance,abs_distance
+/projects/zhanglab/users/ana/multiome/results/scent/myscent_brain_10k.txt,brain_10k,scent,boot_basic_p,,beta
+/projects/zhanglab/users/ana/multiome/results/signac/unfiltered/signac_brain_10k_links.csv,brain_10k,signac,pvalue,,score
+/projects/zhanglab/users/ana/multiome/results/scmultimap/unfiltered/scmultimap_brain_10k_cis.csv,brain_10k,scmm,pval,padj,test_stat
+/projects/zhanglab/users/ana/multiome/results/robustlink/benchmark/brain_10k/robustlink_brain_10k_benchmark.tsv,brain_10k,robustlink,pval_linked,fdr_linked,corr
+/projects/zhanglab/users/ana/multiome/results/ctar/corr_eval/brain_10k/brain_10k_unfiltered_len_4.4.4.4.1000/cis_links_df_with_fixed_dist.csv,brain_10k,ctar,4.4.4.4.10000_mcpval,q_value_fixed_dist_rmean_rvar,corr
+/projects/zhanglab/users/ana/multiome/results/ctar/corr_eval/brain_10k/brain_10k_unfiltered_len_4.4.4.4.1000/cis_links_df_with_fixed_dist.csv,brain_10k,ctar_bh,4.4.4.4.10000_mcpval,,corr
+/projects/zhanglab/users/ana/multiome/results/ctar/corr_eval/brain_10k/brain_10k_unfiltered_len_4.4.4.4.1000/cis_links_df_with_fixed_dist.csv,brain_10k,distance,abs_distance,abs_distance,abs_distance
