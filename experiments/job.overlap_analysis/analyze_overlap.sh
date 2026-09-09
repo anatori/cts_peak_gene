@@ -1,34 +1,35 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# bash /ocean/projects/bio240051p/aprieto/cts_peak_gene/experiments/job.overlap_analysis/analyze_overlap.sh
+# bash /projects/zhanglab/users/ana/cts_peak_gene/experiments/job.overlap_analysis/analyze_overlap.sh
 
 # Slurm settings
-PARTITIONS="${PARTITIONS:-RM-shared}"
-LOG_DIR="${LOG_DIR:-/ocean/projects/bio240051p/aprieto/logs}"
+PARTITIONS="${PARTITIONS:-mzhang,statgen,pool1}"
+LOG_DIR="${LOG_DIR:-/projects/zhanglab/users/ana/logs}"
 CONDA_ENV="${CONDA_ENV:-ctar}"
 
 # Datasets to include in the union BED
-DATASETS="${DATASETS:-bmmc,pbmc,neat}"
+DATASETS="${DATASETS:-bmmc,pbmc,pbmc_male_chrom_ctrl,pbmc_male_chrom_x}"
 FILTER_TAG="${FILTER_TAG:-unfiltered}"
 
 # Paths
-REPO_ROOT="${REPO_ROOT:-/ocean/projects/bio240051p/aprieto/cts_peak_gene}"
+REPO_ROOT="${REPO_ROOT:-/projects/zhanglab/users/ana/cts_peak_gene}"
 SCRIPTS_DIR="${SCRIPTS_DIR:-${REPO_ROOT}/experiments/job.overlap_analysis}"
+BEDTOOLS_BIN="${BEDTOOLS_BIN:-/projects/zhanglab/users/ana/bedtools2/bin/intersectBed}"
 
 # Methods manifest CSV: columns file_path, dataset_name, method_name, pval_col, fdr_col, stat_col
-METHODS_CSV="${METHODS_CSV:-${SCRIPTS_DIR}/methods_manifests/blood_methods_neat.csv}"
+METHODS_CSV="${METHODS_CSV:-${SCRIPTS_DIR}/methods_manifests/blood_methods.csv}"
 
 # Directory/file paths
-DATASET_DIR="${DATASET_DIR:-/ocean/projects/bio240051p/aprieto/bedfiles/validation/union_links/${FILTER_TAG}}"
-UNION_DIR="${UNION_DIR:-/ocean/projects/bio240051p/aprieto/bedfiles/analysis/${FILTER_TAG}}"
-UNION_BED="${UNION_BED:-${UNION_DIR}/multiome_blood_neat_union.bed}"
-ANALYSIS_BED="${ANALYSIS_BED:-/ocean/projects/bio240051p/aprieto/bedfiles/analysis/chandra_hichip/chandra_hichip_hg38.bed}"
-OVERLAP_BED="${OVERLAP_BED:-/ocean/projects/bio240051p/aprieto/bedfiles/analysis/overlap/${FILTER_TAG}/multiome_chandra_hichip.bed}"
-OUT_PATH="${OUT_PATH:-/ocean/projects/bio240051p/aprieto/multiome/analysis/chandra_hichip/${FILTER_TAG}/chandra_hichip_merged.csv}"
+DATASET_DIR="${DATASET_DIR:-/projects/zhanglab/users/ana/bedtools2/ana_bedfiles/validation/union_links/${FILTER_TAG}}"
+UNION_DIR="${UNION_DIR:-/projects/zhanglab/users/ana/bedtools2/ana_bedfiles/analysis/${FILTER_TAG}}"
+UNION_BED="${UNION_BED:-${UNION_DIR}/multiome_blood.bed}"
+ANALYSIS_BED="${ANALYSIS_BED:-/projects/zhanglab/users/ana/bedtools2/ana_bedfiles/analysis/chandra_hichip/chandra_hichip_hg38.bed}"
+OVERLAP_BED="${OVERLAP_BED:-/projects/zhanglab/users/ana/bedtools2/ana_bedfiles/analysis/overlap/${FILTER_TAG}/multiome_chandra_hichip.bed}"
+OUT_PATH="${OUT_PATH:-/projects/zhanglab/users/ana/multiome/analysis/chandra_hichip/${FILTER_TAG}/chandra_hichip_merged.csv}"
 
 # Optional SNP annotation join
-SNP_ANNOT_FILE="${SNP_ANNOT_FILE:-/ocean/projects/bio240051p/aprieto/multiome/analysis/chandra_hichip/chandra_hichip_info.tsv}"
+SNP_ANNOT_FILE="${SNP_ANNOT_FILE:-/projects/zhanglab/users/ana/multiome/analysis/chandra_hichip/chandra_hichip_info.tsv}"
 SNP_ANNOT_ID_COL="${SNP_ANNOT_ID_COL:-final_col}"
 SNP_ANNOT_COLS="${SNP_ANNOT_COLS:-gene_genename,gene_genetype,promoter_bin_start,promoter_bin_end,interacting_bin_start,interacting_bin_end,classical_monocytes_qvalue,natural_killer_cells_qvalue,naive_b_cells_qvalue,naive_cd4_t_cells_qvalue,naive_cd8_t_cells_qvalue}"
 
@@ -69,7 +70,8 @@ INTERSECT_JOB_ID=$(submit \
           bash ${SCRIPTS_DIR}/run_bedtools_intersect.sh \
             --analysis-bed '${ANALYSIS_BED}' \
             --union-bed '${UNION_BED}' \
-            --overlap-bed '${OVERLAP_BED}'")
+            --overlap-bed '${OVERLAP_BED}' \
+            --bedtools-bin '${BEDTOOLS_BIN}'")
 echo "INTERSECT_JOB_ID=${INTERSECT_JOB_ID}"
 
 # Build optional SNP annotation args
