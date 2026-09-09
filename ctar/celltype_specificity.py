@@ -161,23 +161,13 @@ def joint_entropy_specificity(rna_x, atac_x, min_total=0.0, eps_rna=1e-6, eps_at
 
 def groupwise_z(W, codes, n_groups=None, n_cells=None, group_sizes=None, var_w=None):
     """
-    One-vs-rest z for an arbitrary per-cell score, shared by wilcoxon_z_by_group()
-    and joint_cell_z().
+    One-vs-rest z per-cell score for Wilcoxon test.
 
         S_i      = sum_{c in i} w_c
         E[S_i]   = n_i * mean(w)
         Var[S_i] = n_i * (N - n_i) / (N - 1) * var(w)
         z_i      = ( S_i - E[S_i] ) / sqrt( Var[S_i] )
 
-    These are the exact permutation moments of S_i under random assignment of
-    cells to groups (sampling without replacement), so the statistic is
-    automatically tie-corrected: var(w) is the empirical variance of the column,
-    not the no-ties constant (N^2-1)/12. That matters whenever w is mostly zero,
-    where the no-ties constant is far too large and deflates z.
-
-    z is invariant to adding a per-column constant to w, so a sparse W whose
-    implicit zeros stand for any constant baseline gives the same answer as the
-    dense column it represents.
 
     Parameters
     ----------
@@ -187,7 +177,7 @@ def groupwise_z(W, codes, n_groups=None, n_cells=None, group_sizes=None, var_w=N
         Integer group code for each row of W.
     n_cells, group_sizes
         Population N and n_i. Pass these when W holds only a subset of cells,
-        the omitted ones being implicitly zero; they default to W's own rows.
+        the omitted ones being implicitly zero; defaults to W's own rows.
     var_w
         Override for var(w), per column or scalar. Pass (N^2-1)/12 to reproduce
         the uncorrected rank-sum variance.
@@ -231,16 +221,15 @@ def groupwise_z(W, codes, n_groups=None, n_cells=None, group_sizes=None, var_w=N
             var_factor[:, None] * var_w[None, :]
         )
     Z[:, var_w <= 0] = np.nan
-    Z[var_factor <= 0, :] = 0.0          # empty or all-inclusive group
+    Z[var_factor <= 0, :] = 0.0
     return Z
 
 
 def wilcoxon_z_by_group(adata, group_key="celltype", layer=None, use_raw=False, groups=None,
                         tie_correct=True):
     """
-    One-vs-rest Wilcoxon rank-sum z-score per feature per cell type. Sparse-aware;
-    with tie_correct=False this is sc.tl.rank_genes_groups(method='wilcoxon',
-    tie_correct=False) 'scores'.
+    One-vs-rest Wilcoxon rank-sum z-score per feature per cell type. Sparse-aware version of
+    sc.tl.rank_genes_groups(method='wilcoxon') 'scores'.
  
         R_i = sum of ranks of the feature's values among cells of type i
         z_i = ( R_i - n_i(N+1)/2 ) / sqrt( n_i * (N - n_i) * (N+1) / 12 )
@@ -251,10 +240,7 @@ def wilcoxon_z_by_group(adata, group_key="celltype", layer=None, use_raw=False, 
         Optional array-like of group labels replacing adata.obs[group_key].
     tie_correct
         Standardize by the empirical rank variance, which accounts for the tied
-        zero block. False reproduces sc.tl.rank_genes_groups(tie_correct=False),
-        whose no-ties variance deflates z on sparse features -- roughly 1.5x at
-        20% detection and 5x at 1%, and by a different factor per feature, so it
-        distorts comparisons between features of unequal sparsity.
+        zero block.
 
     Returns
     -------
@@ -299,9 +285,7 @@ def wilcoxon_z_by_group(adata, group_key="celltype", layer=None, use_raw=False, 
     else:
         Rnz = np.empty(0)
  
-    # centre each column's nonzero ranks on its zero-block rank, so the implicit
-    # zeros of Tmat stand for the tied zero block. groupwise_z is invariant to
-    # that per-column shift, and picks up the tie correction from var(rank).
+    # center each column's nonzero ranks on its zero-block rank
     Tnz = Rnz - (n_zero[col] + 1.0) / 2.0 if nnz else Rnz
     Tmat = sp.sparse.csc_matrix((Tnz, Xs.indices, Xs.indptr), shape=Xs.shape)
 
@@ -321,11 +305,7 @@ def link_score_matrix(rna_adata, atac_adata, gene_names, peak_names,
     (n_cells, n_kept) matrix.
 
     Build this once and reuse it with groupwise_z() whenever the same links are
-    scored under many group assignments -- a permutation null, say. Only the
-    group codes change between draws; forming the product is the expensive part.
-
-    Links are grouped by gene internally so each RNA column is gathered once
-    rather than once per link it appears in, which dominates runtime.
+    scored under many group assignments for permutation null.
 
     Returns
     -------
@@ -333,8 +313,6 @@ def link_score_matrix(rna_adata, atac_adata, gene_names, peak_names,
         (n_cells, n_kept) csc matrix of per-cell link scores.
     cols
         Positions in gene_names/peak_names that W's columns correspond to.
-        Links whose gene or peak is missing from the data, or whose gene is
-        never detected, are dropped and so are absent from cols.
     """
     if rna_adata.n_obs != atac_adata.n_obs:
         raise ValueError("rna_adata and atac_adata must have the same cells.")
@@ -405,21 +383,11 @@ def joint_cell_z(
     One-vs-rest z for a per-cell link score: the product is formed per cell and
     then tested, instead of combining two per-celltype summaries.
 
-        w_c      = rna_c(gene) * atac_c(peak)        # per-cell link score
+        w_c      = rna_c(gene) * atac_c(peak)
         S_i      = sum_{c in i} w_c
         E[S_i]   = n_i * mean(w)
         Var[S_i] = n_i * (N - n_i) / (N - 1) * var(w)
         z_i      = ( S_i - E[S_i] ) / sqrt( Var[S_i] )
-
-    These are the exact permutation moments of S_i under random assignment of
-    cells to groups (sampling without replacement), so the statistic stays
-    calibrated when w is heavily tied at zero. Substituting w = rank(x) for a
-    single feature gives mean(w) = (N+1)/2 and var(w) = (N^2-1)/12, which
-    reduces this to exactly the wilcoxon_z_by_group() statistic.
-
-    Because w multiplies two per-cell values, sequencing depth enters
-    quadratically: pass depth-normalized (or per-modality rank-transformed)
-    matrices, and prefer a control-pair null over the analytic tail.
 
     Parameters
     ----------
@@ -440,9 +408,6 @@ def joint_cell_z(
     -------
     Link x cell-type table with one row per input link, in the same shape and
     column order as wilcoxon_z_by_group() but keyed by gene_col and peak_col.
-    NaN for links whose endpoints are missing from either modality, or that
-    fail min_nonzero. Precompute once and hand to attach_link_specificity() as
-    link_z.
     """
     gene_names = np.asarray(gene_names)
     peak_names = np.asarray(peak_names)
@@ -590,7 +555,6 @@ def attach_link_specificity(
         if not z_cols:
             raise ValueError("No cell-type columns found in link_z.")
 
-        # a repeated (gene, peak) carries the same z, so keeping the first is safe
         link_z = link_z.drop_duplicates([gene_col, peak_col])
         z_keys = pd.MultiIndex.from_frame(link_z[[gene_col, peak_col]])
         zidx = z_keys.get_indexer(pd.MultiIndex.from_frame(out[[gene_col, peak_col]]))
