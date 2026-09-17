@@ -1,8 +1,8 @@
 file_path,score_col,fdr_col,method_name
-/projects/zhanglab/users/ana/multiome/results/scent/benchmark/shareseq/scent_shareseq_benchmark.tsv,boot_basic_p,,scent
-/projects/zhanglab/users/ana/multiome/results/signac/benchmark/shareseq/signac_shareseq_benchmark_links.csv,pvalue,,signac
-/projects/zhanglab/users/ana/multiome/results/scmultimap/benchmark/shareseq/scmultimap_shareseq_benchmark.csv,pval,padj,scmm
+/projects/zhanglab/users/ana/multiome/results/scent/myscent_shareseq.txt,boot_basic_p,,scent
+/projects/zhanglab/users/ana/multiome/results/signac/unfiltered/signac_shareseq_links.csv,pvalue,,signac
+/projects/zhanglab/users/ana/multiome/results/scmultimap/unfiltered/scmultimap_shareseq_cis.csv,pval,padj,scmm
 /projects/zhanglab/users/ana/multiome/results/robustlink/benchmark/shareseq/robustlink_shareseq_benchmark.tsv,pval_linked,fdr_linked,robustlink
-/projects/zhanglab/users/ana/multiome/results/ctar/benchmark/shareseq/4.4.4.4.1000/cis_links_df.csv,4.4.4.4.10000_mcpval,q_value_fixed_dist_rmean_rvar,ctar
-/projects/zhanglab/users/ana/multiome/results/ctar/benchmark/shareseq/4.4.4.4.1000/cis_links_df.csv,4.4.4.4.10000_mcpval,,ctar_bh
-/projects/zhanglab/users/ana/multiome/results/ctar/benchmark/shareseq/4.4.4.4.1000/cis_links_df.csv,abs_distance,abs_distance,distance
+/projects/zhanglab/users/ana/multiome/results/ctar/tfidf_eval/shareseq/shareseq_unfiltered_len_4.4.4.4.10000/cis_links_df.csv,4.4.4.4.10000_mcpval,q_value_fixed_dist_rmean_rvar,ctar
+/projects/zhanglab/users/ana/multiome/results/ctar/tfidf_eval/shareseq/shareseq_unfiltered_len_4.4.4.4.10000/cis_links_df.csv,4.4.4.4.10000_mcpval,,ctar_bh
+/projects/zhanglab/users/ana/multiome/results/ctar/tfidf_eval/shareseq/shareseq_unfiltered_len_4.4.4.4.10000/cis_links_df.csv,abs_distance,abs_distance,distance

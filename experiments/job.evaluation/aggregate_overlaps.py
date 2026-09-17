@@ -10,6 +10,7 @@ def main(args):
     RES_PATH = args.res_path
     DATASET_NAME = args.dataset_name
     GENE_MISMATCH = args.gene_mismatch
+    TAG = args.tag
 
     cols_dict = {
         'onek1k':['onek1k_id','score','gt_gene','celltype'],
@@ -39,7 +40,8 @@ def main(args):
             print(f'Failed to read {file}. Skipping...')
             continue
 
-        eval_df_dict[filename].to_csv(f'{RES_PATH}/{filename}.csv',index=False)
+        out_filename = f'{filename}_{TAG}' if TAG else filename
+        eval_df_dict[filename].to_csv(f'{RES_PATH}/{out_filename}.csv',index=False)
 
     print(f'Files written to {RES_PATH}')
 
@@ -52,6 +54,9 @@ if __name__ == "__main__":
     parser.add_argument("--dataset_name", type=str, default='pbmc')
     parser.add_argument("--gene_mismatch", type=str, default='drop', choices=['drop', 'zero'],
                         help="How to handle gene mismatches: 'drop' removes them (default), 'zero' keeps them with score=0.")
+    parser.add_argument("--tag", type=str, default='',
+                        help="If set, appended as '_{tag}' to each output CSV's basename, "
+                             "to distinguish runs (e.g. different gene_mismatch modes) writing to the same res_path.")
 
     args = parser.parse_args()
     main(args)

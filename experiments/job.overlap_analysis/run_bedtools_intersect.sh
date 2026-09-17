@@ -20,7 +20,6 @@ while [[ $# -gt 0 ]]; do
 done
 
 mkdir -p "$(dirname "${OVERLAP_BED}")"
-module load bedtools
 
 if [[ ! -s "${UNION_BED}" ]]; then
   echo "ERROR: UNION_BED not found or empty at ${UNION_BED}" >&2

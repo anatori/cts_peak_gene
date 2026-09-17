@@ -23,14 +23,14 @@ USE_QVAL="${USE_QVAL:-true}"
 AURC_CPUS="${AURC_CPUS:-16}"
 
 # Optionally rebuild the per-dataset union_links bed before its chains
-RUN_UNION="${RUN_UNION:-false}"
+RUN_UNION="${RUN_UNION:-true}"
 
 FDR_FLAG=""
 [[ "${FDR_CORRECTION}" == "true" ]] && FDR_FLAG="--fdr_correction"
 USE_QVAL_FLAG=""
 [[ "${USE_QVAL}" == "true" ]] && USE_QVAL_FLAG="--use_qval"
 
-DATASETS=(neat pbmc bmmc brain shareseq)
+DATASETS=(bmmc pbmc pbmc_male_chrom_ctrl pbmc_male_chrom_x hdma_spleen shareseq neat brain_10k brain)
 EVALS=(gwas_pops crispr_k562 gtex_tissues)
 
 mkdir -p "${LOG_DIR}"
@@ -81,7 +81,7 @@ print(','.join(names))
   local OVERLAP_DIR="${BASE}/bedtools2/ana_bedfiles/validation/overlap/${DATASET}/${FILTER_TAG}/${EVAL}"
   local AGG_DIR="${BASE}/multiome/validation/overlap_${FILTER_TAG}/${DATASET}/${EVAL}"
   local MERGE_DIR="${BASE}/multiome/validation/evaluation_${FILTER_TAG}/${DATASET}/${EVAL}"
-  local AURC_DIR="${BASE}/multiome/validation/tables/metrics_jitter_no_dedup_${FILTER_TAG}_qvalue/${DATASET}"
+  local AURC_DIR="${BASE}/multiome/validation/tables/metrics_jitter_no_dedup_${FILTER_TAG}_qvalue_added_data/${DATASET}"
 
   echo "=== Submitting chain: dataset=${DATASET}, eval=${EVAL} ==="
   echo "  METHOD_COLS: ${METHOD_COLS}"

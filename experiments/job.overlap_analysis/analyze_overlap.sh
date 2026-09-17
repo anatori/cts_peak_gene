@@ -9,7 +9,7 @@ LOG_DIR="${LOG_DIR:-/projects/zhanglab/users/ana/logs}"
 CONDA_ENV="${CONDA_ENV:-ctar}"
 
 # Datasets to include in the union BED
-DATASETS="${DATASETS:-bmmc,pbmc,pbmc_male_chrom_ctrl,pbmc_male_chrom_x}"
+DATASETS="${DATASETS:-brain,brain_10k,hdma_brain}"
 FILTER_TAG="${FILTER_TAG:-unfiltered}"
 
 # Paths
@@ -18,20 +18,20 @@ SCRIPTS_DIR="${SCRIPTS_DIR:-${REPO_ROOT}/experiments/job.overlap_analysis}"
 BEDTOOLS_BIN="${BEDTOOLS_BIN:-/projects/zhanglab/users/ana/bedtools2/bin/intersectBed}"
 
 # Methods manifest CSV: columns file_path, dataset_name, method_name, pval_col, fdr_col, stat_col
-METHODS_CSV="${METHODS_CSV:-${SCRIPTS_DIR}/methods_manifests/blood_methods.csv}"
+METHODS_CSV="${METHODS_CSV:-${SCRIPTS_DIR}/methods_manifests/brain_methods.csv}"
 
 # Directory/file paths
 DATASET_DIR="${DATASET_DIR:-/projects/zhanglab/users/ana/bedtools2/ana_bedfiles/validation/union_links/${FILTER_TAG}}"
 UNION_DIR="${UNION_DIR:-/projects/zhanglab/users/ana/bedtools2/ana_bedfiles/analysis/${FILTER_TAG}}"
-UNION_BED="${UNION_BED:-${UNION_DIR}/multiome_blood.bed}"
-ANALYSIS_BED="${ANALYSIS_BED:-/projects/zhanglab/users/ana/bedtools2/ana_bedfiles/analysis/chandra_hichip/chandra_hichip_hg38.bed}"
-OVERLAP_BED="${OVERLAP_BED:-/projects/zhanglab/users/ana/bedtools2/ana_bedfiles/analysis/overlap/${FILTER_TAG}/multiome_chandra_hichip.bed}"
-OUT_PATH="${OUT_PATH:-/projects/zhanglab/users/ana/multiome/analysis/chandra_hichip/${FILTER_TAG}/chandra_hichip_merged.csv}"
+UNION_BED="${UNION_BED:-${UNION_DIR}/multiome_brain.bed}"
+ANALYSIS_BED="${ANALYSIS_BED:-/projects/zhanglab/users/ana/bedtools2/ana_bedfiles/analysis/funqtl_eqtl_broad_cts/funqtl_eqtl_broad_cts.bed}"
+OVERLAP_BED="${OVERLAP_BED:-/projects/zhanglab/users/ana/bedtools2/ana_bedfiles/analysis/overlap/${FILTER_TAG}/multiome_funqtl_eqtl_broad_cts.bed}"
+OUT_PATH="${OUT_PATH:-/projects/zhanglab/users/ana/multiome/analysis/funqtl_eqtl_broad_cts/${FILTER_TAG}/funqtl_eqtl_broad_cts_merged.csv}"
 
 # Optional SNP annotation join
-SNP_ANNOT_FILE="${SNP_ANNOT_FILE:-/projects/zhanglab/users/ana/multiome/analysis/chandra_hichip/chandra_hichip_info.tsv}"
+SNP_ANNOT_FILE="${SNP_ANNOT_FILE:-/projects/zhanglab/users/ana/multiome/analysis/funqtl_brain/funqtl_brain_info.tsv}"
 SNP_ANNOT_ID_COL="${SNP_ANNOT_ID_COL:-final_col}"
-SNP_ANNOT_COLS="${SNP_ANNOT_COLS:-gene_genename,gene_genetype,promoter_bin_start,promoter_bin_end,interacting_bin_start,interacting_bin_end,classical_monocytes_qvalue,natural_killer_cells_qvalue,naive_b_cells_qvalue,naive_cd4_t_cells_qvalue,naive_cd8_t_cells_qvalue}"
+SNP_ANNOT_COLS="${SNP_ANNOT_COLS:-astrocytes_celltype,astrocytes_pip,neurons_celltype,neurons_pip,oligodendrocytes_celltype,oligodendrocytes_pip,microglia_celltype,microglia_pip}"
 
 DEDUP="${DEDUP:-min}"
 
@@ -49,7 +49,7 @@ submit() {
 
 echo "Submitting make_multiome_union_bed.py ..."
 UNION_JOB_ID=$(submit \
-  -t 1-00:00:00 --ntasks-per-node=32 -J "union_multiome" \
+  -t 1-00:00:00 --mem 128Gb -J "union_multiome" \
   -o "${LOG_DIR}/union_multiome-%j.out" \
   -e "${LOG_DIR}/union_multiome-%j.err" \
   --wrap "source ~/.bashrc && conda activate ${CONDA_ENV} && \
@@ -63,7 +63,7 @@ echo "UNION_JOB_ID=${UNION_JOB_ID}"
 echo "Submitting bedtools intersect ..."
 INTERSECT_JOB_ID=$(submit \
   --dependency=afterok:${UNION_JOB_ID} \
-  -t 0-02:00:00 --ntasks-per-node=32 -J "intersect_analysis" \
+  -t 0-02:00:00 --mem 32Gb -J "intersect_analysis" \
   -o "${LOG_DIR}/intersect_analysis-%j.out" \
   -e "${LOG_DIR}/intersect_analysis-%j.err" \
   --wrap "mkdir -p '$(dirname ${OVERLAP_BED})' && \
@@ -91,7 +91,7 @@ fi
 
 echo "Submitting merge_methods.py ..."
 MERGE_JOB_ID=$(submit \
-  -t 1-00:00:00 --ntasks-per-node=64 -J "merge_analysis" \
+  -t 1-00:00:00 --mem 128Gb -J "merge_analysis" \
   --dependency=afterok:${INTERSECT_JOB_ID} \
   -o "${LOG_DIR}/merge_analysis-%j.out" \
   -e "${LOG_DIR}/merge_analysis-%j.err" \

@@ -23,7 +23,6 @@ done
 
 UNION_BED="${UNION_BED:-${UNION_DIR}/${DATASET_NAME}.bed}"
 mkdir -p "${OVERLAP_DIR}"
-module load bedtools
 
 if [[ ! -s "${UNION_BED}" ]]; then
   echo "ERROR: UNION_BED not found or empty at ${UNION_BED}" >&2
