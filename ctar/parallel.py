@@ -13,6 +13,7 @@ from typing import Union, Optional, List, Dict
 from itertools import islice
 
 from ctar.method import poisson_irls_loop, poisson_irls_loop_multi, poisson_irls_loop_sparse, pearson_corr_sparse, pearson_corr_within_donor_sparse
+from ctar.celltype_specificity import joint_entropy_specificity, permutation_replicate_stats, link_score_matrix, coexp_specificity
 
 
 
@@ -80,6 +81,16 @@ def batch_links_array(link_arr, sub_batch_size):
     ]
 
     return batches
+
+
+def chunk_links_dict(link_arr, dic_batch_size=512):
+    """
+    Splits link_arr (n_links, 2) into a dict {i: chunk} of arrays of size up to dic_batch_size each.
+    """
+    return {
+        i: link_arr[i * dic_batch_size: (i + 1) * dic_batch_size]
+        for i in range((len(link_arr) + dic_batch_size - 1) // dic_batch_size)
+    }
 
 
 def multiprocess_poisson_irls_client(
@@ -540,3 +551,267 @@ def multiprocess_poisson_irls_multivar(
             gc.collect()
 
     return results_dict
+
+
+def multiprocess_joint_entropy_specificity(
+    links,
+    rna_table,
+    atac_table,
+    chunk_size: int = 200000,
+    batch_size: int = 50,
+    n_workers: Optional[int] = None,
+    array_chunk_size: int = 1000000,
+    **compute_kwargs,
+):
+    """Parallel joint entropy specificity across link batches using Dask.
+
+    Needs no cell submatrices, only the two small cell-type tables, so
+    `scheduler="threads"` shares them read-only across workers! Logs of the tables are
+    taken once here, not once per batch.
+
+    Parameters
+    ----------
+    links : dict or np.ndarray
+        Either a dictionary mapping batch/bin keys to link arrays of shape (n_links, 2),
+        or a single (n_links, 2) array. ATAC index in column 0, RNA index in column 1.
+    rna_table, atac_table : pd.DataFrame or np.ndarray
+        (n_genes, K) and (n_peaks, K) smoothed cell-type tables from
+        ctar.celltype_specificity.celltype_tables().
+    chunk_size : int
+        Links scored per block inside each batch (memory bound).
+    batch_size : int
+        Number of dict entries to process per Dask batch.
+    n_workers : int, optional
+        Number of parallel workers.
+    array_chunk_size : int
+        Array input only: links per dict entry after chunking.
+
+    Returns
+    -------
+    dict[key, np.ndarray] for dict input, mapping each key to a 1-D specificity array of
+    shape (n_links,). A single 1-D array, in input order, for array input.
+    """
+    if n_workers is None:
+        n_workers = max(cpu_count() - 1, 1)
+    compute_kwargs.setdefault("scheduler", "threads")
+
+    return_array = isinstance(links, np.ndarray)
+    links_dict = chunk_links_dict(links, dic_batch_size=array_chunk_size) if return_array else links
+
+    # table logs once here, not once per batch
+    rna_values = np.asarray(rna_table, dtype=np.float64)
+    atac_values = np.asarray(atac_table, dtype=np.float64)
+    rna_log = np.log(rna_values, where=rna_values > 0, out=np.zeros_like(rna_values))
+    atac_log = np.log(atac_values, where=atac_values > 0, out=np.zeros_like(atac_values))
+
+    specificity_by_key = {}
+    n_total = math.ceil(len(links_dict) / batch_size)
+
+    with ProgressBar():
+        for batch_idx, batch in enumerate(batched_iterable(links_dict.items(), batch_size), start=1):
+            print(f"# Specificity batch {batch_idx} / {n_total}", flush=True)
+            batch_keys = [bin_key for bin_key, _ in batch]
+            tasks = [
+                delayed(joint_entropy_specificity)(
+                    rna_values, atac_values, link_array[:, 1], link_array[:, 0], chunk_size=chunk_size,
+                    rna_log=rna_log, atac_log=atac_log,
+                )
+                for _, link_array in batch
+            ]
+            batch_results = compute(*tasks, num_workers=n_workers, **compute_kwargs)
+            for bin_key, result in zip(batch_keys, batch_results):
+                specificity_by_key[bin_key] = result
+            del tasks, batch_results
+            gc.collect()
+
+    if return_array:
+        if not specificity_by_key:
+            return np.empty(0, dtype=np.float64)
+        return np.concatenate([specificity_by_key[key] for key in sorted(specificity_by_key)])
+    return specificity_by_key
+
+
+def multiprocess_coexp_specificity(
+    links,
+    context,
+    chunk_size: int = 100000,
+    batch_size: int = 50,
+    n_workers: Optional[int] = None,
+    array_chunk_size: int = 1000000,
+    **compute_kwargs,
+):
+    """Parallel pseudobulk-of-co-expression specificity across link batches using Dask.
+
+    Same input and output layout as multiprocess_joint_entropy_specificity, plus the dominant cell type.
+    Unlike the joint score, this needs the cell-level log1p matrices (per-cell products), built once in
+    ctar.celltype_specificity.coexp_context() and shared read-only: the default `scheduler="threads"`
+    avoids copying them to every worker (the sparse slicing / products run in compiled scipy code).
+
+    Parameters
+    ----------
+    links : dict or np.ndarray
+        Either a dictionary mapping batch/bin keys to link arrays of shape (n_links, 2),
+        or a single (n_links, 2) array. ATAC index in column 0, RNA index in column 1.
+    context : dict
+        From ctar.celltype_specificity.coexp_context().
+    chunk_size : int
+        Links per sparse product inside each task (memory bound).
+    batch_size : int
+        Number of dict entries per Dask batch.
+    n_workers : int, optional
+        Number of parallel workers.
+    array_chunk_size : int
+        Array input only: links per dict entry after chunking.
+
+    Returns
+    -------
+    specificity, dominant_code
+        For dict input, two dicts mapping each key to (n_links,) arrays (float64 specificity, int
+        dominant cell-type code; -1 = none). For array input, two 1-D arrays in input order.
+        Codes index context['celltypes'].
+    """
+    if n_workers is None:
+        n_workers = max(cpu_count() - 1, 1)
+    compute_kwargs.setdefault("scheduler", "threads")
+
+    return_array = isinstance(links, np.ndarray)
+    links_dict = chunk_links_dict(links, dic_batch_size=array_chunk_size) if return_array else links
+
+    specificity_by_key, dominant_by_key = {}, {}
+    n_total = math.ceil(len(links_dict) / batch_size)
+
+    with ProgressBar():
+        for batch_idx, batch in enumerate(batched_iterable(links_dict.items(), batch_size), start=1):
+            print(f"# Coexp specificity batch {batch_idx} / {n_total}", flush=True)
+            batch_keys = [bin_key for bin_key, _ in batch]
+            tasks = [
+                delayed(coexp_specificity)(context, link_array[:, 1], link_array[:, 0], chunk_size=chunk_size)
+                for _, link_array in batch
+            ]
+            batch_results = compute(*tasks, num_workers=n_workers, **compute_kwargs)
+            for bin_key, (specificity, dominant) in zip(batch_keys, batch_results):
+                specificity_by_key[bin_key] = specificity
+                dominant_by_key[bin_key] = dominant
+            del tasks, batch_results
+            gc.collect()
+
+    if return_array:
+        if not specificity_by_key:
+            return np.empty(0, dtype=np.float64), np.empty(0, dtype=np.intp)
+        keys = sorted(specificity_by_key)
+        return (np.concatenate([specificity_by_key[k] for k in keys]),
+                np.concatenate([dominant_by_key[k] for k in keys]))
+    return specificity_by_key, dominant_by_key
+
+
+def multiprocess_link_specificity(
+    links,
+    spec_stat,
+    rna_table,
+    atac_table,
+    coexp_context=None,
+    batch_size: int = 50,
+    n_workers: Optional[int] = None,
+):
+    """Link specificity for an (n_links, 2) link array or a dict of them, by statistic.
+
+    Parameters
+    ----------
+    links : dict or np.ndarray
+        As in multiprocess_joint_entropy_specificity / multiprocess_coexp_specificity.
+    spec_stat : str
+        'coexp_log1p' (pseudobulk of co-expression; needs coexp_context) or 'joint'.
+    rna_table, atac_table
+        Cell-type tables from ctar.celltype_specificity.celltype_tables() (used by 'joint').
+    coexp_context : dict, optional
+        From ctar.celltype_specificity.coexp_context() (used by 'coexp_log1p').
+    batch_size, n_workers
+        Passed through.
+
+    Returns
+    -------
+    specificity, dominant_code
+        In the input's layout. dominant_code indexes coexp_context['celltypes'] (-1 = none) for 'coexp_log1p'
+        and is None for 'joint' (its dominant cell types come from celltype_specificity.dominant_celltypes()).
+    """
+    if spec_stat == "joint":
+        specificity = multiprocess_joint_entropy_specificity(
+            links, rna_table, atac_table, batch_size=batch_size, n_workers=n_workers)
+        return specificity, None
+    return multiprocess_coexp_specificity(links, coexp_context, batch_size=batch_size, n_workers=n_workers)
+
+
+def multiprocess_permutation_null(
+    rna_adata,
+    atac_adata,
+    gene_names,
+    peak_names,
+    group_key="celltype",
+    n_perm=100,
+    stats=("link_specificity_joint", "link_specificity_cellz",
+           "gene_specificity", "peak_specificity"),
+    eps_rna=1e-6,
+    eps_atac=1e-6,
+    seed=None,
+    batch_size=200,
+    n_workers=None,
+    **compute_kwargs,
+):
+    """
+    Multiprocess ctar.celltype_specificity.permutation_replicate_stats across
+    n_perm replicates. Builds link_score_matrix's W/cols and the group_key category 
+    list once (shared read-only across every replicate, not rebuilt per task) 
+    if 'link_specificity_cellz' is in stats. `scheduler="threads"` is suggested.
+
+    Parameters
+    ----------
+    rna_adata, atac_adata, gene_names, peak_names, group_key, stats,
+    eps_rna, eps_atac
+        Passed through to permutation_replicate_stats for every replicate.
+    n_perm
+        Number of permutation replicates.
+    seed
+        Parent seed; each replicate draws an independent child stream
+        (np.random.SeedSequence.spawn) so results reproduce regardless of the
+        order parallel workers finish in.
+    batch_size
+        Number of replicates per Dask batch.
+    n_workers
+        Number of parallel workers.
+
+    Returns
+    -------
+    {stat: (n_perm, n_links) ndarray}.
+    """
+    if n_workers is None:
+        n_workers = max(cpu_count() - 1, 1)
+    compute_kwargs.setdefault("scheduler", "threads")
+
+    W = cols = cats = None
+    if "link_specificity_cellz" in stats:
+        W, cols = link_score_matrix(rna_adata, atac_adata, gene_names, peak_names)
+        labels = rna_adata.obs[group_key]
+        cats = labels.cat.categories if hasattr(labels, "cat") else labels.astype("category").cat.categories
+
+    child_seeds = np.random.SeedSequence(seed).spawn(n_perm)
+    rows = [None] * n_perm
+    n_total = math.ceil(n_perm / batch_size)
+
+    with ProgressBar():
+        for batch_idx, batch_idxs in enumerate(batched_iterable(range(n_perm), batch_size), start=1):
+            print(f"# Permutation batch {batch_idx} / {n_total}", flush=True)
+            tasks = [
+                delayed(permutation_replicate_stats)(
+                    child_seeds[i], rna_adata, atac_adata, gene_names, peak_names,
+                    group_key=group_key, stats=stats, eps_rna=eps_rna, eps_atac=eps_atac,
+                    W=W, cols=cols, cats=cats,
+                )
+                for i in batch_idxs
+            ]
+            batch_results = compute(*tasks, num_workers=n_workers, **compute_kwargs)
+            for i, r in zip(batch_idxs, batch_results):
+                rows[i] = r
+            del tasks, batch_results
+            gc.collect()
+
+    return {s: np.stack([r[s] for r in rows], axis=0) for s in stats}

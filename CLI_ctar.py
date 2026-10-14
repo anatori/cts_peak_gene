@@ -39,6 +39,14 @@ compute_ctrl_only : compute poisson regression coefficients for control peak-gen
     - Input : --job | --job_id | --multiome_file | --batch_size | --target_path | --results_path | --genome_file | --binning_config | --binning_type | --pybedtools_path | --covar_file | --array_idx
     - Output : control coefficient array (if inf.inf mode) or control coefficient dictionary (if binned mode) of shape (n_links, n_ctrl) or (n_links, n_ctrl, 2) with SE
 
+compute_spec : compute link specificity (cis and control links) and its monte carlo p-values from existing links/controls
+    - Input : --job | --multiome_file | --results_path | --celltype_col | --celltype_file | --spec_stat | --spec_norm | --spec_filter_fdr | --spec_filter_qcol | --binning_config | --batch_size | --n_cores
+    --spec_stat coexp_log1p (default) | --spec_stat joint
+    - Output : cis_{tag}.npy, ctrl_{tag}.npy (inf.inf mode) or cis_{tag}_dic.pkl, ctrl_{tag}_dic.pkl (binned mode), with tag = spec_coexp
+      (coexp_log1p) or spec[_mean] (joint); updated cis_links_df.csv with link_specificity_coexp | link_specificity_joint, mcpval/ppval/zpval_{tag},
+      link_dominant_subtype_coexp (coexp_log1p), and {BIN_CONFIG}_qval_{tag}_filt = BH over mcpval_{tag} among links with association
+      q < --spec_filter_fdr, NaN elsewhere
+
 compute_pval : compute monte carlo p-values, pooled p-values, and studentized p-values based on control pairs
     - Input :  --job | --results_path | --binning_config | --binning_type
     - Output : updated cis_links_df.csv with additional columns for mcpval, ppval, mcpval_z, ppval_z
@@ -61,6 +69,7 @@ def main(args):
     JOB_ID = args.job_id
     MULTIOME_FILE = args.multiome_file
     BATCH_SIZE = int(args.batch_size)
+    DIC_BATCH_SIZE = int(args.dic_batch_size)
     TARGET_PATH = args.target_path
     RESULTS_PATH = args.results_path
     GENOME_FILE = args.genome_file
@@ -72,6 +81,16 @@ def main(args):
     FLAG_SE = (args.flag_se == 'True')
     FLAG_LL = (args.flag_ll == 'True')
     FLAG_CORR = (getattr(args, 'flag_corr', 'False') == 'True')
+    FLAG_SPEC = (getattr(args, 'flag_spec', 'False') == 'True')
+    CELLTYPE_COL = getattr(args, 'celltype_col', None) or None
+    CELLTYPE_FILE = getattr(args, 'celltype_file', None) or None
+    SPEC_NORM = getattr(args, 'spec_norm', None) or 'pseudobulk'
+    SPEC_SUFFIX = '' if SPEC_NORM == 'pseudobulk' else f'_{SPEC_NORM}'  # 'mean' columns keep a _mean suffix
+    SPEC_STAT = getattr(args, 'spec_stat', None) or 'coexp_log1p'
+    SPEC_FILTER_FDR = float(getattr(args, 'spec_filter_fdr', None) or 0.2)
+    SPEC_FILTER_QCOL = getattr(args, 'spec_filter_qcol', None) or None
+    SPEC_TAG = f'spec{SPEC_SUFFIX}' if SPEC_STAT == 'joint' else 'spec_coexp'
+    LINK_SPEC_COL = f'link_specificity_joint{SPEC_SUFFIX}' if SPEC_STAT == 'joint' else 'link_specificity_coexp'
     N_CORES = int(args.n_cores) if args.n_cores is not None else None
     RANDOM_SEED = int(args.random_seed) if args.random_seed is not None else None
     DONOR_COL = args.donor_col or None
@@ -97,6 +116,7 @@ def main(args):
         "generate_links",
         "generate_controls",
         "compute_pval",
+        "compute_spec",
     ]
     err_msg = "# CLI_ctar: --job=%s not supported" % JOB
     assert JOB is not None, "--job required"
@@ -119,8 +139,16 @@ def main(args):
     ]:
         assert BIN_TYPE is not None, "--binning_type required for --job=%s" % JOB
 
-    if JOB in ["compute_ctrl_only","generate_controls","compute_pval"]:
+    if JOB in ["compute_ctrl_only","generate_controls","compute_pval","compute_spec"]:
         assert RESULTS_PATH is not None, "--results_path required for --job=%s" % JOB
+
+    if JOB == "compute_spec":
+        assert MULTIOME_FILE is not None, "--multiome_file required for --job=%s" % JOB
+
+    if FLAG_SPEC or JOB == "compute_spec":
+        assert CELLTYPE_COL is not None, "--celltype_col required for --flag_spec / --job=compute_spec"
+        assert SPEC_NORM in ("pseudobulk", "mean"), "--spec_norm must be 'pseudobulk' or 'mean'"
+        assert SPEC_STAT in ("coexp_log1p", "joint"), "--spec_stat must be 'coexp_log1p' or 'joint'"
 
     # Print input options
     header = ctar.util.get_cli_head()
@@ -129,6 +157,7 @@ def main(args):
     header += "--job_id %s\\\n" % JOB_ID
     header += "--multiome_file %s\\\n" % MULTIOME_FILE
     header += "--batch_size %s\\\n" % BATCH_SIZE
+    header += "--dic_batch_size %s\\\n" % DIC_BATCH_SIZE
     header += "--target_path %s\\\n" % TARGET_PATH
     header += "--results_path %s\\\n" % RESULTS_PATH
     header += "--genome_file %s\\\n" % GENOME_FILE
@@ -140,6 +169,13 @@ def main(args):
     header += "--flag_se %s\\\n" % FLAG_SE
     header += "--flag_ll %s\\\n" % FLAG_LL
     header += "--flag_corr %s\\\n" % FLAG_CORR
+    header += "--flag_spec %s\\\n" % FLAG_SPEC
+    header += "--celltype_col %s\\\n" % CELLTYPE_COL
+    header += "--celltype_file %s\\\n" % CELLTYPE_FILE
+    header += "--spec_norm %s\\\n" % SPEC_NORM
+    header += "--spec_stat %s\\\n" % SPEC_STAT
+    header += "--spec_filter_fdr %s\\\n" % SPEC_FILTER_FDR
+    header += "--spec_filter_qcol %s\\\n" % SPEC_FILTER_QCOL
     header += "--flag_tfidf %s\\\n" % FLAG_TFIDF
     header += "--flag_bin %s\\\n" % FLAG_BIN
     header += "--random_seed %s\\\n" % RANDOM_SEED
@@ -170,6 +206,7 @@ def main(args):
         "generate_links",
         "generate_controls",
         "compute_pval",
+        "compute_spec",
     ]:
 
         # Setting bin config
@@ -190,6 +227,7 @@ def main(args):
         "compute_ctrl_only",
         "generate_links",
         "generate_controls",
+        "compute_spec",
     ] or (JOB == "compute_pval" and MULTIOME_FILE is not None): 
 
         print("# Loading --multiome_file")
@@ -204,6 +242,11 @@ def main(args):
 
         print("# RNA file is shape",adata_rna.shape)
         print("# ATAC file is shape",adata_atac.shape)
+
+        if CELLTYPE_FILE is not None:
+            assert CELLTYPE_COL is not None, "--celltype_col must name the label column in --celltype_file"
+            n_labeled = ctar.data_loader.attach_celltype_labels(adata_rna, CELLTYPE_FILE, CELLTYPE_COL)
+            print(f"# Read '{CELLTYPE_COL}' from --celltype_file for {n_labeled} of {adata_rna.n_obs} cells")
 
         # Convert peak to chr#:###-### format
         if adata_atac.var_names.str.match(r"^[^-]+-\d+-\d+$").any():
@@ -310,7 +353,7 @@ def main(args):
         del adata_rna_tmp, adata_atac_tmp
         print(f"# rna_norm: {rna_norm.shape}, atac_norm: {atac_norm.shape}")
 
-    if RESULTS_PATH and JOB in ["compute_cis_only", "compute_ctrl_only", "generate_controls", "compute_pval"]: 
+    if RESULTS_PATH and JOB in ["compute_cis_only", "compute_ctrl_only", "generate_controls", "compute_pval", "compute_spec"]: 
 
         print("# Loading --results_path")
         csv_file = os.path.join(RESULTS_PATH, 'cis_links_df.csv')
@@ -339,7 +382,7 @@ def main(args):
                         n_length_bins=N_LENGTH_BINS,
                     )
 
-    if JOB in ["compute_ctar", "compute_ctrl_only", "compute_cis_only"]:
+    if JOB in ["compute_ctar", "compute_ctrl_only", "compute_cis_only", "compute_spec"]:
 
         if N_CORES:
             n_cores = N_CORES
@@ -551,11 +594,7 @@ def main(args):
             cis_links_array = cis_links_df[['atac_idx', 'rna_idx']].to_numpy()
             link_ids = cis_links_df.index.to_numpy()
 
-            dic_batch_size = 512
-            cis_links_dic = {
-                i: cis_links_array[i * dic_batch_size: (i + 1) * dic_batch_size]
-                for i in range((len(cis_links_array) + dic_batch_size - 1) // dic_batch_size)
-            }
+            cis_links_dic = ctar.parallel.chunk_links_dict(cis_links_array, dic_batch_size=DIC_BATCH_SIZE)
             atac_idx_arr = cis_links_df['atac_idx'].to_numpy()
             rna_idx_arr = cis_links_df['rna_idx'].to_numpy()
             ctrl_peak_sub = ctrl_peaks[atac_idx_arr, :n_ctrl]
@@ -564,10 +603,7 @@ def main(args):
                 np.repeat(rna_idx_arr, n_ctrl),
             ])
 
-            ctrl_links_dic = {
-                i: ctrl_links_array[i * dic_batch_size: (i + 1) * dic_batch_size]
-                for i in range((len(ctrl_links_array) + dic_batch_size - 1) // dic_batch_size)
-            }
+            ctrl_links_dic = ctar.parallel.chunk_links_dict(ctrl_links_array, dic_batch_size=DIC_BATCH_SIZE)
             rna_sparse = rna_norm if FLAG_CORR else adata_rna.layers['counts']
             atac_sparse = atac_norm if FLAG_CORR else adata_atac.layers['counts']
 
@@ -606,6 +642,56 @@ def main(args):
                 cis_links_df[f'{BIN_CONFIG}_mcpval'] = ctar.method.initial_mcpval(ctrl_coeff, cis_coeff)
                 cis_links_df[f'{BIN_CONFIG}_ppval'] = ctar.method.pooled_mcpval(ctrl_coeff, cis_coeff)
                 cis_links_df[f'{BIN_CONFIG}_zpval'] = ctar.method.zscore_pval(ctrl_coeff, cis_coeff)[0]
+
+                if FLAG_SPEC:
+                    print(f"# Computing {SPEC_STAT} link specificity ({SPEC_NORM} gene/peak cell-type tables)...")
+                    rna_table, atac_table = ctar.celltype_specificity.celltype_tables(
+                        adata_rna, adata_atac, CELLTYPE_COL, method=SPEC_NORM)
+                    # reuse the --flag_corr normalize_total + log1p matrices (same median target) when ATAC is log1p too
+                    reuse_log1p = FLAG_CORR and not (FLAG_TFIDF or FLAG_BIN)
+                    coexp_ctx = (ctar.celltype_specificity.coexp_context(
+                        adata_rna, adata_atac, CELLTYPE_COL,
+                        log_rna=rna_norm if reuse_log1p else None, log_atac=atac_norm if reuse_log1p else None)
+                                 if SPEC_STAT == 'coexp_log1p' else None)
+                    cis_spec, cis_spec_dom = ctar.parallel.multiprocess_link_specificity(
+                        cis_links_array, SPEC_STAT, rna_table, atac_table, coexp_ctx, batch_size=BATCH_SIZE, n_workers=n_cores)
+                    cis_spec = cis_spec.astype(np.float32)
+                    ctrl_spec = ctar.parallel.multiprocess_link_specificity(
+                        ctrl_links_array, SPEC_STAT, rna_table, atac_table, coexp_ctx, batch_size=BATCH_SIZE, n_workers=n_cores,
+                    )[0].astype(np.float32).reshape(len(cis_spec), n_ctrl)
+
+                    cis_links_df[LINK_SPEC_COL] = cis_spec
+                    cis_links_df[f'{BIN_CONFIG}_mcpval_{SPEC_TAG}'] = ctar.method.initial_mcpval(ctrl_spec, cis_spec)
+                    cis_links_df[f'{BIN_CONFIG}_ppval_{SPEC_TAG}'] = ctar.method.pooled_mcpval(ctrl_spec, cis_spec)
+                    cis_links_df[f'{BIN_CONFIG}_zpval_{SPEC_TAG}'] = ctar.method.zscore_pval(ctrl_spec, cis_spec)[0]
+
+                    os.makedirs(results_folder, exist_ok=True)
+                    np.save(f'{results_folder}/cis_{SPEC_TAG}.npy', cis_spec)
+                    np.save(f'{results_folder}/ctrl_{SPEC_TAG}.npy', ctrl_spec)
+
+                    # Marginal specificity (gene only for inf case)
+                    gene_spec, peak_spec = ctar.celltype_specificity.marginal_specificity(rna_table, atac_table)
+                    cis_peak_spec = peak_spec[cis_links_array[:, 0]].astype(np.float32)
+                    ctrl_peak_spec = peak_spec[ctrl_links_array[:, 0]].astype(np.float32).reshape(len(cis_spec), n_ctrl)
+                    cis_links_df[f'gene_specificity{SPEC_SUFFIX}'] = gene_spec[cis_links_array[:, 1]].astype(np.float32)
+                    cis_links_df[f'peak_specificity{SPEC_SUFFIX}'] = cis_peak_spec
+                    cis_links_df[f'{BIN_CONFIG}_mcpval_peak_spec{SPEC_SUFFIX}'] = ctar.method.initial_mcpval(ctrl_peak_spec, cis_peak_spec)
+                    np.save(f'{results_folder}/gene_spec{SPEC_SUFFIX}.npy', gene_spec)
+                    np.save(f'{results_folder}/peak_spec{SPEC_SUFFIX}.npy', peak_spec)
+
+                    # Dominant cell type of the gene, the peak and the joint profile
+                    gene_dominant, peak_dominant, link_dominant, dominant_concordant = ctar.celltype_specificity.dominant_celltypes(
+                        rna_table, atac_table, cis_links_array[:, 1], cis_links_array[:, 0])
+                    cis_links_df[f'gene_dominant_subtype{SPEC_SUFFIX}'] = gene_dominant
+                    cis_links_df[f'peak_dominant_subtype{SPEC_SUFFIX}'] = peak_dominant
+                    cis_links_df[f'link_dominant_subtype{SPEC_SUFFIX}'] = link_dominant
+                    if cis_spec_dom is not None:
+                        cis_links_df['link_dominant_subtype_coexp'] = np.where(
+                            np.asarray(cis_spec_dom) >= 0, coexp_ctx['celltypes'][np.maximum(cis_spec_dom, 0)], None)
+                    cis_links_df = ctar.method.add_filtered_spec_qval(
+                        cis_links_df, f'{BIN_CONFIG}_mcpval_{SPEC_TAG}', f'{BIN_CONFIG}_qval_{SPEC_TAG}_filt',
+                        SPEC_STAT, SPEC_FILTER_FDR, SPEC_FILTER_QCOL)
+                    cis_links_df[f'dominant_subtype_concordant{SPEC_SUFFIX}'] = dominant_concordant
 
                 print(f'# Saving files to {results_folder}')
                 os.makedirs(results_folder, exist_ok=True)
@@ -720,6 +806,56 @@ def main(args):
                     if 'poissonb' not in cis_links_df.columns:
                         cis_links_df['poissonb'] = cis_beta
 
+                if FLAG_SPEC:
+                    print(f"# Computing {SPEC_STAT} link specificity ({SPEC_NORM} gene/peak cell-type tables)...")
+                    rna_table, atac_table = ctar.celltype_specificity.celltype_tables(
+                        adata_rna, adata_atac, CELLTYPE_COL, method=SPEC_NORM)
+                    # reuse the --flag_corr normalize_total + log1p matrices (same median target) when ATAC is log1p too
+                    reuse_log1p = FLAG_CORR and not (FLAG_TFIDF or FLAG_BIN)
+                    coexp_ctx = (ctar.celltype_specificity.coexp_context(
+                        adata_rna, adata_atac, CELLTYPE_COL,
+                        log_rna=rna_norm if reuse_log1p else None, log_atac=atac_norm if reuse_log1p else None)
+                                 if SPEC_STAT == 'coexp_log1p' else None)
+                    cis_spec, cis_spec_dom = ctar.parallel.multiprocess_link_specificity(
+                        cis_links_array, SPEC_STAT, rna_table, atac_table, coexp_ctx, batch_size=BATCH_SIZE, n_workers=n_cores)
+                    cis_spec = cis_spec.astype(np.float32)
+                    ctrl_spec = ctar.parallel.multiprocess_link_specificity(
+                        ctrl_links_array, SPEC_STAT, rna_table, atac_table, coexp_ctx, batch_size=BATCH_SIZE, n_workers=n_cores,
+                    )[0].astype(np.float32).reshape(len(cis_spec), n_ctrl)
+
+                    cis_links_df[LINK_SPEC_COL] = cis_spec
+                    cis_links_df[f'{BIN_CONFIG}_mcpval_{SPEC_TAG}'] = ctar.method.initial_mcpval(ctrl_spec, cis_spec)
+                    cis_links_df[f'{BIN_CONFIG}_ppval_{SPEC_TAG}'] = ctar.method.pooled_mcpval(ctrl_spec, cis_spec)
+                    cis_links_df[f'{BIN_CONFIG}_zpval_{SPEC_TAG}'] = ctar.method.zscore_pval(ctrl_spec, cis_spec)[0]
+
+                    os.makedirs(results_folder, exist_ok=True)
+                    np.save(f'{results_folder}/cis_{SPEC_TAG}.npy', cis_spec)
+                    np.save(f'{results_folder}/ctrl_{SPEC_TAG}.npy', ctrl_spec)
+
+                    # Marginal specificity (gene only for inf case)
+                    gene_spec, peak_spec = ctar.celltype_specificity.marginal_specificity(rna_table, atac_table)
+                    cis_peak_spec = peak_spec[cis_links_array[:, 0]].astype(np.float32)
+                    ctrl_peak_spec = peak_spec[ctrl_links_array[:, 0]].astype(np.float32).reshape(len(cis_spec), n_ctrl)
+                    cis_links_df[f'gene_specificity{SPEC_SUFFIX}'] = gene_spec[cis_links_array[:, 1]].astype(np.float32)
+                    cis_links_df[f'peak_specificity{SPEC_SUFFIX}'] = cis_peak_spec
+                    cis_links_df[f'{BIN_CONFIG}_mcpval_peak_spec{SPEC_SUFFIX}'] = ctar.method.initial_mcpval(ctrl_peak_spec, cis_peak_spec)
+                    np.save(f'{results_folder}/gene_spec{SPEC_SUFFIX}.npy', gene_spec)
+                    np.save(f'{results_folder}/peak_spec{SPEC_SUFFIX}.npy', peak_spec)
+
+                    # Dominant cell type of the gene, the peak and the joint profile
+                    gene_dominant, peak_dominant, link_dominant, dominant_concordant = ctar.celltype_specificity.dominant_celltypes(
+                        rna_table, atac_table, cis_links_array[:, 1], cis_links_array[:, 0])
+                    cis_links_df[f'gene_dominant_subtype{SPEC_SUFFIX}'] = gene_dominant
+                    cis_links_df[f'peak_dominant_subtype{SPEC_SUFFIX}'] = peak_dominant
+                    cis_links_df[f'link_dominant_subtype{SPEC_SUFFIX}'] = link_dominant
+                    if cis_spec_dom is not None:
+                        cis_links_df['link_dominant_subtype_coexp'] = np.where(
+                            np.asarray(cis_spec_dom) >= 0, coexp_ctx['celltypes'][np.maximum(cis_spec_dom, 0)], None)
+                    cis_links_df = ctar.method.add_filtered_spec_qval(
+                        cis_links_df, f'{BIN_CONFIG}_mcpval_{SPEC_TAG}', f'{BIN_CONFIG}_qval_{SPEC_TAG}_filt',
+                        SPEC_STAT, SPEC_FILTER_FDR, SPEC_FILTER_QCOL)
+                    cis_links_df[f'dominant_subtype_concordant{SPEC_SUFFIX}'] = dominant_concordant
+
                 print(f'# Saving files to {results_folder}')
                 os.makedirs(results_folder, exist_ok=True)
 
@@ -782,6 +918,65 @@ def main(args):
                 cis_links_df = ctar.data_loader.map_dic_to_df(cis_links_df, cis_idx_dic, ppval_dic, col_name=f'{BIN_CONFIG}_ppval')
                 cis_links_df = ctar.data_loader.map_dic_to_df(cis_links_df, cis_idx_dic, zpval_dic, col_name=f'{BIN_CONFIG}_zpval')
                 cis_links_df = ctar.data_loader.map_dic_to_df(cis_links_df, cis_idx_dic, cis_coeff_dic, col_name='corr')
+
+                if FLAG_SPEC:
+                    print(f"# Computing {SPEC_STAT} link specificity ({SPEC_NORM} gene/peak cell-type tables)...")
+                    rna_table, atac_table = ctar.celltype_specificity.celltype_tables(
+                        adata_rna, adata_atac, CELLTYPE_COL, method=SPEC_NORM)
+                    # reuse the --flag_corr normalize_total + log1p matrices (same median target) when ATAC is log1p too
+                    reuse_log1p = FLAG_CORR and not (FLAG_TFIDF or FLAG_BIN)
+                    coexp_ctx = (ctar.celltype_specificity.coexp_context(
+                        adata_rna, adata_atac, CELLTYPE_COL,
+                        log_rna=rna_norm if reuse_log1p else None, log_atac=atac_norm if reuse_log1p else None)
+                                 if SPEC_STAT == 'coexp_log1p' else None)
+                    cis_spec_dic, cis_spec_dom_dic = ctar.parallel.multiprocess_link_specificity(
+                        cis_links_dic, SPEC_STAT, rna_table, atac_table, coexp_ctx, batch_size=BATCH_SIZE, n_workers=n_cores)
+                    cis_spec_dom = None if cis_spec_dom_dic is None else ctar.data_loader.map_dic_to_df(
+                        cis_links_df[[]].copy(), cis_idx_dic, cis_spec_dom_dic, col_name='code')['code'].fillna(-1).astype(int).to_numpy()
+                    ctrl_spec_dic = ctar.parallel.multiprocess_link_specificity(
+                        ctrl_links_dic, SPEC_STAT, rna_table, atac_table, coexp_ctx, batch_size=BATCH_SIZE, n_workers=n_cores)[0]
+                    mcpval_spec_dic, ppval_spec_dic, zpval_spec_dic = ctar.method.binned_mcpval(cis_spec_dic, ctrl_spec_dic, b=n_ctrl)
+
+                    cis_links_df = ctar.data_loader.map_dic_to_df(cis_links_df, cis_idx_dic, cis_spec_dic, col_name=LINK_SPEC_COL)
+                    cis_links_df = ctar.data_loader.map_dic_to_df(cis_links_df, cis_idx_dic, mcpval_spec_dic, col_name=f'{BIN_CONFIG}_mcpval_{SPEC_TAG}')
+                    cis_links_df = ctar.data_loader.map_dic_to_df(cis_links_df, cis_idx_dic, ppval_spec_dic, col_name=f'{BIN_CONFIG}_ppval_{SPEC_TAG}')
+                    cis_links_df = ctar.data_loader.map_dic_to_df(cis_links_df, cis_idx_dic, zpval_spec_dic, col_name=f'{BIN_CONFIG}_zpval_{SPEC_TAG}')
+
+                    os.makedirs(results_folder, exist_ok=True)
+                    with open(f'{results_folder}/cis_{SPEC_TAG}_dic.pkl', 'wb') as f:
+                        pickle.dump(cis_spec_dic, f)
+                    with open(f'{results_folder}/ctrl_{SPEC_TAG}_dic.pkl', 'wb') as f:
+                        pickle.dump(ctrl_spec_dic, f)
+
+                    # Marginal specificity
+                    gene_spec, peak_spec = ctar.celltype_specificity.marginal_specificity(rna_table, atac_table)
+                    for feature, feature_spec, pair_column in (('gene', gene_spec, 1), ('peak', peak_spec, 0)):
+                        cis_feature_dic = {key: feature_spec[pairs[:, pair_column]] for key, pairs in cis_links_dic.items()}
+                        ctrl_feature_dic = {key: feature_spec[pairs[:, pair_column]] for key, pairs in ctrl_links_dic.items()}
+                        mcpval_feature_dic, _, _ = ctar.method.binned_mcpval(cis_feature_dic, ctrl_feature_dic, b=n_ctrl)
+                        cis_links_df = ctar.data_loader.map_dic_to_df(cis_links_df, cis_idx_dic, cis_feature_dic, col_name=f'{feature}_specificity{SPEC_SUFFIX}')
+                        cis_links_df = ctar.data_loader.map_dic_to_df(cis_links_df, cis_idx_dic, mcpval_feature_dic, col_name=f'{BIN_CONFIG}_mcpval_{feature}_spec{SPEC_SUFFIX}')
+                    np.save(f'{results_folder}/gene_spec{SPEC_SUFFIX}.npy', gene_spec)
+                    np.save(f'{results_folder}/peak_spec{SPEC_SUFFIX}.npy', peak_spec)
+
+                    # Row-aligned (atac_idx, rna_idx) pairs rebuilt from the bins; -1 marks rows that are not in a bin
+                    cis_links_array = np.full((len(cis_links_df), 2), -1, dtype=np.int64)
+                    for key, idx in cis_idx_dic.items():
+                        cis_links_array[np.asarray(idx)] = cis_links_dic[key]
+
+                    # Dominant cell type of the gene, the peak and the joint profile
+                    gene_dominant, peak_dominant, link_dominant, dominant_concordant = ctar.celltype_specificity.dominant_celltypes(
+                        rna_table, atac_table, cis_links_array[:, 1], cis_links_array[:, 0])
+                    cis_links_df[f'gene_dominant_subtype{SPEC_SUFFIX}'] = gene_dominant
+                    cis_links_df[f'peak_dominant_subtype{SPEC_SUFFIX}'] = peak_dominant
+                    cis_links_df[f'link_dominant_subtype{SPEC_SUFFIX}'] = link_dominant
+                    if cis_spec_dom is not None:
+                        cis_links_df['link_dominant_subtype_coexp'] = np.where(
+                            np.asarray(cis_spec_dom) >= 0, coexp_ctx['celltypes'][np.maximum(cis_spec_dom, 0)], None)
+                    cis_links_df = ctar.method.add_filtered_spec_qval(
+                        cis_links_df, f'{BIN_CONFIG}_mcpval_{SPEC_TAG}', f'{BIN_CONFIG}_qval_{SPEC_TAG}_filt',
+                        SPEC_STAT, SPEC_FILTER_FDR, SPEC_FILTER_QCOL)
+                    cis_links_df[f'dominant_subtype_concordant{SPEC_SUFFIX}'] = dominant_concordant
 
                 print(f'# Saving files to {results_folder}')
                 os.makedirs(results_folder, exist_ok=True)
@@ -895,6 +1090,65 @@ def main(args):
                     cis_links_df = ctar.data_loader.map_dic_to_df(cis_links_df, cis_idx_dic, ppval_dic, col_name=f'{BIN_CONFIG}_ppval')
                     cis_links_df = ctar.data_loader.map_dic_to_df(cis_links_df, cis_idx_dic, zpval_dic, col_name=f'{BIN_CONFIG}_zpval')
                     cis_links_df = ctar.data_loader.map_dic_to_df(cis_links_df, cis_idx_dic, cis_coeff_dic, col_name='poissonb')
+
+                if FLAG_SPEC:
+                    print(f"# Computing {SPEC_STAT} link specificity ({SPEC_NORM} gene/peak cell-type tables)...")
+                    rna_table, atac_table = ctar.celltype_specificity.celltype_tables(
+                        adata_rna, adata_atac, CELLTYPE_COL, method=SPEC_NORM)
+                    # reuse the --flag_corr normalize_total + log1p matrices (same median target) when ATAC is log1p too
+                    reuse_log1p = FLAG_CORR and not (FLAG_TFIDF or FLAG_BIN)
+                    coexp_ctx = (ctar.celltype_specificity.coexp_context(
+                        adata_rna, adata_atac, CELLTYPE_COL,
+                        log_rna=rna_norm if reuse_log1p else None, log_atac=atac_norm if reuse_log1p else None)
+                                 if SPEC_STAT == 'coexp_log1p' else None)
+                    cis_spec_dic, cis_spec_dom_dic = ctar.parallel.multiprocess_link_specificity(
+                        cis_links_dic, SPEC_STAT, rna_table, atac_table, coexp_ctx, batch_size=BATCH_SIZE, n_workers=n_cores)
+                    cis_spec_dom = None if cis_spec_dom_dic is None else ctar.data_loader.map_dic_to_df(
+                        cis_links_df[[]].copy(), cis_idx_dic, cis_spec_dom_dic, col_name='code')['code'].fillna(-1).astype(int).to_numpy()
+                    ctrl_spec_dic = ctar.parallel.multiprocess_link_specificity(
+                        ctrl_links_dic, SPEC_STAT, rna_table, atac_table, coexp_ctx, batch_size=BATCH_SIZE, n_workers=n_cores)[0]
+                    mcpval_spec_dic, ppval_spec_dic, zpval_spec_dic = ctar.method.binned_mcpval(cis_spec_dic, ctrl_spec_dic, b=n_ctrl)
+
+                    cis_links_df = ctar.data_loader.map_dic_to_df(cis_links_df, cis_idx_dic, cis_spec_dic, col_name=LINK_SPEC_COL)
+                    cis_links_df = ctar.data_loader.map_dic_to_df(cis_links_df, cis_idx_dic, mcpval_spec_dic, col_name=f'{BIN_CONFIG}_mcpval_{SPEC_TAG}')
+                    cis_links_df = ctar.data_loader.map_dic_to_df(cis_links_df, cis_idx_dic, ppval_spec_dic, col_name=f'{BIN_CONFIG}_ppval_{SPEC_TAG}')
+                    cis_links_df = ctar.data_loader.map_dic_to_df(cis_links_df, cis_idx_dic, zpval_spec_dic, col_name=f'{BIN_CONFIG}_zpval_{SPEC_TAG}')
+
+                    os.makedirs(results_folder, exist_ok=True)
+                    with open(f'{results_folder}/cis_{SPEC_TAG}_dic.pkl', 'wb') as f:
+                        pickle.dump(cis_spec_dic, f)
+                    with open(f'{results_folder}/ctrl_{SPEC_TAG}_dic.pkl', 'wb') as f:
+                        pickle.dump(ctrl_spec_dic, f)
+
+                    # Marginal specificity
+                    gene_spec, peak_spec = ctar.celltype_specificity.marginal_specificity(rna_table, atac_table)
+                    for feature, feature_spec, pair_column in (('gene', gene_spec, 1), ('peak', peak_spec, 0)):
+                        cis_feature_dic = {key: feature_spec[pairs[:, pair_column]] for key, pairs in cis_links_dic.items()}
+                        ctrl_feature_dic = {key: feature_spec[pairs[:, pair_column]] for key, pairs in ctrl_links_dic.items()}
+                        mcpval_feature_dic, _, _ = ctar.method.binned_mcpval(cis_feature_dic, ctrl_feature_dic, b=n_ctrl)
+                        cis_links_df = ctar.data_loader.map_dic_to_df(cis_links_df, cis_idx_dic, cis_feature_dic, col_name=f'{feature}_specificity{SPEC_SUFFIX}')
+                        cis_links_df = ctar.data_loader.map_dic_to_df(cis_links_df, cis_idx_dic, mcpval_feature_dic, col_name=f'{BIN_CONFIG}_mcpval_{feature}_spec{SPEC_SUFFIX}')
+                    np.save(f'{results_folder}/gene_spec{SPEC_SUFFIX}.npy', gene_spec)
+                    np.save(f'{results_folder}/peak_spec{SPEC_SUFFIX}.npy', peak_spec)
+
+                    # Row-aligned (atac_idx, rna_idx) pairs rebuilt from the bins; -1 marks rows that are not in a bin
+                    cis_links_array = np.full((len(cis_links_df), 2), -1, dtype=np.int64)
+                    for key, idx in cis_idx_dic.items():
+                        cis_links_array[np.asarray(idx)] = cis_links_dic[key]
+
+                    # Dominant cell type of the gene, the peak and the joint profile
+                    gene_dominant, peak_dominant, link_dominant, dominant_concordant = ctar.celltype_specificity.dominant_celltypes(
+                        rna_table, atac_table, cis_links_array[:, 1], cis_links_array[:, 0])
+                    cis_links_df[f'gene_dominant_subtype{SPEC_SUFFIX}'] = gene_dominant
+                    cis_links_df[f'peak_dominant_subtype{SPEC_SUFFIX}'] = peak_dominant
+                    cis_links_df[f'link_dominant_subtype{SPEC_SUFFIX}'] = link_dominant
+                    if cis_spec_dom is not None:
+                        cis_links_df['link_dominant_subtype_coexp'] = np.where(
+                            np.asarray(cis_spec_dom) >= 0, coexp_ctx['celltypes'][np.maximum(cis_spec_dom, 0)], None)
+                    cis_links_df = ctar.method.add_filtered_spec_qval(
+                        cis_links_df, f'{BIN_CONFIG}_mcpval_{SPEC_TAG}', f'{BIN_CONFIG}_qval_{SPEC_TAG}_filt',
+                        SPEC_STAT, SPEC_FILTER_FDR, SPEC_FILTER_QCOL)
+                    cis_links_df[f'dominant_subtype_concordant{SPEC_SUFFIX}'] = dominant_concordant
 
                 print(f'# Saving files to {results_folder}')
                 os.makedirs(results_folder, exist_ok=True)
@@ -1056,11 +1310,7 @@ def main(args):
             link_ids = cis_links_df.index.to_numpy()
 
             # Create cis links dictionary
-            dic_batch_size = 512
-            cis_links_dic = {
-                i: cis_links_array[i * dic_batch_size: (i + 1) * dic_batch_size]
-                for i in range((len(cis_links_array) + dic_batch_size - 1) // dic_batch_size)
-            }
+            cis_links_dic = ctar.parallel.chunk_links_dict(cis_links_array, dic_batch_size=DIC_BATCH_SIZE)
             rna_sparse = rna_norm if FLAG_CORR else adata_rna.layers['counts']
             atac_sparse = atac_norm if FLAG_CORR else adata_atac.layers['counts']
 
@@ -1289,11 +1539,7 @@ def main(args):
             print(f'# ctrl_links_array.shape: {ctrl_links_array.shape}')
 
             # Chunk the control links array into batches
-            dic_batch_size = 512
-            ctrl_links_dic = {
-                i: ctrl_links_array[i * dic_batch_size: (i + 1) * dic_batch_size]
-                for i in range((len(ctrl_links_array) + dic_batch_size - 1) // dic_batch_size)
-            }
+            ctrl_links_dic = ctar.parallel.chunk_links_dict(ctrl_links_array, dic_batch_size=DIC_BATCH_SIZE)
             rna_sparse = rna_norm if FLAG_CORR else adata_rna.layers['counts']
             atac_sparse = atac_norm if FLAG_CORR else adata_atac.layers['counts']
 
@@ -1657,11 +1903,154 @@ def main(args):
                 )
                 print('# Added q_value_fixed_dist_rmean_rvar.')
 
+        # Two-stage specificity FDR (association q < --spec_filter_fdr), if a specificity p-value is already in the table
+        cis_links_df = ctar.method.add_filtered_spec_qval(cis_links_df, f'{BIN_CONFIG}_mcpval_{SPEC_TAG}',
+                                              f'{BIN_CONFIG}_qval_{SPEC_TAG}_filt', SPEC_STAT, SPEC_FILTER_FDR, SPEC_FILTER_QCOL)
+
         # Save updated dataframe
         output_file = os.path.join(RESULTS_PATH, 'cis_links_df.csv')
         print(f"# Saving updated cis_links_df to {output_file}")
         cis_links_df.to_csv(output_file)
         print(f"# Added columns: {[col for col in cis_links_df.columns if BIN_CONFIG in col or col.startswith('q_value')]}")
+
+
+    if JOB == "compute_spec":
+
+        print("# Running --job compute_spec")
+
+        # Index links on a copy so rows dropped for missing features stay in the saved table
+        links_df = ctar.data_loader.attach_link_indices(cis_links_df.copy(), adata_atac, adata_rna)
+        links_pairs = links_df[['atac_idx', 'rna_idx']].to_numpy()
+
+        print(f"# Computing {SPEC_STAT} link specificity ({SPEC_NORM} gene/peak cell-type tables)...")
+        rna_table, atac_table = ctar.celltype_specificity.celltype_tables(
+            adata_rna, adata_atac, CELLTYPE_COL, method=SPEC_NORM)
+        coexp_ctx = (ctar.celltype_specificity.coexp_context(adata_rna, adata_atac, CELLTYPE_COL)
+                     if SPEC_STAT == 'coexp_log1p' else None)
+
+        if USE_INF_MODE:
+            ctrl_peaks_file = os.path.join(RESULTS_PATH, 'ctrl_peaks.npy')
+            if not os.path.exists(ctrl_peaks_file):
+                raise FileNotFoundError(f"ctrl_peaks.npy not found at {ctrl_peaks_file}")
+            ctrl_peaks = np.load(ctrl_peaks_file)
+
+            ctrl_links_array = np.column_stack([
+                ctrl_peaks[links_pairs[:, 0], :n_ctrl].ravel(),
+                np.repeat(links_pairs[:, 1], n_ctrl),
+            ])
+            cis_spec, cis_spec_dom = ctar.parallel.multiprocess_link_specificity(
+                links_pairs, SPEC_STAT, rna_table, atac_table, coexp_ctx, batch_size=BATCH_SIZE, n_workers=n_cores)
+            cis_spec = cis_spec.astype(np.float32)
+            ctrl_spec = ctar.parallel.multiprocess_link_specificity(
+                ctrl_links_array, SPEC_STAT, rna_table, atac_table, coexp_ctx, batch_size=BATCH_SIZE, n_workers=n_cores,
+            )[0].astype(np.float32).reshape(len(cis_spec), n_ctrl)
+
+            links_df[LINK_SPEC_COL] = cis_spec
+            links_df[f'{BIN_CONFIG}_mcpval_{SPEC_TAG}'] = ctar.method.initial_mcpval(ctrl_spec, cis_spec)
+            links_df[f'{BIN_CONFIG}_ppval_{SPEC_TAG}'] = ctar.method.pooled_mcpval(ctrl_spec, cis_spec)
+            links_df[f'{BIN_CONFIG}_zpval_{SPEC_TAG}'] = ctar.method.zscore_pval(ctrl_spec, cis_spec)[0]
+
+            os.makedirs(results_folder, exist_ok=True)
+            np.save(f'{results_folder}/cis_{SPEC_TAG}.npy', cis_spec)
+            np.save(f'{results_folder}/ctrl_{SPEC_TAG}.npy', ctrl_spec)
+
+            # Marginal specificity
+            gene_spec, peak_spec = ctar.celltype_specificity.marginal_specificity(rna_table, atac_table)
+            cis_peak_spec = peak_spec[links_pairs[:, 0]].astype(np.float32)
+            ctrl_peak_spec = peak_spec[ctrl_links_array[:, 0]].astype(np.float32).reshape(len(cis_spec), n_ctrl)
+            links_df[f'gene_specificity{SPEC_SUFFIX}'] = gene_spec[links_pairs[:, 1]].astype(np.float32)
+            links_df[f'peak_specificity{SPEC_SUFFIX}'] = cis_peak_spec
+            links_df[f'{BIN_CONFIG}_mcpval_peak_spec{SPEC_SUFFIX}'] = ctar.method.initial_mcpval(ctrl_peak_spec, cis_peak_spec)
+            np.save(f'{results_folder}/gene_spec{SPEC_SUFFIX}.npy', gene_spec)
+            np.save(f'{results_folder}/peak_spec{SPEC_SUFFIX}.npy', peak_spec)
+
+            # Dominant cell type of the gene, the peak and the joint profile
+            gene_dominant, peak_dominant, link_dominant, dominant_concordant = ctar.celltype_specificity.dominant_celltypes(
+                rna_table, atac_table, links_pairs[:, 1], links_pairs[:, 0])
+            links_df[f'gene_dominant_subtype{SPEC_SUFFIX}'] = gene_dominant
+            links_df[f'peak_dominant_subtype{SPEC_SUFFIX}'] = peak_dominant
+            links_df[f'link_dominant_subtype{SPEC_SUFFIX}'] = link_dominant
+            if cis_spec_dom is not None:
+                links_df['link_dominant_subtype_coexp'] = np.where(
+                    np.asarray(cis_spec_dom) >= 0, coexp_ctx['celltypes'][np.maximum(cis_spec_dom, 0)], None)
+            links_df[f'dominant_subtype_concordant{SPEC_SUFFIX}'] = dominant_concordant
+
+        else:
+            cis_idx_file = os.path.join(RESULTS_PATH, 'cis_idx_dic.pkl')
+            ctrl_links_file = os.path.join(RESULTS_PATH, 'ctrl_links_dic.pkl')
+            for fname in (cis_idx_file, ctrl_links_file):
+                if not os.path.exists(fname):
+                    raise FileNotFoundError(f"{os.path.basename(fname)} not found at {fname}")
+            with open(cis_idx_file, 'rb') as f:
+                cis_idx_dic = pickle.load(f)
+            with open(ctrl_links_file, 'rb') as f:
+                ctrl_links_dic = pickle.load(f)
+
+            assert len(links_df) == len(cis_links_df), "Links dropped for missing features; cis_idx_dic positions would misalign"
+            cis_links_dic = {key: links_pairs[np.asarray(idx)] for key, idx in cis_idx_dic.items()}
+            cis_spec_dic, cis_spec_dom_dic = ctar.parallel.multiprocess_link_specificity(
+                cis_links_dic, SPEC_STAT, rna_table, atac_table, coexp_ctx, batch_size=BATCH_SIZE, n_workers=n_cores)
+            cis_spec_dom = None if cis_spec_dom_dic is None else ctar.data_loader.map_dic_to_df(
+                        links_df[[]].copy(), cis_idx_dic, cis_spec_dom_dic, col_name='code')['code'].fillna(-1).astype(int).to_numpy()
+            ctrl_spec_dic = ctar.parallel.multiprocess_link_specificity(
+                ctrl_links_dic, SPEC_STAT, rna_table, atac_table, coexp_ctx, batch_size=BATCH_SIZE, n_workers=n_cores)[0]
+            mcpval_spec_dic, ppval_spec_dic, zpval_spec_dic = ctar.method.binned_mcpval(cis_spec_dic, ctrl_spec_dic, b=n_ctrl)
+
+            links_df = ctar.data_loader.map_dic_to_df(links_df, cis_idx_dic, cis_spec_dic, col_name=LINK_SPEC_COL)
+            links_df = ctar.data_loader.map_dic_to_df(links_df, cis_idx_dic, mcpval_spec_dic, col_name=f'{BIN_CONFIG}_mcpval_{SPEC_TAG}')
+            links_df = ctar.data_loader.map_dic_to_df(links_df, cis_idx_dic, ppval_spec_dic, col_name=f'{BIN_CONFIG}_ppval_{SPEC_TAG}')
+            links_df = ctar.data_loader.map_dic_to_df(links_df, cis_idx_dic, zpval_spec_dic, col_name=f'{BIN_CONFIG}_zpval_{SPEC_TAG}')
+
+            os.makedirs(results_folder, exist_ok=True)
+            with open(f'{results_folder}/cis_{SPEC_TAG}_dic.pkl', 'wb') as f:
+                pickle.dump(cis_spec_dic, f)
+            with open(f'{results_folder}/ctrl_{SPEC_TAG}_dic.pkl', 'wb') as f:
+                pickle.dump(ctrl_spec_dic, f)
+
+            # Marginal specificity
+            gene_spec, peak_spec = ctar.celltype_specificity.marginal_specificity(rna_table, atac_table)
+            for feature, feature_spec, pair_column in (('gene', gene_spec, 1), ('peak', peak_spec, 0)):
+                cis_feature_dic = {key: feature_spec[pairs[:, pair_column]] for key, pairs in cis_links_dic.items()}
+                ctrl_feature_dic = {key: feature_spec[pairs[:, pair_column]] for key, pairs in ctrl_links_dic.items()}
+                mcpval_feature_dic, _, _ = ctar.method.binned_mcpval(cis_feature_dic, ctrl_feature_dic, b=n_ctrl)
+                links_df = ctar.data_loader.map_dic_to_df(links_df, cis_idx_dic, cis_feature_dic, col_name=f'{feature}_specificity{SPEC_SUFFIX}')
+                links_df = ctar.data_loader.map_dic_to_df(links_df, cis_idx_dic, mcpval_feature_dic, col_name=f'{BIN_CONFIG}_mcpval_{feature}_spec{SPEC_SUFFIX}')
+            np.save(f'{results_folder}/gene_spec{SPEC_SUFFIX}.npy', gene_spec)
+            np.save(f'{results_folder}/peak_spec{SPEC_SUFFIX}.npy', peak_spec)
+
+            # Dominant cell type of the gene, the peak and the joint profile
+            gene_dominant, peak_dominant, link_dominant, dominant_concordant = ctar.celltype_specificity.dominant_celltypes(
+                rna_table, atac_table, links_pairs[:, 1], links_pairs[:, 0])
+            links_df[f'gene_dominant_subtype{SPEC_SUFFIX}'] = gene_dominant
+            links_df[f'peak_dominant_subtype{SPEC_SUFFIX}'] = peak_dominant
+            links_df[f'link_dominant_subtype{SPEC_SUFFIX}'] = link_dominant
+            if cis_spec_dom is not None:
+                links_df['link_dominant_subtype_coexp'] = np.where(
+                    np.asarray(cis_spec_dom) >= 0, coexp_ctx['celltypes'][np.maximum(cis_spec_dom, 0)], None)
+            links_df[f'dominant_subtype_concordant{SPEC_SUFFIX}'] = dominant_concordant
+
+        spec_cols = [LINK_SPEC_COL] + [f'{BIN_CONFIG}_{p}pval_{SPEC_TAG}' for p in ('mc', 'p', 'z')]
+        spec_cols += [f'gene_specificity{SPEC_SUFFIX}', f'peak_specificity{SPEC_SUFFIX}', f'{BIN_CONFIG}_mcpval_peak_spec{SPEC_SUFFIX}']
+        if not USE_INF_MODE:
+            spec_cols.append(f'{BIN_CONFIG}_mcpval_gene_spec{SPEC_SUFFIX}')
+        spec_cols.append(f'dominant_subtype_concordant{SPEC_SUFFIX}')
+        dominant_cols = [f'{kind}_dominant_subtype{SPEC_SUFFIX}' for kind in ('gene', 'peak', 'link')]
+        if SPEC_STAT == 'coexp_log1p':
+            dominant_cols.append('link_dominant_subtype_coexp')
+        for col in spec_cols:
+            cis_links_df[col] = np.nan
+            cis_links_df.loc[links_df.index, col] = links_df[col]
+        for col in dominant_cols:
+            cis_links_df[col] = pd.Series(None, index=cis_links_df.index, dtype=object)
+            cis_links_df.loc[links_df.index, col] = links_df[col]
+        filtered_col = f'{BIN_CONFIG}_qval_{SPEC_TAG}_filt'
+        cis_links_df = ctar.method.add_filtered_spec_qval(cis_links_df, f'{BIN_CONFIG}_mcpval_{SPEC_TAG}', filtered_col,
+                                              SPEC_STAT, SPEC_FILTER_FDR, SPEC_FILTER_QCOL)
+
+        output_file = os.path.join(RESULTS_PATH, 'cis_links_df.csv')
+        print(f"# Saving updated cis_links_df to {output_file}")
+        cis_links_df.to_csv(output_file)
+        print(f"# Added columns: {spec_cols + dominant_cols + ([filtered_col] if filtered_col in cis_links_df else [])}")
 
 
     ###########################################################################################
@@ -1682,16 +2071,24 @@ def main(args):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="ctar")
 
-    parser.add_argument("--job", type=str, required=True, help="compute_ctar, compute_cis_only, compute_ctrl_only, generate_links, generate_controls, compute_pval")
+    parser.add_argument("--job", type=str, required=True, help="compute_ctar, compute_cis_only, compute_ctrl_only, generate_links, generate_controls, compute_pval, compute_spec")
     parser.add_argument("--job_id", type=str, required=False, default='1', help='job id')
     parser.add_argument("--multiome_file", type=str, required=False, default=None)
     parser.add_argument("--batch_size", type=str, required=False, default='100')
+    parser.add_argument("--dic_batch_size", type=str, required=False, default='512', help="Rows per links_dict chunk in inf.inf mode (generate_links/compute_cis_only/compute_ctrl_only).")
     parser.add_argument("--links_file", type=str, required=False, default=None)
     parser.add_argument("--target_path", type=str, required=False, default=None)
     parser.add_argument("--results_path", type=str, required=False, default=None)
     parser.add_argument("--flag_ll", type=str, required=False, default='False')
     parser.add_argument("--flag_se", type=str, required=False, default='False')
     parser.add_argument("--flag_corr", type=str, required=False, default='False')
+    parser.add_argument("--flag_spec", type=str, required=False, default='False', help="Compute joint entropy specificity and its monte carlo p-values (compute_ctar). Requires --celltype_col.")
+    parser.add_argument("--spec_stat", type=str, required=False, default='coexp_log1p', choices=['coexp_log1p', 'joint'], help="Link specificity statistic: 'coexp_log1p' (default; pseudobulk of co-expression, the cell-type mean of the per-cell product log1p(normalized gene) * log1p(normalized peak), normalize_total to the median depth as in --flag_corr) or 'joint' (entropy of the product of the --spec_norm gene and peak cell-type tables).")
+    parser.add_argument("--spec_filter_fdr", type=float, required=False, default=0.2, help="Association FDR threshold for the two-stage specificity FDR column {binning_config}_qval_{spec tag}_filt: BH over the specificity mcpval among links with association q < this value, NaN elsewhere (default 0.2).")
+    parser.add_argument("--spec_filter_qcol", type=str, required=False, default=None, help="Association q-value column for --spec_filter_fdr (default: q_value_fixed_dist_rmean_rvar if present, else q_value).")
+    parser.add_argument("--spec_norm", type=str, required=False, default='pseudobulk', choices=['pseudobulk', 'mean'], help="Cell-type tables for joint entropy specificity: 'pseudobulk' (summed counts / cell-type total + library-size-scaled pseudocount) or 'mean' (normalize_total per-cell-type means).")
+    parser.add_argument("--celltype_col", type=str, required=False, default=None, help="obs column with cell-type labels for joint entropy specificity (--flag_spec / --job compute_spec); with --celltype_file, the label column in that file.")
+    parser.add_argument("--celltype_file", type=str, required=False, default=None, help="Optional CSV (first column = cell barcode) holding the --celltype_col labels, for multiome files without an obs label column. Cells missing from the file are dropped from specificity.")
     parser.add_argument("--flag_tfidf", type=str, required=False, default='False')
     parser.add_argument("--flag_bin", type=str, required=False, default='False', help="Binarize ATAC counts (0/1) instead of log1p or TFIDF. Mutually exclusive with --flag_tfidf.")
     parser.add_argument(
