@@ -2312,6 +2312,51 @@ def dist_rmean_rvar_sfdr(
     return cis_links_df
 
 
+def add_filtered_spec_qval(links_df, mcpval_col, out_col, spec_stat, fdr_thres=0.2, qval_col=None):
+    """
+    Two-stage FDR for link specificity: Benjamini-Hochberg over mcpval_col among links with association
+    q < fdr_thres, NaN for every other row.
+
+    Parameters
+    ----------
+    links_df : pd.DataFrame
+        cis_links_df with the association q-value and specificity p-value columns.
+    mcpval_col : str
+        Specificity p-value column (e.g. '{binning_config}_mcpval_spec_coexp').
+    out_col : str
+        Column to write.
+    spec_stat : str
+        'coexp_log1p' or 'joint'. For 'joint' the column is written with a warning: joint specificity p-values
+        are not independent of association under the specificity null, so this FDR is not controlled.
+    fdr_thres : float
+        Association q threshold (strict <).
+    qval_col : str, optional
+        Association q-value column; default q_value_fixed_dist_rmean_rvar if present, else q_value.
+
+    Returns
+    ----------
+    links_df with out_col added (unchanged, with a message, if a required column is missing).
+    """
+    if qval_col is None:
+        qval_col = next((col for col in ('q_value_fixed_dist_rmean_rvar', 'q_value') if col in links_df.columns), None)
+    if qval_col is None or qval_col not in links_df.columns or mcpval_col not in links_df.columns:
+        print(f"# Skipping {out_col}: needs association q ({qval_col or 'q_value_fixed_dist_rmean_rvar / q_value'}) "
+              f"and {mcpval_col} in the links table")
+        return links_df
+    if spec_stat == 'joint':
+        print(f"# WARNING: {out_col} uses joint specificity p-values, which are anti-conservative among links selected on "
+              f"association (not independent of it under the specificity null); FDR is not controlled. "
+              f"Use --spec_stat coexp_log1p.")
+    selected = ((links_df[qval_col] < fdr_thres) & links_df[mcpval_col].notna()).to_numpy()
+    qvals = np.full(len(links_df), np.nan)
+    if selected.any():
+        qvals[selected] = stats.multitest.multipletests(links_df.loc[selected, mcpval_col].to_numpy(), method='fdr_bh')[1]
+    links_df[out_col] = qvals
+    print(f"# Added {out_col}: BH over {int(selected.sum())} links with {qval_col} < {fdr_thres}; "
+          f"{int((qvals[selected] < 0.1).sum())} at q < 0.1, {int((qvals[selected] < 0.2).sum())} at q < 0.2")
+    return links_df
+
+
 ######################### clustering #########################
 
 
