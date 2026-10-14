@@ -252,7 +252,7 @@ def enrichment_recall(
     Removed drop_duplicates (handled in auerc).
     """
     tmp = df[[method, gold_col]].copy()
-    tmp = tmp.sort_values(by = method, ascending = ascending).reset_index(drop = True)
+    tmp = tmp.sort_values(by = method, ascending = ascending, kind = "stable").reset_index(drop = True)
 
     linked = tmp[method].notna().astype(int)
     linked_cum = linked.cumsum()
@@ -293,7 +293,7 @@ def auerc(
         return np.nan
 
     if average:
-        er = er.sort_values("recall").drop_duplicates("recall", keep="first")
+        er = er.drop_duplicates("recall", keep="first")
     
     weights = 1 - er["recall"] if weighted else None
 
