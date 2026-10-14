@@ -2,15 +2,15 @@
 
 # FILE: /projects/zhanglab/users/ana/cts_peak_gene/experiments/job.pipeline/cli.sh
 
-MULTIOME_DATASET=pbmc
-MULTIOME_FILE=/projects/zhanglab/users/ana/multiome/processed/pbmc_sorted_10k/pbmc.h5mu
-BIN_CONFIG=4.4.4.4.1000
-TARGET_PATH=/projects/zhanglab/users/ana/multiome/results/ctar/tfidf_eval/${MULTIOME_DATASET}/${MULTIOME_DATASET}_unfiltered_len_${BIN_CONFIG}
+MULTIOME_DATASET=bmmc
+MULTIOME_FILE=/projects/zhanglab/users/ana/multiome/processed/neurips_bmmc/bmmc.h5mu
+BIN_CONFIG=1.1.1.1.10000
+TARGET_PATH=/projects/zhanglab/users/ana/multiome/results/ctar/tfidf_eval/${MULTIOME_DATASET}/${MULTIOME_DATASET}_unfiltered_len_donor_${BIN_CONFIG}
 GENOME_FILE=/projects/zhanglab/users/ana/bedtools2/ana_bedfiles/ref/GRCh38.p14.genome.fa.bgz
 BIN_TYPE='mean_var'
 PYBEDTOOLS_PATH=/projects/zhanglab/users/ana/bedtools2/bin
-BATCH_SIZE=5000
-RESULTS_PATH=/projects/zhanglab/users/ana/multiome/results/ctar/tfidf_eval/${MULTIOME_DATASET}/${MULTIOME_DATASET}_unfiltered_len_${BIN_CONFIG}
+BATCH_SIZE=2000
+RESULTS_PATH=/projects/zhanglab/users/ana/multiome/results/ctar/tfidf_eval/${MULTIOME_DATASET}/${MULTIOME_DATASET}_unfiltered_len_donor_${BIN_CONFIG}
 PARTITION="mzhang,statgen,pool1"
 MAX_CONCURRENT=10
 FLAG_LL='False'
@@ -18,8 +18,8 @@ FLAG_SE='True'
 FLAG_CORR='True'
 N_CORES=64
 RANDOM_SEED=777
-DONOR_COL=''
-N_LENGTH_BINS=4
+DONOR_COL='DonorID'
+N_LENGTH_BINS=1
 FDR_BIN_TYPE='dist_rmean_rvar'
 N_DIST_BINS=4
 TSS_FILE=/projects/zhanglab/users/ana/bedtools2/ana_bedfiles/ref/gencode.v47.annotation.gtf.gz
@@ -28,6 +28,7 @@ N_FDR_RNA_BINS=4
 FDR_MIN_BIN_COUNT=25000
 USE_CIS_ARRAY=true
 FLAG_TFIDF='True'
+EXCLUDE='--exclude=lanec2-0-16,lanec2-0-36'
 
 IFS='.' read -r b1 b2 b3 b4 rest <<< "$BIN_CONFIG"
 if [[ "$b3" == "inf" && "$b4" == "inf" ]]; then
@@ -67,7 +68,7 @@ fi
 if [ "$USE_CIS_ARRAY" = true ]; then
     echo "Submitting $BIN_CONFIG compute_cis_only array job with $TOTAL_NUM_BATCHES tasks..."
     CIS_JOB=$(sbatch --parsable -p $PARTITION -t 3-00:00:00 \
-        $ARRAY_OPT \
+        $ARRAY_OPT $EXCLUDE --mem=128Gb \
         --ntasks-per-node=$N_CORES \
         -o /projects/zhanglab/users/ana/logs/cis_%A_%a.err \
         -J "cis_$BIN_CONFIG" \
@@ -83,7 +84,7 @@ if [ "$USE_CIS_ARRAY" = true ]; then
 else
     echo "Submitting $BIN_CONFIG compute_cis_only job..."
     CIS_JOB=$(sbatch --parsable -p $PARTITION -t 3-00:00:00 \
-      --ntasks-per-node=$N_CORES \
+      --ntasks-per-node=$N_CORES $EXCLUDE --mem=128Gb \
       -o /projects/zhanglab/users/ana/logs/cis_%j.err -J "cis_$BIN_CONFIG" \
       --wrap "source ~/.bashrc && conda activate ctar && python /projects/zhanglab/users/ana/cts_peak_gene/CLI_ctar.py \
               --job compute_cis_only --multiome_file $MULTIOME_FILE --batch_size $BATCH_SIZE \
@@ -95,20 +96,20 @@ else
     echo "Cis job ID: $CIS_JOB"
 fi
 
-###########################################################################################
-######                              Generate Controls                              ######
-###########################################################################################
+# ###########################################################################################
+# ######                              Generate Controls                              ######
+# ###########################################################################################
 
-echo "Submitting $BIN_CONFIG generate_controls job..."
-GEN_CTRL_JOB=$(sbatch --parsable -p $PARTITION -t 1-00:00:00 \
-  --ntasks-per-node=32 \
-  -o /projects/zhanglab/users/ana/logs/gen_ctrl_%j.err -J "gen_ctrl_$BIN_CONFIG" \
-  --wrap "source ~/.bashrc && conda activate ctar && python /projects/zhanglab/users/ana/cts_peak_gene/CLI_ctar.py \
-          --job generate_controls --multiome_file $MULTIOME_FILE --batch_size $BATCH_SIZE \
-          --binning_config $BIN_CONFIG --binning_type $BIN_TYPE --genome_file $GENOME_FILE --target_path $TARGET_PATH \
-          --pybedtools_path $PYBEDTOOLS_PATH --results_path $RESULTS_PATH --random_seed $RANDOM_SEED \
-          --n_length_bins $N_LENGTH_BINS")
-echo "Generate controls job ID: $GEN_CTRL_JOB"
+# echo "Submitting $BIN_CONFIG generate_controls job..."
+# GEN_CTRL_JOB=$(sbatch --parsable -p $PARTITION -t 1-00:00:00 \
+#   --ntasks-per-node=32 --mem=128Gb $EXCLUDE \
+#   -o /projects/zhanglab/users/ana/logs/gen_ctrl_%j.err -J "gen_ctrl_$BIN_CONFIG" \
+#   --wrap "source ~/.bashrc && conda activate ctar && python /projects/zhanglab/users/ana/cts_peak_gene/CLI_ctar.py \
+#           --job generate_controls --multiome_file $MULTIOME_FILE --batch_size $BATCH_SIZE \
+#           --binning_config $BIN_CONFIG --binning_type $BIN_TYPE --genome_file $GENOME_FILE --target_path $TARGET_PATH \
+#           --pybedtools_path $PYBEDTOOLS_PATH --results_path $RESULTS_PATH --random_seed $RANDOM_SEED \
+#           --n_length_bins $N_LENGTH_BINS --tss_file $TSS_FILE")
+# echo "Generate controls job ID: $GEN_CTRL_JOB"
 
 ###########################################################################################
 ######                    Wait for Links Job and Count Cis-Links                     ######
@@ -166,7 +167,7 @@ if [ "$USE_INF_MODE" = true ]; then
         echo "Submitting single array job with $TOTAL_NUM_BATCHES tasks..."
         
         CTRL_JOB=$(sbatch --parsable -p $PARTITION -t 2-00:00:00 \
-            --ntasks-per-node=$N_CORES \
+            --ntasks-per-node=$N_CORES $EXCLUDE \
             --array=0-$((TOTAL_NUM_BATCHES - 1))%${MAX_CONCURRENT} \
             -o /projects/zhanglab/users/ana/logs/ctrl_%A_%a.err \
             -J "ctrl_$BIN_CONFIG" \
@@ -189,6 +190,7 @@ if [ "$USE_INF_MODE" = true ]; then
 else
     echo "Submitting $BIN_CONFIG compute_ctrl_only job with $TOTAL_NUM_BATCHES batches..."
     CTRL_JOB=$(sbatch --parsable -p $PARTITION -t 3-00:00:00 $ARRAY_OPT \
+      --mem=64Gb $EXCLUDE \
       --ntasks-per-node=$N_CORES \
       -o /projects/zhanglab/users/ana/logs/ctrl_%A_%a.err -J "ctrl_$BIN_CONFIG" \
       --wrap "source ~/.bashrc && conda activate ctar && python /projects/zhanglab/users/ana/cts_peak_gene/CLI_ctar.py \
@@ -210,7 +212,7 @@ echo "Submitting $BIN_CONFIG compute_pval job..."
 # --multiome_file/--tss_file are only used when cis_links_df.csv lacks rna_mean/rna_var
 # or abs_distance; they are passed so compute_pval can also be run on its own.
 PVAL_JOB=$(sbatch --parsable -p $PARTITION -t 04:00:00 \
-  --dependency=afterok:${CTRL_JOB}:${CIS_JOB} \
+  --dependency=afterok:${CTRL_JOB}:${CIS_JOB} $EXCLUDE --mem=56Gb \
   --ntasks-per-node=32 \
   --mail-type=END --mail-user=asprieto@andrew.cmu.edu \
   -o /projects/zhanglab/users/ana/logs/pval_%j.err -J "pval_$BIN_CONFIG" \
