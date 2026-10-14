@@ -1108,7 +1108,8 @@ def barplot_grouped_with_sig(
     y_label=None,
     figsize=(6,4),
     ax=None,
-    add_legend=True,
+    add_methods_legend=True,
+    add_ci_legend=True,
     asterisk_fontsize=9,      # used only if bracket_text='stars'
     bracket_fontsize=9,
     bracket_linewidth=1.2,
@@ -1292,7 +1293,7 @@ def barplot_grouped_with_sig(
         ax.set_title(title)
 
     # Legend: method display names (+ optional CI legend)
-    if add_legend:
+    if add_methods_legend:
         handles = []
         labels_legend = []
         for m in methods_order:
@@ -1317,27 +1318,27 @@ def barplot_grouped_with_sig(
             ncol=ncol,
         )
 
-        # Add CI legend only if CI is shown
-        if show_ci:
-            ci_handle = ax.errorbar(
-                [np.nan], [np.nan],
-                yerr=[[1], [1]],
-                fmt='none',
-                ecolor='k',
-                elinewidth=1.4,
-                capsize=4
-            )
-
-            ax.add_artist(
-                ax.legend(
-                    [ci_handle], ["Error bars = 95% CI"],
-                    loc=ci_legend_loc,
-                    frameon=True,
-                    fontsize=ci_legend_fontsize
-                )
-            )
-
         ax.add_artist(method_legend)
+        
+    if add_ci_legend:
+
+        ci_handle = ax.errorbar(
+            [np.nan], [np.nan],
+            yerr=[[1], [1]],
+            fmt='none',
+            ecolor='k',
+            elinewidth=1.4,
+            capsize=4
+        )
+
+        ax.add_artist(
+            ax.legend(
+                [ci_handle], ["Error bars = 95% CI"],
+                loc=ci_legend_loc,
+                frameon=True,
+                fontsize=ci_legend_fontsize
+            )
+        )
 
     # Draw brackets vs reference using column-based p-values (OPTIONAL)
     if show_brackets and pval_vs_ref_col is not None and per_label_vs_ref:
