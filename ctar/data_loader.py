@@ -416,6 +416,30 @@ def attach_link_indices(links_df, adata_atac, adata_rna, peak_col='peak', gene_c
     return links_df
 
 
+def attach_celltype_labels(adata, celltype_file, celltype_col):
+    """
+    Copy cell-type labels from a CSV into adata.obs[celltype_col], matched on cell barcode.
+
+    The CSV's first column is the cell barcode and `celltype_col` names the label column
+    (e.g. broad_celltypes.csv with column 'pgboost_ct'). Cells absent from the file, or with a
+    missing label, get NaN, which celltype_tables() drops.
+
+    Returns
+    -------
+    Number of cells in adata that were found in the file.
+    """
+    labels = pd.read_csv(celltype_file, index_col=0)
+    if celltype_col not in labels.columns:
+        raise ValueError(f"'{celltype_col}' not found in {celltype_file}; columns are {list(labels.columns)}")
+    if not labels.index.is_unique:
+        raise ValueError(f"Cell barcodes in {celltype_file} must be unique.")
+    n_matched = int(adata.obs_names.isin(labels.index).sum())
+    if n_matched == 0:
+        raise ValueError(f"None of the {adata.n_obs} cells were found in {celltype_file}.")
+    adata.obs[celltype_col] = labels[celltype_col].reindex(adata.obs_names).to_numpy()
+    return n_matched
+
+
 def ensure_combined_bin_column(
     links_df,
     adata_atac,
