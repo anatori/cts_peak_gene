@@ -2312,10 +2312,10 @@ def dist_rmean_rvar_sfdr(
     return cis_links_df
 
 
-def add_filtered_spec_qval(links_df, mcpval_col, out_col, spec_stat, fdr_thres=0.2, qval_col=None):
+def add_filtered_spec_qval(links_df, mcpval_col, out_col, spec_stat, fdr_thres=0.2, qval_col=None, lambda_storey=0.5):
     """
     Two-stage FDR for link specificity: Benjamini-Hochberg over mcpval_col among links with association
-    q < fdr_thres, NaN for every other row.
+    q < fdr_thres, scaled by a Storey pi0 estimated on those same links; NaN for every other row.
 
     Parameters
     ----------
@@ -2332,6 +2332,9 @@ def add_filtered_spec_qval(links_df, mcpval_col, out_col, spec_stat, fdr_thres=0
         Association q threshold (strict <).
     qval_col : str, optional
         Association q-value column; default q_value_fixed_dist_rmean_rvar if present, else q_value.
+    lambda_storey : float or None
+        Storey lambda for pi0 (see `estimate_pi0`; one global pi0 over the selected links, 1.0 if fewer than 30).
+        None gives plain BH.
 
     Returns
     ----------
@@ -2349,10 +2352,13 @@ def add_filtered_spec_qval(links_df, mcpval_col, out_col, spec_stat, fdr_thres=0
               f"Use --spec_stat coexp_log1p.")
     selected = ((links_df[qval_col] < fdr_thres) & links_df[mcpval_col].notna()).to_numpy()
     qvals = np.full(len(links_df), np.nan)
+    pi0 = 1.0
     if selected.any():
-        qvals[selected] = stats.multitest.multipletests(links_df.loc[selected, mcpval_col].to_numpy(), method='fdr_bh')[1]
+        if lambda_storey is not None:
+            pi0 = estimate_pi0(links_df.loc[selected], mcpval_col, lambda_storey=lambda_storey)
+        qvals[selected] = pi0 * stats.multitest.multipletests(links_df.loc[selected, mcpval_col].to_numpy(), method='fdr_bh')[1]
     links_df[out_col] = qvals
-    print(f"# Added {out_col}: BH over {int(selected.sum())} links with {qval_col} < {fdr_thres}; "
+    print(f"# Added {out_col}: BH x pi0 ({pi0:.3f}) over {int(selected.sum())} links with {qval_col} < {fdr_thres}; "
           f"{int((qvals[selected] < 0.1).sum())} at q < 0.1, {int((qvals[selected] < 0.2).sum())} at q < 0.2")
     return links_df
 

@@ -22,6 +22,21 @@ def test_filtered_spec_qval_is_bh_on_selected_and_nan_elsewhere(capsys):
     assert "WARNING" not in capsys.readouterr().out
 
 
+def test_filtered_spec_qval_scales_bh_by_storey_pi0():
+    rng = np.random.default_rng(0)
+    p = np.concatenate([rng.uniform(0, 1e-3, 40), rng.uniform(0, 1, 60)])
+    df = pd.DataFrame({"q_value_fixed_dist_rmean_rvar": np.r_[np.full(100, 0.01), 0.5], "mcp": np.r_[p, 0.001]})
+    bh = multipletests(p, method="fdr_bh")[1]
+    for lam in (0.5, 0.8):
+        pi0 = min(np.mean(p > lam) / (1 - lam), 1.0)
+        assert pi0 < 1
+        out = add_filtered_spec_qval(df.copy(), "mcp", "filt", "coexp_log1p", 0.2, lambda_storey=lam)
+        np.testing.assert_allclose(out["filt"].iloc[:100], pi0 * bh)
+        assert np.isnan(out["filt"].iloc[100])
+    out = add_filtered_spec_qval(df.copy(), "mcp", "filt", "coexp_log1p", 0.2, lambda_storey=None)
+    np.testing.assert_allclose(out["filt"].iloc[:100], bh)
+
+
 def test_filtered_spec_qval_falls_back_to_q_value_and_warns_for_joint(capsys):
     df = pd.DataFrame({"q_value": [0.05, 0.3], "mcp": [0.01, 0.01]})
     out = add_filtered_spec_qval(df.copy(), "mcp", "filt", "joint", 0.2)
