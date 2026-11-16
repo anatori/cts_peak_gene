@@ -433,6 +433,30 @@ def average_precision(
     return float(metrics.average_precision_score(y_true, y_score))
 
 
+def auroc(
+    df: pd.DataFrame,
+    col: str,
+    gold_col: str = "label",
+    score_transform: Optional[Callable[[np.ndarray], np.ndarray]] = default_score_transform_pvalue
+) -> float:
+    """
+    AUROC over all rows.
+    """
+    sub = df[[col, gold_col]]
+    sub = sub[sub[gold_col].notna()]
+    y_true = sub[gold_col].to_numpy().astype(int)
+    if y_true.sum() == 0 or y_true.sum() == len(y_true):
+        return np.nan
+    y_score = sub[col].to_numpy(dtype=float)
+    if score_transform is not None:
+        y_score = score_transform(y_score)
+    finite = np.isfinite(y_score)
+    if not finite.any():
+        return np.nan
+    y_score = np.where(finite, y_score, y_score[finite].min() - 1.0)
+    return float(metrics.roc_auc_score(y_true, y_score))
+
+
 def partial_average_precision(
     df: pd.DataFrame,
     col: str,
@@ -970,12 +994,12 @@ def build_default_metric_specs(
     - AE (weighted) full
     - AUERC (unweighted) early
     - AUORC (weighted log OR)
-    - AP and pAP@R
+    - AP, AUROC and pAP@R
     """
     ascending = True if pvals_smaller_is_better else False
     k_values = default_k_values(all_df, gold_col=gold_col)
     print(f'Top-k for AUORC_log: {k_values}')
-    score_transform = default_score_transform_pvalue if pvals_smaller_is_better else None
+    score_transform = (lambda x: -np.asarray(x, float)) if pvals_smaller_is_better else None
 
     def _auerc_full(df: pd.DataFrame, m: str) -> float:
         return auerc(df, m, gold_col=gold_col, ascending=ascending,
@@ -996,6 +1020,9 @@ def build_default_metric_specs(
     def _ap(df: pd.DataFrame, m: str) -> float:
         return average_precision(df, m, gold_col=gold_col, score_transform=score_transform)
 
+    def _auroc(df: pd.DataFrame, m: str) -> float:
+        return auroc(df, m, gold_col=gold_col, score_transform=score_transform)
+
     def _pap(df: pd.DataFrame, m: str) -> float:
         return partial_average_precision(df, m, R=early_R, gold_col=gold_col, normalize=True,
                                          score_transform=score_transform)
@@ -1006,6 +1033,7 @@ def build_default_metric_specs(
         MetricSpec(f"AUERC≤{early_R}", _auerc_early),
         MetricSpec("AUORC_log", _auorc_log),
         MetricSpec("AP", _ap),
+        MetricSpec("AUROC", _auroc),
         MetricSpec(f"pAP@{early_R}", _pap),
     ]
 
