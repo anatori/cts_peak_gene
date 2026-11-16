@@ -25,12 +25,16 @@ AURC_CPUS="${AURC_CPUS:-16}"
 # Optionally rebuild the per-dataset union_links bed before its chains
 RUN_UNION="${RUN_UNION:-true}"
 
+# Rerun only the metrics step (calculate_auerc_seeds.py) on the existing merge files;
+# skips union/intersect/aggregate/merge and their dependencies
+ONLY_AUERC="${ONLY_AUERC:-false}"
+
 FDR_FLAG=""
 [[ "${FDR_CORRECTION}" == "true" ]] && FDR_FLAG="--fdr_correction"
 USE_QVAL_FLAG=""
 [[ "${USE_QVAL}" == "true" ]] && USE_QVAL_FLAG="--use_qval"
 
-DATASETS=(bmmc pbmc pbmc_male_chrom_ctrl pbmc_male_chrom_x hdma_spleen shareseq neat brain_10k brain)
+read -ra DATASETS <<< "${DATASETS_STR:-bmmc pbmc pbmc_male_chrom_ctrl pbmc_male_chrom_x hdma_spleen shareseq neat brain_10k brain}"
 EVALS=(gwas_pops crispr_k562 gtex_tissues)
 
 mkdir -p "${LOG_DIR}"
@@ -86,6 +90,8 @@ print(','.join(names))
   echo "=== Submitting chain: dataset=${DATASET}, eval=${EVAL} ==="
   echo "  METHOD_COLS: ${METHOD_COLS}"
 
+  local AURC_DEP_FLAG=""
+  if [[ "${ONLY_AUERC}" != "true" ]]; then
   local INTERSECT_DEP_FLAG=""
   [[ -n "${UNION_DEP}" ]] && INTERSECT_DEP_FLAG="--dependency=${UNION_DEP}"
 
@@ -134,6 +140,8 @@ print(','.join(names))
               --res_path '${MERGE_DIR}' \
               ${FDR_FLAG}")
   echo "  MERGE_JOB_ID=${MERGE_JOB_ID}"
+  AURC_DEP_FLAG="--dependency=afterok:${MERGE_JOB_ID}"
+  fi
 
   # One array task per eval .bed (= per merge file); each task uses AURC_CPUS joblib workers.
   local N_EVAL_FILES
@@ -144,7 +152,7 @@ print(','.join(names))
 
   local AURC_JOB_ID
   AURC_JOB_ID=$(submit \
-    --dependency=afterok:${MERGE_JOB_ID} ${AURC_ARRAY_FLAG} \
+    ${AURC_DEP_FLAG} ${AURC_ARRAY_FLAG} \
     -c "${AURC_CPUS}" \
     -t 3-00:00:00 --mem 128Gb -J "auerc_${DATASET}_${EVAL}" \
     -o "${LOG_DIR}/auerc_${DATASET}_${EVAL}-%j.out" \
@@ -169,7 +177,7 @@ print(','.join(names))
 
 for DATASET in "${DATASETS[@]}"; do
   UNION_DEP=""
-  if [[ "${RUN_UNION}" == "true" ]]; then
+  if [[ "${RUN_UNION}" == "true" && "${ONLY_AUERC}" != "true" ]]; then
     echo "=== Submitting union: dataset=${DATASET} ==="
     UNION_JOB_ID=$(submit_union "${DATASET}")
     echo "  UNION_JOB_ID=${UNION_JOB_ID}"
