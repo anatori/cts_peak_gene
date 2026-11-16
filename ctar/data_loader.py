@@ -52,8 +52,12 @@ def peak_to_gene(peaks_df,genes_df,clean=True,split_peaks=True,distance=500000,c
     -------
     peak_gene_links : pd.DataFrame
         DataFrame containing matched peak-gene links according to +/- distance windows
-        around the gene body. The index is set to a unique identifier in the format 
-        'peak , gene'.
+        around the gene body. The index is set to a unique identifier in the format
+        'peak , gene'. Columns: gene, peak, distance, index_x, index_y and, if genes_df
+        has a 'tss' column, abs_distance. `distance` is the signed distance (bp) from the
+        peak interval to the gene TSS (0 if the TSS is inside the peak; negative if the peak
+        is upstream in genomic coordinates) and NaN if there is no TSS; abs_distance is its
+        absolute value.
     
     '''
 
@@ -79,28 +83,29 @@ def peak_to_gene(peaks_df,genes_df,clean=True,split_peaks=True,distance=500000,c
 
     # add windows
     genes_bed_windowed = genes_bed.slop(genome=genome,b=distance).sort()
-    
-    # using bedtools closest, includes all distances from gene_bed (D='b')
     closest_links = peaks_bed.intersect(genes_bed_windowed,wo=True,sorted=True)
 
     # save as dataframe
     closest_links = closest_links.to_dataframe()
-    closest_links.columns = ['peak_chr','peak_start','peak_end',peak_col,'window_chr','window_start','window_end',gene_col,'distance']
+    closest_links.columns = ['peak_chr','peak_start','peak_end',peak_col,'window_chr','window_start','window_end',gene_col,'overlap_bp']
 
     # merge with original dataframe to obtain all information
     peak_gene_links = closest_links.merge(peaks_clean,on=peak_col)
     peak_gene_links = peak_gene_links.merge(genes_clean,on=gene_col)
 
     extra_cols = []
+    peak_gene_links['distance'] = np.nan
     if 'tss' in genes_clean.columns:
         peak_start = pd.to_numeric(peak_gene_links['peak_start'], errors='coerce')
         peak_end = pd.to_numeric(peak_gene_links['peak_end'], errors='coerce')
         tss = pd.to_numeric(peak_gene_links['tss'], errors='coerce')
-        signed = np.where(
+        signed = pd.Series(np.where(
             peak_end < tss, peak_end - tss,
             np.where(peak_start > tss, peak_start - tss, 0)
-        )
-        peak_gene_links['abs_distance'] = np.abs(signed).astype('Int64')
+        ), index=peak_gene_links.index)
+        # see ctar.gentruth.add_tss_distances
+        peak_gene_links['distance'] = signed.astype('Int64')
+        peak_gene_links['abs_distance'] = signed.abs().astype('Int64')
         extra_cols = ['abs_distance']
 
     peak_gene_links = peak_gene_links[[gene_col,peak_col]+['distance','index_x','index_y']+extra_cols]

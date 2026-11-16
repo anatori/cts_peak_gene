@@ -2266,6 +2266,10 @@ def dist_rmean_rvar_sfdr(
         print(f'Warning: dropping {n_nodist} pairs with no TSS distance (gene missing from gene_df).')
         cis_links_df = cis_links_df[cis_links_df['abs_distance'].notna()].copy()
 
+    n_far = int((cis_links_df['abs_distance'] > 5_000_000).sum())
+    if n_far:
+        print(f'Warning: {n_far} pairs have abs_distance > 5 Mb, more than a gene body plus the link window allows; check the TSS annotation.')
+
     cis_links_df['fixed_distance_bin'] = log_dist_bins(cis_links_df['abs_distance'], custom_bins=dist_bins, min_count=min_bin_count)
 
     if not all(moment in cis_links_df.columns for moment in ['rna_mean','rna_var']):

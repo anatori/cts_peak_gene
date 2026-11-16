@@ -1867,13 +1867,15 @@ def main(args):
             if FDR_BIN_TYPE == 'dist_rmean_rvar':
                 # Fixed TSS-distance bins, then nested rna_mean / rna_var quantile bins.
                 gene_df = None
-                if 'abs_distance' not in cis_links_df.columns:
-                    assert TSS_FILE is not None, (
-                        "--fdr_bin_type dist_rmean_rvar needs 'abs_distance' in cis_links_df "
-                        "or --tss_file (GENCODE GTF) to compute it."
-                    )
+                if TSS_FILE is not None:
                     print(f"# Loading TSS annotations from {TSS_FILE}...")
                     gene_df = ctar.gentruth.load_gene_tss_from_gencode(TSS_FILE)
+                    cis_links_df = cis_links_df.drop(columns=['abs_distance'], errors='ignore')
+                else:
+                    assert 'abs_distance' in cis_links_df.columns, (
+                        "--fdr_bin_type dist_rmean_rvar needs --tss_file (GENCODE GTF) "
+                        "or an 'abs_distance' column in cis_links_df."
+                    )
 
                 rna_adata = None
                 if not {'rna_mean', 'rna_var'}.issubset(cis_links_df.columns):
