@@ -5,4 +5,5 @@ file_path,score_col,fdr_col,method_name
 /projects/zhanglab/users/ana/multiome/results/robustlink/benchmark/brain_10k/robustlink_brain_10k_benchmark.tsv,pval_linked,fdr_linked,robustlink
 /projects/zhanglab/users/ana/multiome/results/ctar/benchmark/brain_10k/4.4.4.4.10000/cis_links_df.csv,4.4.4.4.10000_mcpval,q_value_fixed_dist_rmean_rvar,ctar
 /projects/zhanglab/users/ana/multiome/results/ctar/benchmark/brain_10k/4.4.4.4.10000/cis_links_df.csv,4.4.4.4.10000_mcpval,,ctar_bh
+/projects/zhanglab/users/ana/multiome/results/ctar/tfidf_eval/brain_10k/brain_10k_benchmark_4.4.4.4.10000/cis_links_df.csv,4.4.4.4.10000_mcpval,q_value_fixed_dist_rmean_rvar,ctar_tfidf
 /projects/zhanglab/users/ana/multiome/results/ctar/benchmark/brain_10k/4.4.4.4.10000/cis_links_df.csv,abs_distance,abs_distance,distance
